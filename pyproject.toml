@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "assettrack"
+version = "0.1.0"
+description = "Track portfolio current value across brokers (stocks + options) — IBKR, Firstrade, manual."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "AssetTrack"}]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.0",
+    "yfinance>=0.2.40",
+    "python-dotenv>=1.0",
+    "pydantic>=2.0",
+    "pandas>=2.0",
+    "keyring>=24.0",
+]
+
+[project.optional-dependencies]
+ibkr = [
+    "ib-async>=1.0.0",  # successor to ib_insync; requires TWS or IB Gateway
+]
+firstrade = [
+    "firstrade>=0.0.30",   # unofficial reverse-engineered client — use at your own risk
+]
+[project.scripts]
+assettrack = "assettrack.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+assettrack = ["*.example.*", "*.md"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100

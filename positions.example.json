@@ -1,0 +1,20 @@
+[
+  {
+    "broker": "manual",
+    "symbol": "AAPL",
+    "instrument_type": "stock",
+    "quantity": 50,
+    "avg_cost": 185.0,
+    "currency": "USD",
+    "source": "manual"
+  },
+  {
+    "broker": "manual",
+    "symbol": "SPY",
+    "instrument_type": "etf",
+    "quantity": 20,
+    "avg_cost": 510.0,
+    "currency": "USD",
+    "source": "manual"
+  }
+]
