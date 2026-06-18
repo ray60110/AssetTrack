@@ -20,6 +20,7 @@ class Position(BaseModel):
     avg_cost: Optional[float] = None  # per share/contract
     market_price: Optional[float] = None
     market_value: Optional[float] = None
+    prev_close: Optional[float] = None  # Previous trading day close price
     currency: str = "USD"
     # Option-specific (optional)
     underlying: Optional[str] = None
@@ -59,6 +60,12 @@ class Position(BaseModel):
                     pass
             if not self.option_type:
                 self.option_type = "call" if m.group(3) == "C" else "put"
+                
+        if self.instrument_type == "option" and not self.multiplier:
+            # Default multiplier: 50.0 for TWD/Taiwan markets, otherwise 100.0
+            is_tw = self.currency == "TWD" or self.symbol.endswith(".TW") or self.symbol.endswith(".TWO") or (self.market == "TW")
+            self.multiplier = 50.0 if is_tw else 100.0
+            
         return self
 
     @property
@@ -67,13 +74,15 @@ class Position(BaseModel):
         if self.market_value is not None:
             return self.market_value
         if self.market_price is not None and self.quantity is not None:
-            return self.market_price * self.quantity
+            mult = self.multiplier if (self.instrument_type == "option" and self.multiplier is not None) else 1.0
+            return self.market_price * self.quantity * mult
         return 0.0
 
     @property
     def total_cost(self) -> Optional[float]:
         if self.avg_cost is not None and self.quantity is not None:
-            return self.avg_cost * self.quantity
+            mult = self.multiplier if (self.instrument_type == "option" and self.multiplier is not None) else 1.0
+            return self.avg_cost * self.quantity * mult
         return None
 
     @property
@@ -90,6 +99,21 @@ class Position(BaseModel):
             pnl = self.unrealized_pnl
             if pnl is not None:
                 return (pnl / cost) * 100
+        return None
+
+    @property
+    def daily_change(self) -> Optional[float]:
+        """Today's net value change for the whole position (current value - prev-close value)."""
+        if self.prev_close is not None and self.market_price is not None:
+            mult = self.multiplier if (self.instrument_type == "option" and self.multiplier is not None) else 1.0
+            return (self.market_price - self.prev_close) * self.quantity * mult
+        return None
+
+    @property
+    def daily_change_pct(self) -> Optional[float]:
+        """Today's price change percentage vs previous close."""
+        if self.prev_close is not None and self.prev_close != 0 and self.market_price is not None:
+            return (self.market_price - self.prev_close) / self.prev_close * 100
         return None
 
     def to_dict(self) -> dict:

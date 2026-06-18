@@ -104,22 +104,51 @@ def fetch_price(symbol: str, instrument_type: str = "stock", currency: str = "US
         return None
 
 
+
+
+
 def enrich_positions_with_quotes(positions: Iterable[Position], delay: float = 0.2) -> list[Position]:
     """
-    Fill in market_price / market_value using yfinance where missing.
+    Fill in market_price / market_value / prev_close using yfinance where missing.
     Returns a new list of Position objects (does not mutate originals).
     """
     enriched = []
     for pos in positions:
         p = pos.model_copy(deep=True)
-        if p.market_price is None or p.market_value is None:
-            price = fetch_price(p.symbol, p.instrument_type, p.currency)
-            if price is not None:
-                p.market_price = price
-                p.market_value = price * p.quantity if p.quantity else None
+        if p.market_price is None or p.market_value is None or p.prev_close is None:
+            yf_symbol = _normalize_symbol_for_yf(p.symbol, p.instrument_type, p.currency)
+            try:
+                with silence_output():
+                    ticker = yf.Ticker(yf_symbol)
+                    price = None
+                    prev_close = None
+                    try:
+                        fi = ticker.fast_info
+                        price = getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
+                        prev_close = getattr(fi, "previous_close", None) or getattr(fi, "regular_market_previous_close", None)
+                    except Exception:
+                        pass
+
+                    if price is None:
+                        # Fallback to history (most recent 2 closes)
+                        hist = ticker.history(period="5d", auto_adjust=False)
+                        if not hist.empty:
+                            price = float(hist["Close"].iloc[-1])
+                            if len(hist) >= 2:
+                                prev_close = float(hist["Close"].iloc[-2])
+
+                    if price is not None:
+                        p.market_price = price
+                        mult = p.multiplier if (p.instrument_type == "option" and p.multiplier is not None) else 1.0
+                        p.market_value = price * p.quantity * mult if p.quantity else None
+                    if prev_close is not None:
+                        p.prev_close = prev_close
+            except Exception:
+                pass
             time.sleep(delay)  # be nice to free APIs
         enriched.append(p)
     return enriched
+
 
 
 def fetch_beta(symbol: str, instrument_type: str = "stock", underlying: Optional[str] = None, currency: str = "USD") -> Optional[float]:

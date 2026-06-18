@@ -180,12 +180,155 @@ def _draw_bar(value: float, max_value: float, width: int = 12) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+def _build_broker_holdings(
+    positions: list[Position],
+    rate: float,
+    show_pnl: bool = True,
+    weights: Optional[dict] = None,
+) -> None:
+    """Render holdings grouped by broker, each group sorted by current market value descending."""
+
+    # Build broker display key -> list of positions
+    broker_groups: dict[str, list[Position]] = {}
+    for p in positions:
+        bk = f"{p.broker} ({p.account})" if p.account else p.broker
+        broker_groups.setdefault(bk, []).append(p)
+
+    # Sort each group by current value (USD-equivalent) descending
+    for bk in broker_groups:
+        broker_groups[bk].sort(
+            key=lambda p: (p.value if p.currency == "USD" else p.value / rate),
+            reverse=True,
+        )
+
+    # Sort brokers themselves by their total value descending
+    sorted_brokers = sorted(
+        broker_groups.items(),
+        key=lambda kv: sum(
+            p.value if p.currency == "USD" else p.value / rate
+            for p in kv[1]
+        ),
+        reverse=True,
+    )
+
+    # ── Single shared table — guarantees global column-width alignment ──
+    from rich import box as rich_box
+    from rich.box import Box as RichBox
+
+    # Custom box: visible ─ line for both header underline (row 3) and
+    # end_section separator (row 5). All other borders are empty/invisible.
+    # Row order: top / head / head_row / mid_head / row(=end_section) / mid_foot / foot / bottom
+    _SECTION_BOX = RichBox(
+        "    \n"   # top       — empty
+        "    \n"   # head      — empty
+        " \u2500\u2500 \n"   # head_row  — header column underline
+        "    \n"   # mid_head  — empty
+        " \u2500\u2500 \n"   # row       — end_section separator (THE FIX)
+        "    \n"   # mid_foot  — empty
+        "    \n"   # foot      — empty
+        "    \n"   # bottom    — empty
+    )
+
+    table = Table(
+        box=_SECTION_BOX,
+        padding=(0, 2, 0, 1),
+        show_header=True,
+        header_style="bold dim",
+        expand=False,
+    )
+
+    table.add_column("Symbol",       style="bold white",  min_width=8,  no_wrap=True)
+    table.add_column("Type",         style="dim",          min_width=6,  no_wrap=True)
+    table.add_column("Qty",          justify="right",      min_width=6)
+    table.add_column("Avg Cost",     justify="right",      min_width=9)
+    table.add_column("Price",        justify="right",      min_width=9)
+    table.add_column("Market Value", justify="right",      style="bold", min_width=13)
+    if weights is not None:
+        table.add_column("Wt%",      justify="right",      style="dim",  min_width=5)
+    table.add_column("今日%",        justify="right",      min_width=8)
+    table.add_column("今日漲跌",     justify="right",      min_width=11)
+    table.add_column("市場",         justify="center",     min_width=6)
+    if show_pnl:
+        table.add_column("Unrealized P&L", justify="right", min_width=18)
+
+    n_cols = (
+        6
+        + (1 if weights is not None else 0)
+        + 3   # 今日% + 今日漲跌 + 市場
+        + (1 if show_pnl else 0)
+    )
+
+    for broker_idx, (bk, bk_positions) in enumerate(sorted_brokers):
+        bk_total_usd = sum(
+            p.value if p.currency == "USD" else p.value / rate
+            for p in bk_positions
+        )
+        # ── Blank gap row between broker groups ──
+        if broker_idx > 0:
+            table.add_row(*[""] * n_cols, end_section=False)
+
+        # ── Broker header row ──
+        # end_section=True → divider line drawn immediately below this row (robust vs data row wrapping)
+        bk_label = f"[bold cyan]▐  {bk.upper()}[/bold cyan]"
+        bk_subtotal = f"[bold white]${bk_total_usd:,.0f}[/bold white] [dim]USD[/dim]"
+
+        header_cells = [bk_label] + [""] * (n_cols - 2) + [bk_subtotal]
+        table.add_row(*header_cells, style="cyan", end_section=True)
+
+        for p in bk_positions:
+            qty_str   = f"{p.quantity:,.2f}" if p.quantity % 1 != 0 else f"{int(p.quantity):,}"
+            cost_str  = f"${p.avg_cost:,.2f}" if p.avg_cost is not None else "[dim]—[/dim]"
+            price_str = f"${p.market_price:,.2f}" if p.market_price is not None else "[dim]—[/dim]"
+            val_str   = f"${p.value:,.2f}"
+            status_str = "[green]開市[/green]" if is_market_open(p) else "[dim]休市[/dim]"
+
+            # Daily change
+            d_chg = p.daily_change
+            d_pct = p.daily_change_pct
+            if d_chg is not None and d_pct is not None:
+                d_color = "green" if d_chg >= 0 else "red"
+                d_sign  = "+" if d_chg >= 0 else ""
+                ccy_tag = "" if p.currency == "USD" else f" {p.currency}"
+                daily_pct_str = f"[{d_color}]{d_sign}{d_pct:.2f}%[/{d_color}]"
+                daily_chg_str = f"[{d_color}]{d_sign}{d_chg:,.0f}{ccy_tag}[/{d_color}]"
+            else:
+                daily_pct_str = "[dim]—[/dim]"
+                daily_chg_str = "[dim]—[/dim]"
+
+            row_cells = [p.symbol, p.instrument_type, qty_str, cost_str, price_str, val_str]
+
+            if weights is not None:
+                key = (p.broker, p.account or "", p.symbol)
+                w = weights.get(key, 0.0)
+                row_cells.append(f"{w:.1f}%")
+
+            row_cells.extend([daily_pct_str, daily_chg_str, status_str])
+
+            if show_pnl:
+                pnl = p.unrealized_pnl
+                pct = p.unrealized_pnl_pct
+                if pnl is not None and pct is not None:
+                    color = "green" if pnl >= 0 else "red"
+                    sign  = "+" if pnl >= 0 else ""
+                    row_cells.append(
+                        f"[{color}]{sign}${pnl:,.2f}[/{color}] "
+                        f"[dim]({sign}{pct:.2f}%)[/dim]"
+                    )
+                else:
+                    row_cells.append("[dim]—[/dim]")
+
+            # All data rows: end_section=False
+            table.add_row(*row_cells, end_section=False)
+
+    console.print(table)
+
+
 def _build_positions_table(
     positions: list[Position],
     show_pnl: bool = True,
     weights: Optional[dict] = None,
 ) -> Table:
-    """Format holdings details into a rich terminal table."""
+    """Format holdings details into a rich terminal table (flat, ungrouped — used outside dashboard)."""
     table = Table(box=None, padding=(0, 1, 0, 1))
     table.add_column("Broker", style="cyan")
     table.add_column("Symbol", style="bold white")
@@ -239,6 +382,7 @@ def _build_positions_table(
         table.add_row(*row_cells)
 
     return table
+
 
 
 def render_dashboard_once(user: str, positions: list[Position], rate: float):
@@ -445,9 +589,9 @@ def render_dashboard_once(user: str, positions: list[Position], rate: float):
 
         console.print(Columns(side_panels, equal=False, expand=True))
 
-        # ── Holdings Table ──
+        # ── Holdings Table (grouped by broker) ──
         console.print("[bold]Holdings[/bold]")
-        console.print(_build_positions_table(positions, show_pnl=True, weights=weights))
+        _build_broker_holdings(positions, rate=rate, show_pnl=True, weights=weights)
 
     # ── Action Menu ──
     menu_text = (
