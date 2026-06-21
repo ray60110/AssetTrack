@@ -87,6 +87,8 @@ class Position(BaseModel):
 
     @property
     def unrealized_pnl(self) -> Optional[float]:
+        if self.market_value is None and self.market_price is None:
+            return None
         cost = self.total_cost
         if cost is not None:
             return self.value - cost
@@ -94,6 +96,8 @@ class Position(BaseModel):
 
     @property
     def unrealized_pnl_pct(self) -> Optional[float]:
+        if self.market_value is None and self.market_price is None:
+            return None
         cost = self.total_cost
         if cost and cost != 0:
             pnl = self.unrealized_pnl

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 import sys
-import select
 import subprocess
 import time
 from datetime import datetime, timedelta
@@ -17,8 +16,13 @@ from rich.panel import Panel
 from rich.prompt import Confirm, FloatPrompt, IntPrompt, Prompt
 from rich.table import Table
 from .models import PortfolioSnapshot, Position
-from .quotes import current_portfolio_value, enrich_positions_with_quotes, fetch_usdtwd_rate, fetch_beta, fetch_benchmark_history, fetch_historical_prices_weekly
-from .storage import Storage, get_positions_path, load_manual_positions, save_manual_positions
+from .quotes import (
+    current_portfolio_value, enrich_positions_with_quotes, fetch_usdtwd_rate,
+    fetch_beta, fetch_benchmark_history, fetch_historical_prices_weekly,
+    draw_bar, nearest_price, is_market_open,
+    SOX_TICKERS, group_positions_by_broker, fetch_earnings_calendar,
+)
+from .storage import Storage, get_positions_path, load_manual_positions, save_manual_positions, KEYCHAIN_SERVICE
 
 console = Console()
 app = typer.Typer(
@@ -28,41 +32,17 @@ app = typer.Typer(
 )
 
 
-def is_market_open(pos: Position) -> bool:
-    """Check if the market of the position is currently open based on its currency/suffix."""
-    is_tw = pos.currency == "TWD" or pos.symbol.endswith(".TW") or pos.symbol.endswith(".TWO")
-    tz_str = "Asia/Taipei" if is_tw else "America/New_York"
-    try:
-        tz = zoneinfo.ZoneInfo(tz_str)
-    except Exception:
-        return False
-        
-    now = datetime.now(tz)
-    # Weekend Check (Saturday = 5, Sunday = 6)
-    if now.weekday() >= 5:
-        return False
-        
-    t_min = now.hour * 60 + now.minute
-    if is_tw:
-        # Taiwan trading hours: 09:00 AM - 01:30 PM (9*60 = 540 to 13*60+30 = 810)
-        return 540 <= t_min <= 810
-    else:
-        # US trading hours: 09:30 AM - 04:00 PM (9*60+30 = 570 to 16*60 = 960)
-        return 570 <= t_min <= 960
-
-
-def input_with_timeout(timeout: float = 60.0) -> Optional[str]:
-    """Non-blocking keyboard input helper using select.select."""
-    rlist, _, _ = select.select([sys.stdin], [], [], timeout)
-    if rlist:
-        return sys.stdin.readline().strip()
-    return None
+# ── Macro event display name mapping (shared with TUI via import) ─────────
+MACRO_EVENT_NAMES: dict[str, str] = {
+    "▼FED": "▼ FED 利率決議",
+    "★NFP": "★ NFP 非農就業 / 失業率",
+    "◆CPI": "◆ CPI 通膨指數公佈",
+}
 
 
 def authenticate_user(user: str) -> bool:
     """Register or validate user via system keychain and native Touch ID helper."""
-    service_name = "assettrack_user_auth"
-    pwd = keyring.get_password(service_name, user)
+    pwd = keyring.get_password(KEYCHAIN_SERVICE, user)
     
     if pwd is None:
         console.print(Panel(
@@ -77,7 +57,7 @@ def authenticate_user(user: str) -> bool:
             p1 = Prompt.ask("請輸入登入密碼", password=True)
             p2 = Prompt.ask("請再次確認密碼", password=True)
             if p1 == p2:
-                keyring.set_password(service_name, user, p1)
+                keyring.set_password(KEYCHAIN_SERVICE, user, p1)
                 console.print("[green]註冊成功！密碼已安全儲存。[/green]")
                 time.sleep(1)
                 return True
@@ -124,7 +104,7 @@ def authenticate_user(user: str) -> bool:
 def show_onboarding_menu(user: str, ctx: typer.Context) -> list[Position]:
     """Onboarding menu wizard for empty position users."""
     console.print(Panel(
-        "⚠️ [bold yellow]偵測到您目前尚無任何持倉部位！[/bold yellow]\n\n"
+        "⚠️ [bold yellow]偵測到您目前尚無 any 持倉部位！[/bold yellow]\n\n"
         "請選擇以下任一操作來開始使用您的 AssetTrack 看板：\n"
         "1️⃣  建立預設範例部位 (AAPL, TSLA，快速體驗看板效果)\n"
         "2️⃣  手動新增持倉部位 (一個個輸入您的持股商品與成本)\n"
@@ -171,14 +151,6 @@ def show_onboarding_menu(user: str, ctx: typer.Context) -> list[Position]:
         return []
 
 
-def _draw_bar(value: float, max_value: float, width: int = 12) -> str:
-    """Draw a proportional Unicode block bar."""
-    if max_value <= 0:
-        return "░" * width
-    ratio = min(value / max_value, 1.0)
-    filled = round(ratio * width)
-    return "█" * filled + "░" * (width - filled)
-
 
 def _build_broker_holdings(
     positions: list[Position],
@@ -188,28 +160,7 @@ def _build_broker_holdings(
 ) -> None:
     """Render holdings grouped by broker, each group sorted by current market value descending."""
 
-    # Build broker display key -> list of positions
-    broker_groups: dict[str, list[Position]] = {}
-    for p in positions:
-        bk = f"{p.broker} ({p.account})" if p.account else p.broker
-        broker_groups.setdefault(bk, []).append(p)
-
-    # Sort each group by current value (USD-equivalent) descending
-    for bk in broker_groups:
-        broker_groups[bk].sort(
-            key=lambda p: (p.value if p.currency == "USD" else p.value / rate),
-            reverse=True,
-        )
-
-    # Sort brokers themselves by their total value descending
-    sorted_brokers = sorted(
-        broker_groups.items(),
-        key=lambda kv: sum(
-            p.value if p.currency == "USD" else p.value / rate
-            for p in kv[1]
-        ),
-        reverse=True,
-    )
+    sorted_brokers = group_positions_by_broker(positions, rate)
 
     # ── Single shared table — guarantees global column-width alignment ──
     from rich import box as rich_box
@@ -506,7 +457,7 @@ def render_dashboard_once(user: str, positions: list[Position], rate: float):
         max_bv = max(broker_vals.values()) if broker_vals else 1.0
         broker_lines = []
         for bk, bv in sorted(broker_vals.items(), key=lambda x: -x[1]):
-            bar = _draw_bar(bv, max_bv, 12)
+            bar = draw_bar(bv, max_bv, 12)
             pct = (bv / total_usd * 100) if total_usd > 0 else 0.0
             broker_lines.append(
                 f"[cyan]{bk:<22}[/cyan] [green]{bar}[/green]  "
@@ -576,7 +527,7 @@ def render_dashboard_once(user: str, positions: list[Position], rate: float):
             max_sv = max(sector_vals.values())
             sec_lines = []
             for sec, sv in sorted(sector_vals.items(), key=lambda x: -x[1]):
-                bar = _draw_bar(sv, max_sv, 8)
+                bar = draw_bar(sv, max_sv, 8)
                 pct = (sv / total_usd * 100) if total_usd > 0 else 0.0
                 sec_lines.append(
                     f"[magenta]{sec:<12}[/magenta] [yellow]{bar}[/yellow] [dim]({pct:.1f}%)[/dim]"
@@ -604,119 +555,6 @@ def render_dashboard_once(user: str, positions: list[Position], rate: float):
     )
     console.print(Panel(menu_text, border_style="cyan"))
     console.print("[dim]請輸入編號選擇操作，或等待系統每分鐘自動重整：[/dim] ", end="", highlight=False)
-
-
-def run_cli_dashboard_loop(ctx: typer.Context, user: str):
-    """Main dashboard loop using select to wait non-blockingly."""
-    ctx.obj = user
-    rate = fetch_usdtwd_rate()
-    positions = load_manual_positions(user=user)
-    
-    if not positions:
-        positions = show_onboarding_menu(user, ctx)
-        
-    if positions:
-        with console.status("[cyan]正在載入最新市場報價中...[/cyan]"):
-            positions = enrich_positions_with_quotes(positions, delay=0.1)
-            
-    while True:
-        try:
-            render_dashboard_once(user, positions, rate)
-            
-            # Timeout set to 60s
-            inp = input_with_timeout(60.0)
-            
-            if inp is None:
-                # Timeout occurred, perform auto refresh
-                with console.status("[cyan]正在自動更新報價...[/cyan]"):
-                    rate = fetch_usdtwd_rate()
-                    positions = load_manual_positions(user=user)
-                    if positions:
-                        positions = enrich_positions_with_quotes(positions, delay=0.1)
-                continue
-                
-            if inp == "1":
-                console.print(Panel(
-                    "  1️⃣  新增部位\n"
-                    "  2️⃣  修改部位\n"
-                    "  3️⃣  移除部位\n"
-                    "  4️⃣  返回主選單",
-                    title="📝 部位調整 (Adjust Positions) 📝",
-                    border_style="cyan"
-                ))
-                sub_choice = Prompt.ask("請選擇操作 [1/2/3/4]", choices=["1", "2", "3", "4"], default="4").strip()
-                if sub_choice == "1":
-                    try:
-                        add(ctx, broker=None)
-                    except typer.Exit:
-                        pass
-                    except Exception as e:
-                        console.print(f"[red]新增部位發生錯誤: {e}[/red]")
-                        time.sleep(2)
-                elif sub_choice == "2":
-                    try:
-                        edit(ctx)
-                    except typer.Exit:
-                        pass
-                    except Exception as e:
-                        console.print(f"[red]修改持倉發生錯誤: {e}[/red]")
-                        time.sleep(2)
-                elif sub_choice == "3":
-                    try:
-                        remove_position(ctx)
-                    except typer.Exit:
-                        pass
-                    except Exception as e:
-                        console.print(f"[red]移除持倉發生錯誤: {e}[/red]")
-                        time.sleep(2)
-                
-                # Reload positions if changed
-                if sub_choice in ["1", "2", "3"]:
-                    rate = fetch_usdtwd_rate()
-                    positions = load_manual_positions(user=user)
-                    if positions:
-                        with console.status("[cyan]更新持倉報價中...[/cyan]"):
-                            positions = enrich_positions_with_quotes(positions, delay=0.1)
-            elif inp == "2":
-                # Manual trigger refresh
-                with console.status("[cyan]正在立即更新報價...[/cyan]"):
-                    rate = fetch_usdtwd_rate()
-                    positions = load_manual_positions(user=user)
-                    if positions:
-                        positions = enrich_positions_with_quotes(positions, delay=0.1)
-            elif inp in ["3", "q", "exit", "logout"]:
-                if Confirm.ask("確定要安全登出系統？", default=False):
-                    console.print("\n[bold green]已安全登出並退出系統，歡迎下次使用！[/bold green]")
-                    sys.exit(0)
-                else:
-                    console.print("[dim]已取消登出，返回主選單。[/dim]")
-                    time.sleep(1)
-            elif inp == "4":
-                # 績效歷史 & Benchmark 對比（互動式選單在 history() 內部）
-                try:
-                    history(ctx)
-                except typer.Exit:
-                    pass
-                except Exception as e:
-                    console.print(f"[red]查看歷史發生錯誤: {e}[/red]")
-                else:
-                    console.print("[dim]按 Enter 返回看板...[/dim]")
-                    input()
-            elif inp == "5":
-                # 儲存目前快照
-                try:
-                    refresh_snapshot(ctx, save=True)
-                except typer.Exit:
-                    pass
-                except Exception as e:
-                    console.print(f"[red]儲存快照發生錯誤: {e}[/red]")
-                time.sleep(1.5)
-            else:
-                console.print(f"[yellow]⚠️ 無效指令 {inp}，請輸入選單編號 1-5。[/yellow]")
-                time.sleep(1)
-        except KeyboardInterrupt:
-            console.print("\n[bold green]已安全登出並退出系統，歡迎下次使用！[/bold green]")
-            sys.exit(0)
 
 
 def _prompt_broker_account(
@@ -1827,12 +1665,12 @@ def draw_ascii_chart_with_benchmark(
 
 
 
-def get_upcoming_macro_events() -> "list[tuple]":
+def get_upcoming_macro_events(days: int = 90, start_days_ago: int = 0) -> "list[tuple]":
     """
-    Returns upcoming macro events within the next ~90 days as (date, label) tuples.
-    Hardcoded 2025-2026 schedule. Sorted ascending.
+    Returns upcoming macro events within the next ~days days as (date, label) tuples.
+    Hardcoded 2025-2027 schedule. Sorted ascending.
     """
-    from datetime import date as date_type
+    from datetime import date as date_type, timedelta
 
     # FED FOMC meeting dates (decision day)
     fed_dates = [
@@ -1843,9 +1681,19 @@ def get_upcoming_macro_events() -> "list[tuple]":
         date_type(2026, 1, 28),
         date_type(2026, 3, 18),
         date_type(2026, 4, 29),
-        date_type(2026, 6, 10),
+        date_type(2026, 6, 17),
         date_type(2026, 7, 29),
         date_type(2026, 9, 16),
+        date_type(2026, 11, 5),
+        date_type(2026, 12, 16),
+        date_type(2027, 1, 27),
+        date_type(2027, 3, 17),
+        date_type(2027, 4, 28),
+        date_type(2027, 6, 16),
+        date_type(2027, 7, 28),
+        date_type(2027, 9, 22),
+        date_type(2027, 11, 3),
+        date_type(2027, 12, 15),
     ]
 
     # Non-Farm Payroll (NFP) — first Friday of each month
@@ -1863,6 +1711,23 @@ def get_upcoming_macro_events() -> "list[tuple]":
         date_type(2026, 5, 1),
         date_type(2026, 6, 5),
         date_type(2026, 7, 10),
+        date_type(2026, 8, 7),
+        date_type(2026, 9, 4),
+        date_type(2026, 10, 2),
+        date_type(2026, 11, 6),
+        date_type(2026, 12, 4),
+        date_type(2027, 1, 8),
+        date_type(2027, 2, 5),
+        date_type(2027, 3, 5),
+        date_type(2027, 4, 2),
+        date_type(2027, 5, 7),
+        date_type(2027, 6, 4),
+        date_type(2027, 7, 2),
+        date_type(2027, 8, 6),
+        date_type(2027, 9, 3),
+        date_type(2027, 10, 8),
+        date_type(2027, 11, 5),
+        date_type(2027, 12, 3),
     ]
 
     # CPI release dates (approx mid-month)
@@ -1880,21 +1745,53 @@ def get_upcoming_macro_events() -> "list[tuple]":
         date_type(2026, 5, 13),
         date_type(2026, 6, 10),
         date_type(2026, 7, 14),
+        date_type(2026, 8, 12),
+        date_type(2026, 9, 11),
+        date_type(2026, 10, 14),
+        date_type(2026, 11, 12),
+        date_type(2026, 12, 11),
+        date_type(2027, 1, 13),
+        date_type(2027, 2, 10),
+        date_type(2027, 3, 12),
+        date_type(2027, 4, 13),
+        date_type(2027, 5, 12),
+        date_type(2027, 6, 15),
+        date_type(2027, 7, 13),
+        date_type(2027, 8, 11),
+        date_type(2027, 9, 14),
+        date_type(2027, 10, 13),
+        date_type(2027, 11, 10),
+        date_type(2027, 12, 10),
     ]
 
     today = datetime.utcnow().date()
-    cutoff = today + timedelta(days=90)
+    start_date = today - timedelta(days=start_days_ago)
+    cutoff = today + timedelta(days=days)
 
     events: list[tuple] = []
+    import zoneinfo
+    from datetime import datetime as dt_cls, time as time_cls, timezone as tz_cls
+
+    tz_et = zoneinfo.ZoneInfo("America/New_York")
+    tz_gmt8 = tz_cls(timedelta(hours=8))
+
+    def to_gmt8(d, time_et):
+        dt_et = dt_cls.combine(d, time_et).replace(tzinfo=tz_et)
+        dt_local = dt_et.astimezone(tz_gmt8)
+        return dt_local.date(), dt_local.strftime("%H:%M")
+
     for d in fed_dates:
-        if today <= d <= cutoff:
-            events.append((d, "▼FED"))
+        local_d, local_t = to_gmt8(d, time_cls(14, 0))
+        if start_date <= local_d <= cutoff:
+            events.append((local_d, "▼FED", local_t))
     for d in nfp_dates:
-        if today <= d <= cutoff:
-            events.append((d, "★NFP"))
+        local_d, local_t = to_gmt8(d, time_cls(8, 30))
+        if start_date <= local_d <= cutoff:
+            events.append((local_d, "★NFP", local_t))
     for d in cpi_dates:
-        if today <= d <= cutoff:
-            events.append((d, "◆CPI"))
+        local_d, local_t = to_gmt8(d, time_cls(8, 30))
+        if start_date <= local_d <= cutoff:
+            events.append((local_d, "◆CPI", local_t))
 
     events.sort(key=lambda x: x[0])
     return events
@@ -2239,20 +2136,6 @@ def history(
         return
 
     # ── 計算每個週節點的組合市值 ──
-    def nearest_price(price_map: dict, target_date: date_type) -> Optional[float]:
-        """Binary search: most recent price on or before target_date."""
-        sorted_dates = sorted(price_map.keys())
-        lo, hi = 0, len(sorted_dates) - 1
-        result = None
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            if sorted_dates[mid] <= target_date:
-                result = sorted_dates[mid]
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        return price_map.get(result) if result is not None else None
-
     # Portfolio weekly values + per-broker breakdown
     port_weekly: list[float] = []
     broker_set = sorted(set(p.broker for p in tradeable))
@@ -2417,20 +2300,111 @@ def history(
         event_table.add_column("事件", style="bold")
         event_table.add_column("距今", justify="right", style="dim")
         today_date = datetime.utcnow().date()
-        for ev_date, ev_label in events:
+        for ev_date, ev_label, time_str in events:
             days_away = (ev_date - today_date).days
-            event_name = {
-                "▼FED": "FED FOMC 利率決議",
-                "★NFP": "非農就業報告 (NFP)",
-                "◆CPI": "CPI 通膨指數公佈",
-            }.get(ev_label, ev_label)
+            event_name = MACRO_EVENT_NAMES.get(ev_label, ev_label)
             event_table.add_row(
                 ev_date.strftime("%Y-%m-%d"),
-                f"{ev_label} {event_name}",
+                f"{ev_label} {event_name} ({time_str})",
                 f"{days_away} 天後"
             )
         console.print(event_table)
 
+
+
+@app.command(name="calendar")
+def calendar_cmd(
+    ctx: typer.Context,
+    days: int = typer.Option(90, "--days", "-d", help="顯示未來天數內的事件"),
+):
+    """顯示投資組合持倉與 SOX 十大成分股的財報日曆，以及重大總經事件。"""
+    user = ctx.obj
+    from datetime import datetime as dt_cls, date as date_type, timedelta
+    from .quotes import _normalize_symbol_for_yf
+
+    positions = load_manual_positions(user=user)
+
+    portfolio_tickers = set()
+    for p in positions:
+        sym = p.underlying if p.instrument_type == "option" else p.symbol
+        portfolio_tickers.add(_normalize_symbol_for_yf(sym, "stock", p.currency))
+
+    unique_tickers = list(portfolio_tickers.union(SOX_TICKERS))
+    console.print(f"🔍 正在背景同步 {len(unique_tickers)} 個標的之財報日期及總經事件...")
+
+    ticker_to_data = fetch_earnings_calendar(unique_tickers)
+
+    today = datetime.utcnow().date()
+    cutoff = today + timedelta(days=days)
+
+    events = []
+
+    # Add earnings dates
+    for sym, (dates_list, info_date, time_str, period_str) in ticker_to_data.items():
+        is_user = any(
+            _normalize_symbol_for_yf(p.underlying if p.instrument_type == "option" else p.symbol, "stock", p.currency) == sym
+            for p in positions
+        )
+        is_sox = sym in SOX_TICKERS
+        
+        if is_user and is_sox:
+            label_base = f"🔔 [bold white]{sym}[/bold white] 財報公佈 (持倉/SOX 十大)"
+        elif is_user:
+            label_base = f"🔔 [bold white]{sym}[/bold white] 財報公佈 (持倉)"
+        else:
+            label_base = f"💻 {sym} 財報公佈 (SOX 十大)"
+
+        if info_date and today <= info_date <= cutoff:
+            if period_str:
+                label = f"{label_base} ({period_str} {time_str})"
+            else:
+                label = f"{label_base} ({time_str})"
+            events.append((info_date, label))
+        else:
+            for d in dates_list:
+                if isinstance(d, dt_cls):
+                    d = d.date()
+                if today <= d <= cutoff:
+                    events.append((d, label_base))
+
+    # Add macro events
+    macro_list = get_upcoming_macro_events(days=days)
+    for ev_date, ev_label, time_str in macro_list:
+        event_name = MACRO_EVENT_NAMES.get(ev_label, ev_label)
+        events.append((ev_date, f"{event_name} ({time_str})"))
+
+    if not events:
+        console.print(f"[yellow]⚠️ 未來 {days} 天內沒有任何重要事件。[/yellow]")
+        return
+
+    # Sort events chronologically
+    events.sort(key=lambda x: x[0])
+    
+    # Group by month
+    by_month = {}
+    for d, label in events:
+        m_key = d.strftime("%Y-%m (%B)")
+        by_month.setdefault(m_key, []).append((d, label))
+
+    console.print(f"\n📅 [bold cyan]重要事件日曆 (未來 {days} 天)[/bold cyan]")
+    console.print("=" * 50)
+
+    for m_key, ev_list in sorted(by_month.items()):
+        # Draw monthly table
+        table = Table(title=f"\n📅 [bold magenta]{m_key}[/bold magenta]", show_header=True, expand=True)
+        table.title_align = "left"
+        table.add_column("日期", style="cyan", width=12)
+        table.add_column("事件 / 標的", style="white", width=40)
+        table.add_column("距今", justify="right", style="dim", width=10)
+        
+        for d, label in ev_list:
+            days_away = (d - today).days
+            table.add_row(
+                d.strftime("%Y-%m-%d"),
+                label,
+                f"{days_away} 天後"
+            )
+        console.print(table)
 
 
 @app.callback(invoke_without_command=True)
@@ -2443,32 +2417,8 @@ def main(
         ctx.obj = user
         return
         
-    console.clear()
-    logo = (
-        "                    ··░▒▒▒▒▒▒▒▒░··          \n"
-        "                  ·░▓▓▒░·······░▒▒░         \n"
-        "                 ·░▒▒░░░▒▒▒▒▒▒▒░··▒░·       \n"
-        "                 ▒▓·   ··░▒░▒▒▒▒▒░░░·       \n"
-        "                ·▓▒      ·░░░░░░░░▒▓░       \n"
-        "                 ▒▓· ·░░▒▒▓▓▓▓▒░░·░▓░       \n"
-        "                 ·▒▓▒▒▒░░▓▒▒▒▓·  ·▓▒·       \n"
-        "                  ·░▓▒░░▓░▒█▒▒▓▒▒▒░         \n"
-        "                    ·░▒▓░▒█▓▓▒▒░··          \n\n"
-        "    ___               __  ______                __  \n"
-        "   /   |  ___________/ /_/_  __/________ ______/ /__\n"
-        "  / /| | / ___/ ___/ _  / / /  / ___/ __ `/ ___/ //_/\n"
-        " / ___ |(__  |__  )  __/ / /  / /  / /_/ / /__/ ,<   \n"
-        "/_/  |_/____/____/\\___/_/ /_  /_/  \\__,_/\\___/_/|_|  \n"
-    )
-    console.print(Panel(logo, border_style="cyan"))
-    
-    console.print("=== AssetTrack 投資組合管理系統 ===")
-    user_input = Prompt.ask("👤 請輸入使用者帳號 (User ID)", default=user).strip()
-    if not user_input:
-        user_input = "default"
-        
-    if authenticate_user(user_input):
-        run_cli_dashboard_loop(ctx, user_input)
+    from .tui import run_tui_dashboard
+    run_tui_dashboard(user)
 
 
 if __name__ == "__main__":

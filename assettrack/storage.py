@@ -12,6 +12,9 @@ from .models import PortfolioSnapshot, Position
 DB_NAME = "assettrack.db"
 POSITIONS_FILE = "positions.json"
 
+# Keychain service name for user authentication — single source of truth
+KEYCHAIN_SERVICE: str = "assettrack_user_auth"
+
 
 def get_data_dir() -> Path:
     """Return a user-writable data directory for this app."""

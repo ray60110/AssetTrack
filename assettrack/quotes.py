@@ -302,3 +302,145 @@ def current_portfolio_value(positions: list[Position]) -> float:
     return sum(p.value for p in positions)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Timezone cache (shared by is_market_open and fetch_earnings_calendar)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import zoneinfo as _zoneinfo  # noqa: E402
+
+try:
+    _TZ_TW = _zoneinfo.ZoneInfo("Asia/Taipei")
+except Exception:
+    _TZ_TW = None  # type: ignore[assignment]
+
+try:
+    _TZ_US = _zoneinfo.ZoneInfo("America/New_York")
+except Exception:
+    _TZ_US = None  # type: ignore[assignment]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Constants
+# ─────────────────────────────────────────────────────────────────────────────
+
+SOX_TICKERS: list[str] = [
+    "NVDA", "AVGO", "AMD", "QCOM", "INTC",
+    "AMAT", "LRCX", "MU", "ASML", "TXN",
+]
+"""SOX 十大成分股清單（財報日曆追蹤用）。"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared utility functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def draw_bar(value: float, max_value: float, width: int = 12) -> str:
+    """Render a proportional Unicode block bar (█ / ░)."""
+    if max_value <= 0:
+        return "░" * width
+    filled = round(min(value / max_value, 1.0) * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def nearest_price(price_map: dict, target_date) -> Optional[float]:
+    """Binary-search price_map for the most-recent price on or before target_date."""
+    sorted_dates = sorted(price_map.keys())
+    lo, hi = 0, len(sorted_dates) - 1
+    result = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if sorted_dates[mid] <= target_date:
+            result = sorted_dates[mid]
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return price_map.get(result) if result is not None else None
+
+
+def is_market_open(pos: Position) -> bool:
+    """Return True if the exchange for this position is currently in regular trading hours."""
+    from datetime import datetime as _dt
+    is_tw = pos.currency == "TWD" or pos.symbol.endswith(".TW") or pos.symbol.endswith(".TWO")
+    tz = _TZ_TW if is_tw else _TZ_US
+    if tz is None:
+        return False
+    now = _dt.now(tz)
+    if now.weekday() >= 5:          # Saturday=5, Sunday=6
+        return False
+    t = now.hour * 60 + now.minute
+    # Taiwan 09:00–13:30 (540–810), US 09:30–16:00 (570–960)
+    return (540 <= t <= 810) if is_tw else (570 <= t <= 960)
+
+
+def group_positions_by_broker(
+    positions: list[Position],
+    rate: float,
+) -> list[tuple[str, list[Position]]]:
+    """
+    Group positions by broker label (appends account if set).
+    Each group is sorted by USD-equivalent value descending.
+    Groups are sorted by their total USD value descending.
+    Returns list of (broker_label, [Position, ...]) tuples.
+    """
+    groups: dict[str, list[Position]] = {}
+    for p in positions:
+        bk = f"{p.broker} ({p.account})" if p.account else p.broker
+        groups.setdefault(bk, []).append(p)
+    for bk in groups:
+        groups[bk].sort(
+            key=lambda p: (p.value if p.currency == "USD" else p.value / rate),
+            reverse=True,
+        )
+    return sorted(
+        groups.items(),
+        key=lambda kv: sum(
+            p.value if p.currency == "USD" else p.value / rate for p in kv[1]
+        ),
+        reverse=True,
+    )
+
+
+def fetch_earnings_calendar(
+    symbols: list[str],
+) -> dict[str, tuple[list, Optional[object], Optional[str], Optional[str]]]:
+    """
+    Fetch earnings calendar for multiple symbols from yfinance in parallel.
+
+    Returns {symbol: (dates_list, info_date, time_str, period_str)} where:
+    - dates_list : list[date] from t.calendar["Earnings Date"]
+    - info_date  : precise date (GMT+8) from earningsTimestampStart
+    - time_str   : "HH:MM" (GMT+8)
+    - period_str : "盤前" | "盤後" based on US Eastern time
+    """
+    import concurrent.futures
+    from datetime import datetime as _dt, timezone as _tz, timedelta
+
+    def _fetch_one(symbol: str):
+        try:
+            with silence_output():
+                t = yf.Ticker(symbol)
+                cal = t.calendar
+                dates = []
+                if isinstance(cal, dict) and "Earnings Date" in cal:
+                    dates = [d.date() if isinstance(d, _dt) else d for d in cal["Earnings Date"]]
+                info = t.info
+                ts = info.get("earningsTimestampStart") or info.get("earningsTimestamp")
+                time_str = None
+                info_date = None
+                period_str = None
+                if ts:
+                    tz_gmt8 = _tz(timedelta(hours=8))
+                    dt_gmt8 = _dt.fromtimestamp(ts, tz_gmt8)
+                    info_date = dt_gmt8.date()
+                    time_str = dt_gmt8.strftime("%H:%M")
+                    dt_us = _dt.fromtimestamp(ts, _TZ_US)
+                    period_str = "盤前" if dt_us.hour < 12 else "盤後"
+                return symbol, dates, info_date, time_str, period_str
+        except Exception:
+            return symbol, [], None, None, None
+
+    result: dict = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(symbols))) as ex:
+        for sym, d, id_, ts_, ps_ in ex.map(_fetch_one, symbols):
+            result[sym] = (d, id_, ts_, ps_)
+    return result

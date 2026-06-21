@@ -32,14 +32,26 @@ env/
 *.swp
 *.swo
 
-# Project data
+# ─── User data & credentials (NEVER commit) ───────────────────────────────
+# All user-specific files are stored in data/ during development.
+# Passwords are in macOS Keychain (not a file), never committed.
+# Positions / snapshots (personal financial data)
 data/
-*.db
-positions.json
+*_positions.json
 *positions.json
+positions.json
+# SQLite snapshots (contain portfolio history)
+*.db
+# Cache files that may contain ticker/price data
+*_cache.json
+beta_cache.json
+# Environment / secrets
 .env
 .env.local
 .env.*
+secrets.toml
+config.local.toml
+# ──────────────────────────────────────────────────────────────────────────
 
 # OS
 .DS_Store
