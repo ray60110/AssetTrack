@@ -15,7 +15,6 @@ from assettrack.tui import (
     OnboardingModal,
     AdjustPositionsModal,
     AddPositionModal,
-    PerformanceHistoryScreen,
     _build_broker_panel,
     _build_holdings_table,
     _build_metrics_panel,
@@ -59,8 +58,15 @@ def _sample_positions() -> list[Position]:
 
 
 def verify_imports() -> None:
-    from assettrack.cli import add, edit, history, refresh_snapshot, remove_position  # noqa: F401
-    from assettrack.cli import main  # noqa: F401
+    # bug#00056: cli.py has been removed entirely — tui.py's main() is now the sole
+    # command-line entry point (see pyproject.toml [project.scripts] / entrypoint.py).
+    from assettrack.tui import main  # noqa: F401
+    # shared.py houses the migrated pure-logic functions
+    from assettrack.shared import (  # noqa: F401
+        MACRO_EVENT_NAMES, get_upcoming_macro_events, draw_history_chart
+    )
+    # TUI should expose AddPositionModal
+    from assettrack.tui import AddPositionModal  # noqa: F401
     assert callable(run_tui_dashboard)
 
 
@@ -106,7 +112,7 @@ async def verify_logout_modal() -> None:
     positions = _sample_positions()
     app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("down", "down", "down", "down", "down")
+        await pilot.press("down", "down", "down", "down", "down", "down")
         await pilot.press("enter")
         await pilot.pause()
         assert isinstance(pilot.app.screen, LogoutConfirmModal)
@@ -247,31 +253,13 @@ async def verify_add_position_modal() -> None:
         assert isinstance(pilot.app.screen, DashboardScreen)
 
 
-async def verify_performance_history_screen() -> None:
-    """測試績效歷史畫面 (PerformanceHistoryScreen) 的加載與分析操作。"""
-    positions = _sample_positions()
-    app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("4")
-        await pilot.pause(0.2)
-        assert isinstance(pilot.app.screen, PerformanceHistoryScreen)
-        
-        screen = pilot.app.screen
-        assert screen.query_one("#perf-period")
-        assert screen.query_one("#perf-benchmark")
-        
-        await pilot.press("escape")
-        await pilot.pause(0.1)
-        assert isinstance(pilot.app.screen, DashboardScreen)
-
-
 async def verify_upcoming_events_screen() -> None:
     """測試重要日曆事件畫面 (UpcomingEventsScreen) 的載入與返回。"""
     from assettrack.tui import UpcomingEventsScreen
     positions = _sample_positions()
     app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("5")
+        await pilot.press("4")
         await pilot.pause(0.5)
         assert isinstance(pilot.app.screen, UpcomingEventsScreen)
         
@@ -283,7 +271,49 @@ async def verify_upcoming_events_screen() -> None:
         assert isinstance(pilot.app.screen, DashboardScreen)
 
 
+async def verify_active_etfs_screen() -> None:
+    """測試主動式 ETF 畫面 (ActiveETFsScreen) 的載入與返回。"""
+    from assettrack.tui import ActiveETFsScreen
+    positions = _sample_positions()
+    app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("6")
+        await pilot.pause(0.5)
+        assert isinstance(pilot.app.screen, ActiveETFsScreen)
+        
+        screen = pilot.app.screen
+        assert screen.query_one("#etf-left-tabbed")
+        assert screen.query_one("#etf-us-table")
+        assert screen.query_one("#etf-twd-table")
+        assert screen.query_one("#etf-holdings-table")
+        assert screen.query_one("#etf-history-table")
+        
+        # Test Enter key on selected row
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert isinstance(pilot.app.screen, DashboardScreen)
+
+
+def patch_workers() -> None:
+    from unittest.mock import MagicMock
+    from assettrack.tui import (
+        UpcomingEventsScreen,
+        DashboardScreen,
+        ActiveETFsScreen,
+    )
+    # Stub out slow background network workers to avoid background thread race conditions
+    UpcomingEventsScreen.run_calendar_fetch = MagicMock()
+    DashboardScreen._do_refresh_worker = MagicMock()
+    DashboardScreen._fetch_upcoming_events_worker = MagicMock()
+    ActiveETFsScreen.run_background_fetch = MagicMock()
+    ActiveETFsScreen.run_detail_fetch = MagicMock()
+
+
 def main() -> int:
+    patch_workers()
     checks = [
         ("imports", verify_imports),
         ("render_builders", verify_render_builders),
@@ -295,8 +325,8 @@ def main() -> int:
         ("keyboard_navigation", verify_keyboard_navigation),
         ("modal_editing", verify_modal_editing),
         ("add_position_modal", verify_add_position_modal),
-        ("performance_history_screen", verify_performance_history_screen),
         ("upcoming_events_screen", verify_upcoming_events_screen),
+        ("active_etfs_screen", verify_active_etfs_screen),
     ]
     passed = 0
     failed = 0

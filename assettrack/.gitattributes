@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Mark TouchID helper compiled binary to prevent corruption during line-ending normalization
+touchid_helper binary
+

@@ -8,6 +8,22 @@ from pydantic import BaseModel, Field, model_validator
 
 InstrumentType = Literal["stock", "option", "etf", "other"]
 
+# Supported cash currencies — at least USD, TWD, JPY as required
+CashCurrency = Literal["USD", "TWD", "JPY"]
+
+
+class CashPosition(BaseModel):
+    """A single cash holding stored at a specific bank."""
+
+    bank: str = Field(..., description="銀行名稱，例如 '國泰世華', 'Chase', '玉山銀行'")
+    currency: CashCurrency = Field("TWD", description="存款幣別 (USD / TWD / JPY)")
+    amount: float = Field(..., description="存款金額（正數）")
+    notes: Optional[str] = Field(None, description="備註")
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return self.model_dump(mode="json")
+
 
 class Position(BaseModel):
     """A single holding (stock, option, etc.)."""
@@ -65,7 +81,39 @@ class Position(BaseModel):
             # Default multiplier: 50.0 for TWD/Taiwan markets, otherwise 100.0
             is_tw = self.currency == "TWD" or self.symbol.endswith(".TW") or self.symbol.endswith(".TWO") or (self.market == "TW")
             self.multiplier = 50.0 if is_tw else 100.0
-            
+
+        # bug#00050: an option's `symbol` must be the OCC/TW contract code, never the
+        # bare underlying ticker — quote lookups (quotes.py) use `symbol` as-is for
+        # options, so a bad symbol (e.g. "INTC" instead of "INTC260918C00150000")
+        # silently fetches the underlying STOCK price instead of the option premium.
+        # Whenever we have full option details, always (re)derive the canonical symbol
+        # rather than trusting a possibly-wrong stored value. This previously excluded
+        # TW options because cli.py and tui.py disagreed on the TW format (bug#00051);
+        # now that cli.py has been removed entirely (bug#00056), tui.py's convention
+        # (no strike suffix) is the sole remaining format, so TW is included too.
+        is_tw_opt = self.currency == "TWD" or self.symbol.endswith(".TW") or self.symbol.endswith(".TWO") or (self.market == "TW")
+        if (
+            self.instrument_type == "option"
+            and self.underlying and self.expiry and self.strike and self.option_type
+        ):
+            try:
+                expiry_dt = datetime.strptime(self.expiry, "%Y-%m-%d")
+                yy, mm, dd = expiry_dt.strftime("%y"), expiry_dt.strftime("%m"), expiry_dt.strftime("%d")
+                cp = "C" if self.option_type == "call" else "P"
+                if is_tw_opt:
+                    canonical_symbol = f"{self.underlying}{yy}{mm}{dd}{cp}"
+                else:
+                    canonical_symbol = f"{self.underlying}{yy}{mm}{dd}{cp}{int(round(self.strike * 1000)):08d}"
+                if self.symbol.upper() != canonical_symbol:
+                    self.symbol = canonical_symbol
+                    # The old symbol's cached quote (if any) belongs to the wrong
+                    # instrument — clear it so the next refresh re-fetches correctly.
+                    self.market_price = None
+                    self.market_value = None
+                    self.prev_close = None
+            except (ValueError, TypeError):
+                pass
+
         return self
 
     @property
@@ -99,16 +147,19 @@ class Position(BaseModel):
         if self.market_value is None and self.market_price is None:
             return None
         cost = self.total_cost
-        if cost and cost != 0:
+        if cost is not None and cost != 0:
             pnl = self.unrealized_pnl
             if pnl is not None:
-                return (pnl / cost) * 100
+                return (pnl / abs(cost)) * 100
         return None
 
     @property
     def daily_change(self) -> Optional[float]:
         """Today's net value change for the whole position (current value - prev-close value)."""
         if self.prev_close is not None and self.market_price is not None:
+            import math
+            if math.isnan(self.prev_close) or math.isnan(self.market_price):
+                return None
             mult = self.multiplier if (self.instrument_type == "option" and self.multiplier is not None) else 1.0
             return (self.market_price - self.prev_close) * self.quantity * mult
         return None
@@ -117,6 +168,9 @@ class Position(BaseModel):
     def daily_change_pct(self) -> Optional[float]:
         """Today's price change percentage vs previous close."""
         if self.prev_close is not None and self.prev_close != 0 and self.market_price is not None:
+            import math
+            if math.isnan(self.prev_close) or math.isnan(self.market_price):
+                return None
             return (self.market_price - self.prev_close) / self.prev_close * 100
         return None
 
@@ -150,4 +204,5 @@ class ManualPositionsFile(BaseModel):
     """Schema for positions.json (manual input)."""
 
     positions: list[Position]
+    cash_positions: list[CashPosition] = Field(default_factory=list)
     last_manual_update: Optional[datetime] = None

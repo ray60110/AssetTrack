@@ -56,3 +56,11 @@ config.local.toml
 # OS
 .DS_Store
 Thumbs.db
+
+# Test & Lint Cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+

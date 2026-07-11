@@ -1,30 +1,25 @@
 """
 AssetTrack Textual TUI — 全螢幕事件驅動即時看板
-bug#00017 方案三實作 (Textual v8.x)
 
 架構說明：
   - AssetTrackApp (App) 為主應用，啟動後推入 DashboardScreen。
-  - 所有子操作（部位調整、歷史、快照）透過 app.suspend() 暫停 TUI，
-    執行現有 cli.py 的 Rich/Prompt 互動邏輯，完成後恢復全螢幕。
+  - 所有子操作（部位調整、歷史、快照）皆以 Textual ModalScreen/Screen 實作。
+  - cli.py 已完全移除（bug#00056）；本檔案的 main() 為套件唯一命令列進入點。
   - 自動每 60 秒背景刷新報價（獨立 worker thread）。
-  - 支援鍵盤快速鍵 1-5 / r / q，以及方向鍵捲動 Holdings。
+  - 支援鍵盤快速鍵 1-N / r / q，以及方向鍵捲動 Holdings。
 """
 from __future__ import annotations
 
 import time
-import zoneinfo
 from datetime import datetime
 import calendar
-from types import SimpleNamespace
 from typing import Optional
 from pathlib import Path
 import subprocess
 import keyring
 
 from rich.box import Box as RichBox
-from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
 from rich.table import Table
 
 from textual import work
@@ -32,19 +27,28 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Footer, Static, DataTable, OptionList, Input, Select, Label
+from textual.widgets import Button, Footer, Static, DataTable, OptionList, Input, Select, Label, TabbedContent, TabPane
 from textual.widgets.option_list import Option
 
-from .models import Position
+from .models import Position, CashPosition
 from .quotes import (
     enrich_positions_with_quotes, fetch_usdtwd_rate, fetch_beta,
     draw_bar, nearest_price, is_market_open,
     SOX_TICKERS, group_positions_by_broker, fetch_earnings_calendar,
+    fetch_active_etf_performance, fetch_etf_holdings,
+    fetch_prices_batch, estimate_shares,
 )
-from .storage import load_manual_positions, save_manual_positions, KEYCHAIN_SERVICE
-
-# Console used for suspended-mode (normal terminal) output
-_console = Console()
+from .storage import (
+    load_manual_positions, save_manual_positions, KEYCHAIN_SERVICE,
+    load_active_etf_data, save_active_etf_holdings, etf_cache_needs_refresh,
+    load_etf_symbol_cache, save_etf_symbol_cache, etf_symbol_cache_fresh,
+    load_aum_perf_cache, save_aum_perf_cache, aum_perf_cache_fresh,
+    cleanup_old_etf_caches,
+    append_etf_daily_snapshot, load_etf_daily_snapshots, prune_etf_history,
+    load_options_daily_snapshots, prune_options_history,
+)
+from .analysis import compute_symbol_trends, rank_symbol_trends, generate_etf_conclusions
+from .options_analysis import compute_options_flow, generate_options_conclusions
 
 # Rich Box: invisible borders except head_row underline and end_section separator
 _SEC_BOX = RichBox(
@@ -362,29 +366,6 @@ def _build_pnl_panel(positions: list[Position], rate: float) -> Panel:
     else:
         lines.append("[dim]無損益資料（請填寫平均成本）[/dim]")
     return Panel("\n".join(lines), title="📊 損益排行", border_style="yellow")
-
-
-def _build_sector_panel(positions: list[Position], rate: float) -> Optional[Panel]:
-    has_quotes = any(p.market_price is not None or p.market_value is not None for p in positions)
-    if not has_quotes:
-        return Panel("\n [yellow]⏳ 載入中...[/yellow]", title="🏷️ Sector", border_style="magenta")
-    sector_vals: dict[str, float] = {}
-    for p in positions:
-        if p.sector:
-            v = p.value if p.currency == "USD" else p.value / rate
-            sector_vals[p.sector] = sector_vals.get(p.sector, 0.0) + v
-    if not sector_vals:
-        return None
-    total   = sum(sector_vals.values())
-    max_sv  = max(sector_vals.values())
-    lines   = []
-    for sec, sv in sorted(sector_vals.items(), key=lambda x: -x[1]):
-        bar = draw_bar(sv, max_sv, 8)
-        pct = (sv / total * 100) if total > 0 else 0.0
-        lines.append(
-            f"[magenta]{sec:<12}[/magenta] [yellow]{bar}[/yellow] [dim]({pct:.1f}%)[/dim]"
-        )
-    return Panel("\n".join(lines), title="🏷️ Sector", border_style="magenta")
 
 
 def _simplify_event_label(label: str) -> str:
@@ -715,8 +696,8 @@ class LoginScreen(Screen):
             self.query_one("#login-error-msg", Label).update("❌ 取消註冊。")
 
     def _login_success(self, user: str) -> None:
-        positions = load_manual_positions(user=user)
-        self.dismiss((user, positions))
+        positions, cash_positions = load_manual_positions(user=user)
+        self.dismiss((user, positions, cash_positions))
 
 
 class PasswordModal(ModalScreen[bool]):
@@ -941,12 +922,13 @@ class OnboardingModal(ModalScreen[str]):
 
 
 class AddPositionModal(ModalScreen[Optional[Position]]):
-    """手動新增持股對話框 — 支援上下鍵欄位導航與必填標注。"""
+    """手動新增/修改持股對話框 — 支援上下鍵欄位導航與必填標注，並在選擇選擇權時動態顯示特定欄位。"""
 
     # Ordered list of all focusable field IDs (Inputs + Selects)
     _FIELD_IDS: list[str] = [
         "add-broker", "add-account", "add-symbol", "add-type",
-        "add-qty", "add-cost", "add-market", "add-exch",
+        "add-underlying", "add-strike", "add-expiry", "add-option-type", "add-multiplier",
+        "add-side", "add-qty", "add-cost", "add-market", "add-exch",
         "add-curr", "add-notes", "add-sector",
     ]
 
@@ -969,6 +951,10 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
     #add-hint {
         color: #8b949e;
         margin-bottom: 1;
+    }
+    #option-fields-container {
+        height: auto;
+        layout: vertical;
     }
     .form-row {
         height: auto;
@@ -1012,13 +998,74 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
     }
     """
 
+    def __init__(self, position: Optional[Position] = None) -> None:
+        super().__init__()
+        self.position = position
+
     def compose(self) -> ComposeResult:
         brokers = [("manual", "manual"), ("FT", "FT"), ("IBKR", "IBKR")]
         types   = [("stock", "stock"), ("etf", "etf"), ("option", "option")]
         markets = [("US", "US"), ("TW", "TW"), ("HK", "HK"), ("other", "other")]
+        opt_types = [("Call 買權", "call"), ("Put 賣權", "put")]
+
+        # Determine pre-populated values
+        p = self.position
+        
+        b_val = "manual"
+        if p and p.broker:
+            b_lower = p.broker.lower()
+            if "firstrade" in b_lower or b_lower == "ft":
+                b_val = "FT"
+            elif "ibkr" in b_lower:
+                b_val = "IBKR"
+            elif "manual" in b_lower:
+                b_val = "manual"
+
+        acct_val = p.account if p else ""
+        sym_val = p.symbol if p else ""
+        
+        t_val = "stock"
+        if p and p.instrument_type:
+            t_lower = p.instrument_type.lower()
+            if t_lower in ("stock", "etf", "option"):
+                t_val = t_lower
+
+        # Option-specific values
+        udl_val = p.underlying if (p and p.underlying) else ""
+        strike_val = f"{p.strike}" if (p and p.strike is not None) else ""
+        exp_val = p.expiry if (p and p.expiry) else ""
+        opt_type_val = p.option_type if (p and p.option_type) else "call"
+        mult_val = f"{p.multiplier}" if (p and p.multiplier is not None) else "100"
+        
+        qty_val = ""
+        side_val = "long"
+        if p and p.quantity is not None:
+            side_val = "short" if p.quantity < 0 else "long"
+            abs_qty = abs(p.quantity)
+            qty_val = f"{abs_qty:,.2f}" if abs_qty % 1 != 0 else f"{int(abs_qty)}"
+
+        cost_val = ""
+        if p and p.avg_cost is not None:
+            cost_val = f"{p.avg_cost}"
+
+        m_val = "US"
+        if p and p.market:
+            m_upper = p.market.upper()
+            if m_upper in ("US", "TW", "HK", "OTHER"):
+                m_val = m_upper
+            else:
+                m_val = "other"
+
+        exch_val = p.exchange if p else ""
+        curr_val = p.currency if p else "USD"
+        notes_val = p.notes if p else ""
+        sect_val = p.sector if p else ""
+
+        title = "✏️ [bold]修改持倉部位[/bold]" if p else "➕ [bold]手動新增持倉部位[/bold]"
+        btn_label = "確認修改" if p else "確認新增"
 
         with Vertical(id="add-dialog"):
-            yield Label("➕ [bold]手動新增持倉部位[/bold]", id="add-title")
+            yield Label(title, id="add-title")
             yield Label(
                 "💡 [dim]↑↓ 切換欄位　Enter 移至下一欄　[red]★[/red] 必填　[dim]✦ 建議填寫[/dim]",
                 id="add-hint"
@@ -1026,64 +1073,112 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
 
             with Horizontal(classes="form-row"):
                 yield Label("券商 [dim](Broker)[/dim]:", classes="form-label")
-                yield Select(brokers, value="manual", id="add-broker")
+                yield Select(brokers, value=b_val, id="add-broker")
 
             with Horizontal(classes="form-row"):
                 yield Label("帳戶 [dim](Account)[/dim]:", classes="form-label")
-                yield Input(placeholder="例如 default 或子帳戶", id="add-account",
+                yield Input(value=acct_val, placeholder="例如 default 或子帳戶", id="add-account",
                             classes="form-input")
 
-            with Horizontal(classes="form-row"):
+            with Horizontal(classes="form-row", id="symbol-field-row"):
                 yield Label("[red]★[/red] 代碼 [dim](Symbol)[/dim]:", classes="form-label")
-                yield Input(placeholder="例如 AAPL 或 2330.TW", id="add-symbol",
+                yield Input(value=sym_val, placeholder="例如 AAPL 或 2330.TW", id="add-symbol",
                             classes="form-input")
 
             with Horizontal(classes="form-row"):
                 yield Label("商品類型 [dim](Type)[/dim]:", classes="form-label")
-                yield Select(types, value="stock", id="add-type")
+                yield Select(types, value=t_val, id="add-type")
+
+            # Option specific container
+            with Vertical(id="option-fields-container"):
+                with Horizontal(classes="form-row"):
+                    yield Label("[red]★[/red] 標的代碼 [dim](Underlying)[/dim]:", classes="form-label")
+                    yield Input(value=udl_val, placeholder="標的股票代碼，例如 AAPL", id="add-underlying",
+                                classes="form-input")
+
+                with Horizontal(classes="form-row"):
+                    yield Label("[red]★[/red] 履約價 [dim](Strike)[/dim]:", classes="form-label")
+                    yield Input(value=strike_val, placeholder="正數，例如 150.0", id="add-strike",
+                                classes="form-input")
+
+                with Horizontal(classes="form-row"):
+                    yield Label("[red]★[/red] 到期日 [dim](Expiry)[/dim]:", classes="form-label")
+                    yield Input(value=exp_val, placeholder="YYYY-MM-DD，例如 2026-06-19", id="add-expiry",
+                                classes="form-input")
+
+                with Horizontal(classes="form-row"):
+                    yield Label("選擇權類型 [dim](Type)[/dim]:", classes="form-label")
+                    yield Select(opt_types, value=opt_type_val, id="add-option-type")
+
+                with Horizontal(classes="form-row"):
+                    yield Label("合約乘數 [dim](Multiplier)[/dim]:", classes="form-label")
+                    yield Input(value=mult_val, placeholder="預設為 100", id="add-multiplier",
+                                classes="form-input")
+
+            with Horizontal(classes="form-row"):
+                yield Label("持倉方向 [dim](Side)[/dim]:", classes="form-label")
+                yield Select(
+                    [("Long 多/做多", "long"), ("Short 空/放空", "short")],
+                    value=side_val, id="add-side"
+                )
 
             with Horizontal(classes="form-row"):
                 yield Label("[red]★[/red] 數量 [dim](Qty)[/dim]:", classes="form-label")
-                yield Input(placeholder="正數，例如 100", id="add-qty",
+                yield Input(value=qty_val, placeholder="正數，例如 100", id="add-qty",
                             classes="form-input")
 
             with Horizontal(classes="form-row"):
                 yield Label("[yellow]✦[/yellow] 成本 [dim](Cost)[/dim]:", classes="form-label")
-                yield Input(placeholder="正數，例如 150.5（建議填寫）", id="add-cost",
+                yield Input(value=cost_val, placeholder="正數，例如 150.5（建議填寫）", id="add-cost",
                             classes="form-input")
 
             with Horizontal(classes="form-row"):
                 yield Label("市場 [dim](Market)[/dim]:", classes="form-label")
-                yield Select(markets, value="US", id="add-market")
+                yield Select(markets, value=m_val, id="add-market")
 
             with Horizontal(classes="form-row"):
                 yield Label("交易所 [dim](Exch)[/dim]:", classes="form-label")
-                yield Input(placeholder="例如 NYSE, TSE [dim](選填)[/dim]", id="add-exch",
+                yield Input(value=exch_val, placeholder="例如 NYSE, TSE [dim](選填)[/dim]", id="add-exch",
                             classes="form-input")
 
             with Horizontal(classes="form-row"):
                 yield Label("貨幣 [dim](Currency)[/dim]:", classes="form-label")
-                yield Input(value="USD", placeholder="例如 USD 或 TWD", id="add-curr",
+                yield Input(value=curr_val, placeholder="例如 USD 或 TWD", id="add-curr",
                             classes="form-input")
 
             with Horizontal(classes="form-row"):
                 yield Label("備註 [dim](Notes)[/dim]:", classes="form-label")
-                yield Input(placeholder="自訂備註 [dim](選填)[/dim]", id="add-notes",
+                yield Input(value=notes_val, placeholder="自訂備註 [dim](選填)[/dim]", id="add-notes",
                             classes="form-input")
 
             with Horizontal(classes="form-row"):
                 yield Label("板塊 [dim](Sector)[/dim]:", classes="form-label")
-                yield Input(placeholder="例如 Technology [dim](選填)[/dim]", id="add-sector",
+                yield Input(value=sect_val, placeholder="例如 Technology [dim](選填)[/dim]", id="add-sector",
                             classes="form-input")
 
             yield Label("", id="add-error")
             with Horizontal(id="add-buttons"):
-                yield Button("確認新增", variant="primary", id="confirm")
+                yield Button(btn_label, variant="primary", id="confirm")
                 yield Button("取消", variant="default", id="cancel")
 
     def on_mount(self) -> None:
-        # Start focus on first meaningful field
-        self.query_one("#add-symbol", Input).focus()
+        t_val = self.query_one("#add-type", Select).value
+        is_opt = (t_val == "option")
+        self.query_one("#option-fields-container").display = is_opt
+        # bug#00047: option symbols are fully derived from underlying/strike/expiry/type,
+        # so the top-level Symbol field is redundant (and was never actually required) —
+        # hide it for option type to avoid asking the user to enter the ticker twice.
+        self.query_one("#symbol-field-row").display = not is_opt
+        if is_opt:
+            self.query_one("#add-underlying", Input).focus()
+        else:
+            self.query_one("#add-symbol", Input).focus()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "add-type":
+            is_opt = (event.value == "option")
+            self.query_one("#option-fields-container").display = is_opt
+            self.query_one("#symbol-field-row").display = not is_opt
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "confirm":
@@ -1097,15 +1192,29 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
             self.dismiss(None)
             return
 
-        # ── Arrow key / Enter navigation between fields ──────────────────
         if key in ("down", "tab", "enter") or key in ("up", "shift+tab"):
             focused = self.focused
             if focused is None:
                 return
 
-            # Find which field index we're currently on
+            # Skip option-specific fields if the container is hidden
+            opt_container = self.query_one("#option-fields-container")
+            is_opt = opt_container.display
+            
+            visible_fids = []
+            for fid in self._FIELD_IDS:
+                if fid in ("add-underlying", "add-strike", "add-expiry", "add-option-type", "add-multiplier"):
+                    if is_opt:
+                        visible_fids.append(fid)
+                elif fid == "add-symbol":
+                    # Hidden for option type (bug#00047) — symbol is auto-derived.
+                    if not is_opt:
+                        visible_fids.append(fid)
+                else:
+                    visible_fids.append(fid)
+
             current_idx = None
-            for i, fid in enumerate(self._FIELD_IDS):
+            for i, fid in enumerate(visible_fids):
                 try:
                     widget = self.query_one(f"#{fid}")
                     if widget is focused:
@@ -1117,16 +1226,15 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
             if current_idx is None:
                 return
 
-            # Prevent Enter from moving focus on Selects (they need Enter to open)
             if key == "enter":
                 from textual.widgets import Select as TxSelect
                 if isinstance(focused, TxSelect):
-                    return   # let Select handle Enter itself
+                    return
                 event.prevent_default()
 
             step = -1 if key in ("up", "shift+tab") else 1
-            next_idx = (current_idx + step) % len(self._FIELD_IDS)
-            next_fid = self._FIELD_IDS[next_idx]
+            next_idx = (current_idx + step) % len(visible_fids)
+            next_fid = visible_fids[next_idx]
             try:
                 self.query_one(f"#{next_fid}").focus()
             except Exception:
@@ -1137,6 +1245,7 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
         account  = self.query_one("#add-account", Input).value.strip()
         symbol   = self.query_one("#add-symbol", Input).value.strip().upper()
         inst_type = self.query_one("#add-type", Select).value
+        side     = self.query_one("#add-side", Select).value
         qty_str  = self.query_one("#add-qty", Input).value.strip()
         cost_str = self.query_one("#add-cost", Input).value.strip()
         market   = self.query_one("#add-market", Select).value
@@ -1147,11 +1256,91 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
 
         error_lbl = self.query_one("#add-error", Label)
 
-        # ── Required field validation ─────────────────────────────────────
-        if not symbol:
+        # For option type, symbol may be left blank (auto-generated from underlying/expiry/strike)
+        if not symbol and inst_type != "option":
             error_lbl.update("❌ [red]★ 商品代碼[/red] 為必填，請輸入代碼（例如 AAPL）")
             self.query_one("#add-symbol", Input).focus()
             return
+
+        # Option validation
+        underlying = None
+        strike = None
+        expiry = None
+        opt_type = None
+        multiplier = None
+
+        if inst_type == "option":
+            underlying = self.query_one("#add-underlying", Input).value.strip().upper()
+            strike_str = self.query_one("#add-strike", Input).value.strip()
+            expiry = self.query_one("#add-expiry", Input).value.strip()
+            opt_type = self.query_one("#add-option-type", Select).value
+            mult_str = self.query_one("#add-multiplier", Input).value.strip()
+
+            if not underlying:
+                error_lbl.update("❌ [red]★ 標的代碼[/red] 為必填，請輸入（例如 AAPL）")
+                self.query_one("#add-underlying", Input).focus()
+                return
+            if not strike_str:
+                error_lbl.update("❌ [red]★ 履約價[/red] 為必填，請輸入履約價格")
+                self.query_one("#add-strike", Input).focus()
+                return
+            try:
+                strike = float(strike_str)
+                if strike <= 0:
+                    error_lbl.update("❌ 履約價必須大於 0")
+                    self.query_one("#add-strike", Input).focus()
+                    return
+            except ValueError:
+                error_lbl.update("❌ 請輸入有效的履約價（數字）")
+                self.query_one("#add-strike", Input).focus()
+                return
+            if not expiry:
+                error_lbl.update("❌ [red]★ 到期日[/red] 為必填，請輸入到期日（YYYY-MM-DD）")
+                self.query_one("#add-expiry", Input).focus()
+                return
+            
+            import re
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", expiry):
+                error_lbl.update("❌ 到期日格式必須為 YYYY-MM-DD，例如 2026-06-19")
+                self.query_one("#add-expiry", Input).focus()
+                return
+
+            if mult_str:
+                try:
+                    multiplier = float(mult_str)
+                    if multiplier <= 0:
+                        error_lbl.update("❌ 合約乘數必須大於 0")
+                        self.query_one("#add-multiplier", Input).focus()
+                        return
+                except ValueError:
+                    error_lbl.update("❌ 請輸入有效的合約乘數（數字）")
+                    self.query_one("#add-multiplier", Input).focus()
+                    return
+            else:
+                multiplier = 100.0
+
+            # bug#00047: the top Symbol field is hidden for option type (it's fully
+            # derived from underlying/strike/expiry/type), so always (re)generate it
+            # here rather than trusting a possibly-stale value left over from editing.
+            try:
+                from datetime import datetime as _dt
+                exp_dt = _dt.strptime(expiry, "%Y-%m-%d")
+                yy = exp_dt.strftime("%y")
+                mm = exp_dt.strftime("%m")
+                dd = exp_dt.strftime("%d")
+                cp = "C" if opt_type == "call" else "P"
+                if market == "TW":
+                    # Taiwan option symbol format: {UNDERLYING}{YYMMD}{C|P}
+                    symbol = f"{underlying}{yy}{mm}{dd}{cp}"
+                else:
+                    # US OCC format: {UNDERLYING}{YYMMDD}{C|P}{STRIKE*1000 zero-padded to 8 digits}
+                    strike_int = int(round(strike * 1000))
+                    symbol = f"{underlying}{yy}{mm}{dd}{cp}{strike_int:08d}"
+            except Exception as _e:
+                error_lbl.update(f"❌ 無法自動生成選擇權代碼: {_e}")
+                self.query_one("#add-expiry", Input).focus()
+                return
+
         if not qty_str:
             error_lbl.update("❌ [red]★ 持股數量[/red] 為必填，請輸入數量")
             self.query_one("#add-qty", Input).focus()
@@ -1168,6 +1357,10 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
             self.query_one("#add-qty", Input).focus()
             return
 
+        # Apply side: short → negative quantity
+        if side == "short":
+            qty = -qty
+
         avg_cost = 0.0
         if cost_str:
             try:
@@ -1181,375 +1374,69 @@ class AddPositionModal(ModalScreen[Optional[Position]]):
                 self.query_one("#add-cost", Input).focus()
                 return
 
-        if market == "TW" and not symbol.endswith(".TW") and not symbol.endswith(".TWO"):
+        # Only append .TW suffix for non-option types (option symbols have their own format)
+        if market == "TW" and inst_type != "option" and not symbol.endswith(".TW") and not symbol.endswith(".TWO"):
             symbol = symbol + ".TW"
 
         try:
-            pos = Position(
-                broker=broker,
-                account=account or "default",
-                symbol=symbol,
-                instrument_type=inst_type,
-                quantity=qty,
-                avg_cost=avg_cost,
-                market=market,
-                exchange=exch or None,
-                currency=curr or "USD",
-                notes=notes or None,
-                sector=sector or None,
-                source="interactive",
-                last_updated=datetime.utcnow()
-            )
+            if self.position:
+                pos = self.position.model_copy(deep=True)
+                pos.broker = broker
+                pos.account = account or "default"
+                pos.symbol = symbol
+                pos.instrument_type = inst_type
+                pos.quantity = qty
+                pos.avg_cost = avg_cost
+                pos.market = market
+                pos.exchange = exch or None
+                pos.currency = curr or "USD"
+                pos.notes = notes or None
+                pos.sector = sector or None
+                pos.last_updated = datetime.utcnow()
+                if inst_type == "option":
+                    pos.underlying = underlying
+                    pos.strike = strike
+                    pos.expiry = expiry
+                    pos.option_type = opt_type
+                    pos.multiplier = multiplier
+                else:
+                    pos.underlying = None
+                    pos.strike = None
+                    pos.expiry = None
+                    pos.option_type = None
+                    pos.multiplier = None
+            else:
+                pos = Position(
+                    broker=broker,
+                    account=account or "default",
+                    symbol=symbol,
+                    instrument_type=inst_type,
+                    quantity=qty,
+                    avg_cost=avg_cost,
+                    market=market,
+                    exchange=exch or None,
+                    currency=curr or "USD",
+                    notes=notes or None,
+                    sector=sector or None,
+                    source="interactive",
+                    last_updated=datetime.utcnow()
+                )
+                if inst_type == "option":
+                    pos.underlying = underlying
+                    pos.strike = strike
+                    pos.expiry = expiry
+                    pos.option_type = opt_type
+                    pos.multiplier = multiplier
+            # bug#00046: invalidate cached quote fields so the next refresh recomputes
+            # a fresh market_value (with correct multiplier) instead of reusing stale
+            # values computed under the old quantity/avg_cost/multiplier/symbol.
+            pos.market_price = None
+            pos.market_value = None
+            pos.prev_close = None
             Position.model_validate(pos)
             self.dismiss(pos)
         except Exception as e:
             error_lbl.update(f"❌ 資料驗證失敗: {e}")
-
-
-class PerformanceHistoryScreen(Screen):
-    """統一風格的績效歷史回測與大盤對比 Screen (TUI 完全內置，不 suspend)。"""
-
-    BINDINGS = [
-        Binding("escape", "go_back", "返回看板"),
-        Binding("q", "go_back", "返回看板", show=False),
-    ]
-
-    DEFAULT_CSS = """
-    PerformanceHistoryScreen {
-        background: #0d1117;
-        layout: horizontal;
-    }
-    #perf-left-panel {
-        width: 30;
-        background: #161b22;
-        border-right: solid #21262d;
-        padding: 1 2;
-        layout: vertical;
-    }
-    #perf-left-title {
-        text-style: bold;
-        color: #58a6ff;
-        margin-bottom: 2;
-    }
-    .perf-select-label {
-        color: #8b949e;
-        margin-top: 1;
-        margin-bottom: 1;
-    }
-    .perf-select {
-        margin-bottom: 2;
-        border: solid #30363d;
-        background: #0d1117;
-    }
-    #perf-run-btn {
-        margin-top: 2;
-        width: 100%;
-    }
-    #perf-right-panel {
-        width: 1fr;
-        padding: 1 2;
-    }
-    #perf-status {
-        color: #8b949e;
-        margin-bottom: 1;
-    }
-    #perf-summary {
-        height: auto;
-        margin-bottom: 1;
-    }
-    #perf-chart {
-        height: 16;
-        color: #58a6ff;
-        border: solid #21262d;
-        padding: 1 2;
-        margin-bottom: 1;
-    }
-    #perf-table-title {
-        text-style: bold;
-        color: #f0f6fc;
-        margin-top: 1;
-        margin-bottom: 1;
-    }
-    #perf-table {
-        height: 12;
-        border: solid #21262d;
-    }
-    #perf-events-title {
-        text-style: bold;
-        color: #f0f6fc;
-        margin-top: 1;
-        margin-bottom: 1;
-    }
-    #perf-events-table {
-        height: 8;
-        border: solid #21262d;
-    }
-    """
-
-    def __init__(self, user: str, positions: list[Position]) -> None:
-        super().__init__()
-        self.user = user
-        self.positions = positions
-
-    def compose(self) -> ComposeResult:
-        periods = [("近 60 天", "1"), ("近 180 天", "2"), ("YTD", "3")]
-        benchmarks = [("SPY", "1"), ("QQQ", "2"), ("^GSPC", "3"), ("停用", "4")]
-        
-        with Container(id="perf-left-panel"):
-            yield Label("📊 績效歷史回測", id="perf-left-title")
-            yield Label("選擇比較期間:", classes="perf-select-label")
-            yield Select(periods, value="1", id="perf-period")
-            yield Label("選擇比較基準:", classes="perf-select-label")
-            yield Select(benchmarks, value="1", id="perf-benchmark")
-            yield Button("開始分析", variant="primary", id="perf-run-btn")
-            
-        with ScrollableContainer(id="perf-right-panel"):
-            yield Label("💡 請選擇左側參數後點擊「開始分析」", id="perf-status")
-            yield Static("", id="perf-summary")
-            yield Static("", id="perf-chart")
-            yield Label("每週績效明細", id="perf-table-title")
-            yield DataTable(id="perf-table")
-            yield Label("📅 近期重大總經事件 (未來 90 天)", id="perf-events-title")
-            yield DataTable(id="perf-events-table")
-            yield Footer()
-
-    def on_mount(self) -> None:
-        self.query_one("#perf-run-btn", Button).focus()
-        self.query_one("#perf-table", DataTable).add_columns("週節點", "組合市值 (USD)", "週變動", "基準指數", "超額")
-        self.query_one("#perf-events-table", DataTable).add_columns("日期", "事件", "距今")
-
-    def action_go_back(self) -> None:
-        self.dismiss()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "perf-run-btn":
-            self._start_backtest()
-
-    def _start_backtest(self) -> None:
-        period_idx = self.query_one("#perf-period", Select).value
-        bm_idx = self.query_one("#perf-benchmark", Select).value
-        
-        self.query_one("#perf-status", Label).update("🔍 正在下載行情與計算績效，請稍候...")
-        self.query_one("#perf-run-btn", Button).disabled = True
-        self.run_backtest_calc(period_idx, bm_idx)
-
-    @work(thread=True)
-    def run_backtest_calc(self, period_idx: str, bm_idx: str) -> None:
-        from datetime import datetime as dt_cls, timedelta, date as date_type
-        import math
-        from .cli import get_upcoming_macro_events, draw_history_chart
-        from .quotes import fetch_historical_prices_weekly
-        
-        tradeable = [
-            p for p in self.positions
-            if p.instrument_type in ("stock", "etf", "other")
-            and p.quantity and p.quantity > 0
-            and p.currency.upper() == "USD"
-        ]
-        
-        if not tradeable:
-            self.app.call_from_thread(self._on_calc_error, "找不到可回測的 USD 計價持倉 (stock/ETF)。")
-            return
-            
-        today = datetime.utcnow().date()
-        if period_idx == "1":
-            days = 60
-            start_date = today - timedelta(days=60)
-            period_label = "近 60 天"
-        elif period_idx == "2":
-            days = 180
-            start_date = today - timedelta(days=180)
-            period_label = "近 180 天"
-        else:
-            start_date = date_type(today.year, 1, 1)
-            days = (today - start_date).days
-            period_label = f"YTD ({today.year} 年初至今)"
-
-        bm_map = {"1": "SPY", "2": "QQQ", "3": "^GSPC", "4": "none"}
-        bm_symbol = bm_map[bm_idx]
-        use_benchmark = bm_symbol != "none"
-
-        week_dates = []
-        cursor = start_date
-        while cursor <= today:
-            week_dates.append(cursor)
-            cursor += timedelta(days=7)
-        if not week_dates or week_dates[-1] < today:
-            week_dates.append(today)
-
-        start_dt = dt_cls.combine(start_date, dt_cls.min.time())
-        end_dt = dt_cls.combine(today, dt_cls.min.time())
-        
-        symbols = [p.symbol for p in tradeable]
-        unique_syms = list(dict.fromkeys(symbols))
-        
-        try:
-            price_data = fetch_historical_prices_weekly(unique_syms, start_dt, end_dt)
-        except Exception as e:
-            self.app.call_from_thread(self._on_calc_error, f"下載歷史股價失敗: {e}")
-            return
-            
-        has_any_data = any(bool(v) for v in price_data.values())
-        if not has_any_data:
-            self.app.call_from_thread(self._on_calc_error, "無法從網路下載歷史股價。")
-            return
-
-
-        port_weekly = []
-        broker_set = sorted(set(p.broker for p in tradeable))
-        broker_weekly = {b: [] for b in broker_set}
-
-        for wd in week_dates:
-            week_total = 0.0
-            broker_totals = {b: 0.0 for b in broker_set}
-            for pos in tradeable:
-                pm = price_data.get(pos.symbol, {})
-                p_price = nearest_price(pm, wd)
-                if p_price is not None and not math.isnan(p_price):
-                    val = p_price * pos.quantity
-                    week_total += val
-                    broker_totals[pos.broker] = broker_totals.get(pos.broker, 0.0) + val
-            port_weekly.append(week_total)
-            for b in broker_set:
-                broker_weekly[b].append(broker_totals.get(b, 0.0))
-
-        valid_mask = [v > 0 for v in port_weekly]
-        if sum(valid_mask) < 2:
-            self.app.call_from_thread(self._on_calc_error, "有效歷史資料節點不足 2 個。")
-            return
-
-        filt_dates = [week_dates[i] for i in range(len(week_dates)) if valid_mask[i]]
-        filt_port = [port_weekly[i] for i in range(len(port_weekly)) if valid_mask[i]]
-        filt_broker = {b: [broker_weekly[b][i] for i in range(len(week_dates)) if valid_mask[i]] for b in broker_set}
-
-        bm_weekly = [None] * len(filt_dates)
-        bm_return = None
-        alpha = None
-        if use_benchmark:
-            try:
-                bm_price_data = fetch_historical_prices_weekly([bm_symbol], start_dt, end_dt)
-                bm_pm = bm_price_data.get(bm_symbol, {})
-                if bm_pm:
-                    bm_price_0 = nearest_price(bm_pm, filt_dates[0])
-                    port_val_0 = filt_port[0]
-                    if bm_price_0 and port_val_0 > 0:
-                        bm_shares = port_val_0 / bm_price_0
-                        for i, wd in enumerate(filt_dates):
-                            bm_p = nearest_price(bm_pm, wd)
-                            if bm_p is not None:
-                                bm_weekly[i] = bm_shares * bm_p
-
-                        bm_first = next((v for v in bm_weekly if v is not None), None)
-                        bm_last = next((v for v in reversed(bm_weekly) if v is not None), None)
-                        if bm_first and bm_last and bm_first > 0:
-                            bm_return = (bm_last / bm_first) - 1.0
-                else:
-                    use_benchmark = False
-            except Exception:
-                use_benchmark = False
-
-        port_return = None
-        if filt_port[0] > 0:
-            port_return = (filt_port[-1] / filt_port[0]) - 1.0
-            if bm_return is not None:
-                alpha = port_return - bm_return
-
-        chart_str = ""
-        try:
-            chart_str = draw_history_chart(
-                filt_dates, filt_port,
-                bm_vals=bm_weekly if use_benchmark else None,
-                broker_weekly=filt_broker if len(broker_set) > 1 else None,
-                bm_label=bm_symbol,
-                width=66, height=12
-            )
-        except Exception as e:
-            chart_str = f"圖表產生失敗: {e}"
-
-        summary_str = ""
-        if port_return is not None:
-            pr_c = "green" if port_return >= 0 else "red"
-            pr_s = "+" if port_return >= 0 else ""
-            summary_str += f"組合回報: [bold {pr_c}]{pr_s}{port_return * 100:.2f}%[/]   "
-        if use_benchmark and bm_return is not None:
-            bm_c = "green" if bm_return >= 0 else "red"
-            bm_s = "+" if bm_return >= 0 else ""
-            summary_str += f"{bm_symbol}: [bold {bm_c}]{bm_s}{bm_return * 100:.2f}%[/]   "
-        if alpha is not None:
-            al_c = "green" if alpha >= 0 else "red"
-            al_s = "+" if alpha >= 0 else ""
-            summary_str += f"Alpha: [bold {al_c}]{al_s}{alpha * 100:.2f}%[/]   "
-        if filt_port:
-            summary_str += f"\n當前市值: [bold white]${filt_port[-1]:,.0f}[/bold white]"
-
-        table_rows = []
-        prev_pv = None
-        for i, wd in enumerate(filt_dates):
-            pv = filt_port[i]
-            chg_str = "—"
-            if prev_pv is not None and prev_pv > 0:
-                diff = pv - prev_pv
-                pct = diff / prev_pv * 100
-                cc = "green" if diff >= 0 else "red"
-                cs = "+" if diff >= 0 else ""
-                chg_str = f"[{cc}]{cs}${diff:,.0f} ({cs}{pct:.1f}%)[/{cc}]"
-                
-            bm_str = "—"
-            rel_str = "—"
-            if use_benchmark:
-                bm_v = bm_weekly[i]
-                bm_str = f"${bm_v:,.0f}" if bm_v is not None else "—"
-                if bm_v is not None and bm_v > 0:
-                    rel_pct = (pv / bm_v - 1) * 100
-                    rc = "green" if rel_pct >= 0 else "red"
-                    rs = "+" if rel_pct >= 0 else ""
-                    rel_str = f"[{rc}]{rs}{rel_pct:.1f}%[/{rc}]"
-            table_rows.append((wd.strftime("%Y-%m-%d"), f"${pv:,.0f}", chg_str, bm_str, rel_str))
-            prev_pv = pv
-
-        events = []
-        try:
-            raw_events = get_upcoming_macro_events()
-            for ev_date, ev_label, time_str in raw_events:
-                days_away = (ev_date - today).days
-                event_name = {
-                    "▼FED": "FED FOMC 利率決議",
-                    "★NFP": "非農就業報告 (NFP)",
-                    "◆CPI": "CPI 通膨指數公佈",
-                }.get(ev_label, ev_label)
-                events.append((ev_date.strftime("%Y-%m-%d"), f"{ev_label} {event_name} ({time_str})", f"{days_away} 天後"))
-        except Exception:
-            pass
-
-        result = {
-            "period_label": period_label,
-            "summary": summary_str,
-            "chart": chart_str,
-            "table_rows": table_rows,
-            "events": events
-        }
-        self.app.call_from_thread(self._on_calc_success, result)
-
-    def _on_calc_error(self, err_msg: str) -> None:
-        self.query_one("#perf-status", Label).update(f"❌ 錯誤: {err_msg}")
-        self.query_one("#perf-run-btn", Button).disabled = False
-
-    def _on_calc_success(self, res: dict) -> None:
-        self.query_one("#perf-status", Label).update(f"✅ 績效歷史分析完成 ({res['period_label']})")
-        self.query_one("#perf-run-btn", Button).disabled = False
-        
-        self.query_one("#perf-summary", Static).update(Panel(res["summary"], border_style="yellow", title="📊 績效摘要"))
-        self.query_one("#perf-chart", Static).update(res["chart"])
-        
-        table = self.query_one("#perf-table", DataTable)
-        table.clear()
-        for row in res["table_rows"]:
-            table.add_row(*row)
-            
-        evt_table = self.query_one("#perf-events-table", DataTable)
-        evt_table.clear()
-        for r in res["events"]:
-            evt_table.add_row(*r)
 
 
 class FieldEditModal(ModalScreen[Optional[str]]):
@@ -1721,60 +1608,6 @@ class PositionActionsModal(ModalScreen[Optional[str]]):
             self.dismiss(None)
 
 
-class DeleteConfirmModal(ModalScreen[bool]):
-    """確認刪除部位對話框 (TUI Modal)。"""
-    DEFAULT_CSS = """
-    DeleteConfirmModal {
-        align: center middle;
-    }
-    #delete-dialog {
-        width: 44;
-        height: auto;
-        border: thick $error;
-        background: $panel;
-        padding: 1 2;
-    }
-    #delete-msg {
-        margin-bottom: 1;
-    }
-    #delete-buttons {
-        height: auto;
-        align: center middle;
-        margin-top: 1;
-    }
-    #delete-buttons Button {
-        margin: 0 1;
-    }
-    """
-
-    def __init__(self, pos: Position) -> None:
-        super().__init__()
-        self.pos = pos
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="delete-dialog"):
-            yield Static(f"[bold red]⚠️ 確定要移除此持倉部位？[/bold red]\n\n[cyan]{self.pos.broker}[/] - [bold white]{self.pos.symbol}[/]", id="delete-msg")
-            with Horizontal(id="delete-buttons"):
-                yield Button("確定刪除", variant="error", id="confirm")
-                yield Button("取消", variant="default", id="cancel")
-
-    def on_mount(self) -> None:
-        self.query_one("#cancel").focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(event.button.id == "confirm")
-
-    def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.dismiss(False)
-        elif event.key in ("left", "right"):
-            confirm_btn = self.query_one("#confirm")
-            cancel_btn = self.query_one("#cancel")
-            if self.focused == confirm_btn:
-                cancel_btn.focus()
-            else:
-                confirm_btn.focus()
-
 
 class AdjustPositionsModal(ModalScreen[Optional[str]]):
     """Adjust Positions choices overlay modal in TUI."""
@@ -1805,6 +1638,8 @@ class AdjustPositionsModal(ModalScreen[Optional[str]]):
             yield Label("[bold cyan]部位調整 (Adjust Positions)[/]", id="adjust-title")
             yield OptionList(
                 Option("➕ 新增部位 (Add Position)", id="add"),
+                Option("✏️ 更改部位 (Edit Position)", id="edit"),
+                Option("🗑️ 刪除部位 (Delete Position)", id="delete"),
                 Option("💡 提示: 表格內可用上下左右選取格子 + Enter 編輯", id="tip"),
                 Option("❌ 返回", id="cancel"),
                 id="adjust-list"
@@ -1819,6 +1654,128 @@ class AdjustPositionsModal(ModalScreen[Optional[str]]):
     def on_key(self, event) -> None:
         if event.key == "escape":
             self.dismiss(None)
+
+
+class ChoosePositionModal(ModalScreen[Optional[Position]]):
+    """Modal to choose an existing position for editing or deletion."""
+    DEFAULT_CSS = """
+    ChoosePositionModal {
+        align: center middle;
+    }
+    #choose-dialog {
+        width: 65;
+        height: auto;
+        border: thick $primary;
+        background: $panel;
+        padding: 1 2;
+    }
+    #choose-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #choose-list {
+        height: 12;
+        margin-bottom: 1;
+        border: solid $accent;
+    }
+    """
+
+    def __init__(self, positions: list[Position], action_type: str) -> None:
+        super().__init__()
+        self.positions = positions
+        self.action_type = action_type # "edit" or "delete"
+
+    def compose(self) -> ComposeResult:
+        action_label = "✏️ 選擇要修改的部位" if self.action_type == "edit" else "🗑️ 選擇要刪除的部位"
+        options = []
+        for i, p in enumerate(self.positions):
+            desc = f"{p.broker.upper()} - {p.account or 'default'} - {p.symbol} ({p.instrument_type}, {p.quantity:,.2f}股)"
+            options.append(Option(desc, id=str(i)))
+        options.append(Option("❌ 取消 (Cancel)", id="cancel"))
+
+        with Vertical(id="choose-dialog"):
+            yield Label(f"[bold cyan]{action_label}[/]", id="choose-title")
+            yield OptionList(*options, id="choose-list")
+
+    def on_mount(self) -> None:
+        self.query_one("#choose-list", OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        val = event.option.id
+        if val == "cancel":
+            self.dismiss(None)
+        else:
+            idx = int(val)
+            self.dismiss(self.positions[idx])
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class DeleteConfirmModal(ModalScreen[bool]):
+    """Confirmation dialog for deleting a position."""
+    DEFAULT_CSS = """
+    DeleteConfirmModal {
+        align: center middle;
+    }
+    #delete-confirm-dialog {
+        width: 50;
+        height: auto;
+        border: thick red;
+        background: $panel;
+        padding: 1 2;
+    }
+    #delete-confirm-title {
+        text-style: bold;
+        color: red;
+        margin-bottom: 1;
+    }
+    #delete-confirm-msg {
+        margin-bottom: 1;
+        height: auto;
+    }
+    #delete-confirm-buttons {
+        height: auto;
+        align: right middle;
+    }
+    #delete-confirm-buttons Button {
+        margin-left: 1;
+    }
+    """
+
+    def __init__(self, position: Position) -> None:
+        super().__init__()
+        self.position = position
+
+    def compose(self) -> ComposeResult:
+        desc = f"{self.position.broker.upper()} - {self.position.account or 'default'} - {self.position.symbol} ({self.position.instrument_type})"
+        with Vertical(id="delete-confirm-dialog"):
+            yield Label("⚠️ 刪除確認 (Confirm Deletion)", id="delete-confirm-title")
+            yield Label(
+                f"您確定要[bold red]完整刪除[/bold red]以下部位嗎？此操作無法復原：\n\n[cyan]{desc}[/]",
+                id="delete-confirm-msg"
+            )
+            with Horizontal(id="delete-confirm-buttons"):
+                yield Button("確認刪除", variant="error", id="confirm")
+                yield Button("取消", variant="default", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel").focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm")
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(False)
+        elif event.key in ("left", "right"):
+            confirm_btn = self.query_one("#confirm")
+            cancel_btn = self.query_one("#cancel")
+            if self.focused == confirm_btn:
+                cancel_btn.focus()
+            else:
+                confirm_btn.focus()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Upcoming Events Screen
@@ -2003,7 +1960,7 @@ class UpcomingEventsScreen(Screen):
         import concurrent.futures
         import yfinance as yf
         from .quotes import _normalize_symbol_for_yf
-        from .cli import get_upcoming_macro_events
+        from .shared import get_upcoming_macro_events
 
         # 1. Gather unique symbols
         portfolio_tickers = set()
@@ -2017,7 +1974,7 @@ class UpcomingEventsScreen(Screen):
         ticker_to_data = fetch_earnings_calendar(unique_tickers)
 
         today = datetime.utcnow().date()
-        start_date = today - timedelta(days=30)
+        start_date = today  # 只顯示今天(含)以後的事件，過去事件不再列出
         cutoff = today + timedelta(days=90)
 
         events = []
@@ -2051,10 +2008,10 @@ class UpcomingEventsScreen(Screen):
                         events.append((d, label_base))
 
         # Add macro events
-        macro_list = get_upcoming_macro_events(days=90, start_days_ago=30)
+        macro_list = get_upcoming_macro_events(days=90, start_days_ago=0)
         for ev_date, ev_label, time_str in macro_list:
             if start_date <= ev_date <= cutoff:
-                from .cli import MACRO_EVENT_NAMES
+                from .shared import MACRO_EVENT_NAMES
                 event_name = MACRO_EVENT_NAMES.get(ev_label, ev_label)
                 events.append((ev_date, f"{event_name} ({time_str})"))
 
@@ -2099,18 +2056,20 @@ class DashboardScreen(Screen):
         Binding("1",   "adjust_positions",     "部位調整"),
         Binding("2",   "refresh_now",          "立即重整"),
         Binding("3",   "logout",               "安全登出"),
-        Binding("4",   "performance_history",  "歷史績效"),
-        Binding("5",   "upcoming_events",      "近期重大事件"),
-        Binding("6",   "save_snapshot",        "儲存快照"),
+        Binding("4",   "upcoming_events",      "近期重大事件"),
+        Binding("5",   "save_snapshot",        "儲存快照"),
+        Binding("6",   "active_etfs",          "主動式 ETF 排行"),
+        Binding("7",   "options_watchlist",    "期權觀察清單"),
         Binding("r",   "refresh_now",          "重整",   show=False),
         Binding("q",   "logout",               "登出",   show=False),
         Binding("ctrl+c", "logout",            "強制登出", show=False),
     ]
 
-    def __init__(self, user: str, positions: list[Position], rate: float) -> None:
+    def __init__(self, user: str, positions: list[Position], cash_positions: list[CashPosition], rate: float) -> None:
         super().__init__()
         self._user: str              = user
         self._positions: list[Position] = positions
+        self._cash_positions: list[CashPosition] = cash_positions
         self._rate: float            = rate
         self._loading: bool          = False
         self.row_data: list[Optional[Position]] = []
@@ -2128,8 +2087,9 @@ class DashboardScreen(Screen):
                 yield OptionList(
                     Option("📝 部位調整", id="adjust"),
                     Option("🔄 立即重整", id="refresh"),
-                    Option("📊 歷史績效", id="history"),
                     Option("📅 近期重大事件", id="upcoming_events"),
+                    Option("📈 主動式 ETF 排行", id="active_etfs"),
+                    Option("🎯 期權觀察清單", id="options_watchlist"),
                     Option("📸 儲存快照", id="snapshot"),
                     Option("🚪 安全登出", id="logout"),
                     id="sidebar-nav"
@@ -2144,6 +2104,9 @@ class DashboardScreen(Screen):
                     yield Static("", id="broker-dist")
                     yield Static("", id="pnl-leaderboard")
                     yield Static("", id="recent-events-panel")
+                with Horizontal(id="strategy-panels"):
+                    yield Static("", id="etf-conclusions-panel")
+                    yield Static("", id="options-flow-panel")
         yield Footer()
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
@@ -2183,12 +2146,14 @@ class DashboardScreen(Screen):
             self.action_adjust_positions()
         elif action == "refresh":
             self.action_refresh_now()
-        elif action == "history":
-            self.action_performance_history()
         elif action == "snapshot":
             self.action_save_snapshot()
         elif action == "upcoming_events":
             self.action_upcoming_events()
+        elif action == "active_etfs":
+            self.action_active_etfs()
+        elif action == "options_watchlist":
+            self.action_options_watchlist()
         elif action == "logout":
             self.action_logout()
 
@@ -2234,7 +2199,7 @@ class DashboardScreen(Screen):
         if new_val is None:
             return
 
-        positions = load_manual_positions(user=self._user)
+        positions, cash_positions = load_manual_positions(user=self._user)
         target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
         if not target:
             return
@@ -2270,6 +2235,12 @@ class DashboardScreen(Screen):
                 elif new_val == "HK":
                     target.exchange = "HKEX"
 
+        # bug#00046: invalidate cached quote fields so the edited quantity/cost/symbol
+        # is reflected in a freshly-computed market_value instead of a stale cached one.
+        target.market_price = None
+        target.market_value = None
+        target.prev_close = None
+
         try:
             idx = positions.index(target)
             validated = Position.model_validate(target.model_dump())
@@ -2298,10 +2269,13 @@ class DashboardScreen(Screen):
                 new_cost = target.avg_cost or dup.avg_cost
             dup.quantity = new_qty
             dup.avg_cost = new_cost
+            dup.market_price = None
+            dup.market_value = None
+            dup.prev_close = None
             dup.last_updated = datetime.utcnow()
             positions.remove(target)
 
-        save_manual_positions(positions, user=self._user)
+        save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
         self._do_refresh_worker()
 
     def _handle_position_action(self, pos: Position, action: Optional[str]) -> None:
@@ -2335,7 +2309,7 @@ class DashboardScreen(Screen):
         if new_val is None:
             return
 
-        positions = load_manual_positions(user=self._user)
+        positions, cash_positions = load_manual_positions(user=self._user)
         target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
         if not target:
             return
@@ -2360,7 +2334,7 @@ class DashboardScreen(Screen):
         except Exception:
             return
 
-        save_manual_positions(positions, user=self._user)
+        save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
         self._do_refresh_worker()
 
     def _handle_broker_edit(self, pos: Position, broker: Optional[str]) -> None:
@@ -2386,7 +2360,7 @@ class DashboardScreen(Screen):
         if acc_val.upper() in ["NONE", "CLEAR", ""]:
             acc_val = ""
 
-        positions = load_manual_positions(user=self._user)
+        positions, cash_positions = load_manual_positions(user=self._user)
         target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
         if not target:
             return
@@ -2422,20 +2396,23 @@ class DashboardScreen(Screen):
                 new_cost = target.avg_cost or dup.avg_cost
             dup.quantity = new_qty
             dup.avg_cost = new_cost
+            dup.market_price = None
+            dup.market_value = None
+            dup.prev_close = None
             dup.last_updated = datetime.utcnow()
             positions.remove(target)
 
-        save_manual_positions(positions, user=self._user)
+        save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
         self._do_refresh_worker()
 
     def _handle_delete_confirm(self, pos: Position, confirmed: Optional[bool]) -> None:
         if not confirmed:
             return
-        positions = load_manual_positions(user=self._user)
+        positions, cash_positions = load_manual_positions(user=self._user)
         target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
         if target:
             positions.remove(target)
-            save_manual_positions(positions, user=self._user)
+            save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
             self._do_refresh_worker()
 
     # ── Header tick (every 1s, lightweight) ──────────────────────────────────
@@ -2488,7 +2465,13 @@ class DashboardScreen(Screen):
             self.query_one("#recent-events-panel", Static).update(
                 self._build_recent_events_panel()
             )
-            
+            self.query_one("#etf-conclusions-panel", Static).update(
+                self._build_etf_conclusions_panel()
+            )
+            self.query_one("#options-flow-panel", Static).update(
+                self._build_options_flow_panel()
+            )
+
             if had_focus:
                 table.focus()
             return
@@ -2572,6 +2555,12 @@ class DashboardScreen(Screen):
         self.query_one("#recent-events-panel", Static).update(
             self._build_recent_events_panel()
         )
+        self.query_one("#etf-conclusions-panel", Static).update(
+            self._build_etf_conclusions_panel()
+        )
+        self.query_one("#options-flow-panel", Static).update(
+            self._build_options_flow_panel()
+        )
 
         # Restore coordinate and focus state
         if len(self.row_data) > 0:
@@ -2600,9 +2589,9 @@ class DashboardScreen(Screen):
         try:
             self._rate      = _get_cached_usdtwd_rate()
             if load_from_disk:
-                self._positions = load_manual_positions(user=self._user)
+                self._positions, self._cash_positions = load_manual_positions(user=self._user)
             if self._positions:
-                self._positions = enrich_positions_with_quotes(self._positions, delay=0.1)
+                self._positions = enrich_positions_with_quotes(self._positions)
         except Exception:
             pass
         finally:
@@ -2623,7 +2612,7 @@ class DashboardScreen(Screen):
         import concurrent.futures
         import yfinance as yf
         from .quotes import _normalize_symbol_for_yf
-        from .cli import get_upcoming_macro_events
+        from .shared import get_upcoming_macro_events
 
         try:
             portfolio_tickers = set()
@@ -2637,7 +2626,7 @@ class DashboardScreen(Screen):
             ticker_to_data = fetch_earnings_calendar(unique_tickers)
 
             today = datetime.utcnow().date()
-            start_date = today - timedelta(days=30)
+            start_date = today  # 只顯示今天(含)以後的事件，過去事件不再列出
             cutoff = today + timedelta(days=90)
 
             events = []
@@ -2669,8 +2658,8 @@ class DashboardScreen(Screen):
                         if start_date <= d <= cutoff:
                             events.append((d, label_base))
 
-            from .cli import MACRO_EVENT_NAMES
-            macro_list = get_upcoming_macro_events(days=90, start_days_ago=30)
+            from .shared import MACRO_EVENT_NAMES
+            macro_list = get_upcoming_macro_events(days=90, start_days_ago=0)
             for ev_date, ev_label, time_str in macro_list:
                 event_name = MACRO_EVENT_NAMES.get(ev_label, ev_label)
                 events.append((ev_date, f"{event_name} ({time_str})"))
@@ -2721,9 +2710,62 @@ class DashboardScreen(Screen):
             lines.append(f"[cyan]{date_str}[/cyan] [dim]({days_str:^4})[/dim] {simplified}")
             
         if len(recent) > 8:
-            lines.append(f"[dim]... 還有 {len(recent) - 8} 個事件 (按 [bold]5[/bold] 詳情)[/dim]")
+            lines.append(f"[dim]... 還有 {len(recent) - 8} 個事件 (按 [bold]4[/bold] 詳情)[/dim]")
             
         return Panel("\n".join(lines), title="📅 近期重大事件", border_style="cyan")
+
+    def _build_etf_conclusions_panel(self) -> Panel:
+        """bug#00061: 首頁「交易策略建議」卡片之一 —— 主動式ETF跨基金持股趨勢結論。
+        100% 離線本機運算（讀取 etf_cache/history/*.jsonl 真實累積快照），無網路請求；
+        與「主動式ETF排行」頁面的進階分析畫面共用同一份 generate_etf_conclusions()
+        輸出，兩處文字保證一致。資料不足時誠實顯示收集進度，不生成假結論。
+        """
+        from rich.panel import Panel
+
+        all_symbols = US_ACTIVE_TICKERS + TWD_ACTIVE_TICKERS
+        snapshots_by_etf = {sym: load_etf_daily_snapshots(sym) for sym in all_symbols}
+        report = compute_symbol_trends(snapshots_by_etf, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS)
+        bullets = generate_etf_conclusions(report, top_n=2, positions=self._positions)
+
+        if not bullets:
+            body = (
+                f"[dim]資料收集中：{report['etfs_ready_count']}/{report['etfs_total_count']} "
+                f"檔 ETF 已有足夠真實快照\n尚無法產生趨勢結論，持續使用系統會逐日累積資料\n"
+                f"按 [bold]6[/bold] 查看主動式ETF排行[/dim]"
+            )
+        else:
+            body = "\n".join(bullets) + "\n\n[dim]按 [bold]6[/bold] 查看完整報告[/dim]"
+
+        return Panel(body, title="📊 ETF趨勢結論", border_style="magenta")
+
+    def _build_options_flow_panel(self) -> Panel:
+        """bug#00061: 首頁「交易策略建議」卡片之二 —— 依使用者實際持倉標的的期權
+        建倉/價格波動結論。100% 離線本機運算，與「期權觀察清單」頁面共用同一份
+        generate_options_conclusions() 輸出。資料不足時誠實顯示收集進度。
+        """
+        from rich.panel import Panel
+
+        underlyings = _underlyings_from_positions(self._positions)
+        if not underlyings:
+            return Panel(
+                "[dim]尚無持倉，無法建立期權觀察清單[/dim]",
+                title="🎯 期權觀察結論", border_style="magenta",
+            )
+
+        snapshots_by_underlying = {u: load_options_daily_snapshots(u) for u in underlyings}
+        report = compute_options_flow(snapshots_by_underlying, window_days=OPTIONS_FLOW_WINDOW_DAYS)
+        bullets = generate_options_conclusions(report, top_n=2, positions=self._positions)
+
+        if not bullets:
+            body = (
+                f"[dim]資料收集中：{report['ready_count']}/{report['total_count']} "
+                f"檔標的已有足夠真實快照\n尚無法產生訊號，持續使用系統會逐日累積資料\n"
+                f"按 [bold]7[/bold] 查看期權觀察清單[/dim]"
+            )
+        else:
+            body = "\n".join(bullets) + "\n\n[dim]按 [bold]7[/bold] 查看完整清單[/dim]"
+
+        return Panel(body, title="🎯 期權觀察結論", border_style="magenta")
 
     # ── Action handlers ───────────────────────────────────────────────────────
 
@@ -2734,27 +2776,99 @@ class DashboardScreen(Screen):
     def _handle_adjust_choice(self, choice: Optional[str]) -> None:
         if choice == "add":
             self.app.push_screen(AddPositionModal(), self._handle_add_position_result)
+        elif choice == "edit":
+            positions, _ = load_manual_positions(self._user)
+            if not positions:
+                self.app.notify("⚠️ 目前沒有任何持倉部位可以修改！", severity="warning")
+                return
+            self.app.push_screen(ChoosePositionModal(positions, "edit"), self._handle_edit_choice_result)
+        elif choice == "delete":
+            positions, _ = load_manual_positions(self._user)
+            if not positions:
+                self.app.notify("⚠️ 目前沒有任何持倉部位可以刪除！", severity="warning")
+                return
+            self.app.push_screen(ChoosePositionModal(positions, "delete"), self._handle_delete_choice_result)
+
+    def _handle_edit_choice_result(self, pos: Optional[Position]) -> None:
+        if pos:
+            self.app.push_screen(
+                AddPositionModal(pos),
+                lambda updated_pos: self._handle_edit_position_result(pos, updated_pos)
+            )
+
+    def _handle_edit_position_result(self, old_pos: Position, updated_pos: Optional[Position]) -> None:
+        if updated_pos:
+            positions, cash_positions = load_manual_positions(self._user)
+            for idx, p in enumerate(positions):
+                if (p.broker.lower() == old_pos.broker.lower() and 
+                    (p.account or "").lower() == (old_pos.account or "").lower() and 
+                    p.symbol.upper() == old_pos.symbol.upper() and
+                    p.instrument_type == old_pos.instrument_type):
+                    positions[idx] = updated_pos
+                    break
+            save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
+            self.app.notify("✅ 修改持倉成功！")
+            self._positions = positions
+            self._do_refresh_worker()
+
+    def _handle_delete_choice_result(self, pos: Optional[Position]) -> None:
+        if pos:
+            self.app.push_screen(
+                DeleteConfirmModal(pos),
+                lambda confirmed: self._handle_delete_confirm_result(pos, confirmed)
+            )
+
+    def _handle_delete_confirm_result(self, pos: Position, confirmed: bool | None) -> None:
+        if confirmed:
+            positions, cash_positions = load_manual_positions(self._user)
+            new_positions = []
+            for p in positions:
+                if (p.broker.lower() == pos.broker.lower() and 
+                    (p.account or "").lower() == (pos.account or "").lower() and 
+                    p.symbol.upper() == pos.symbol.upper() and
+                    p.instrument_type == pos.instrument_type):
+                    continue
+                new_positions.append(p)
+            save_manual_positions(new_positions, cash_positions=cash_positions, user=self._user)
+            self.app.notify("🗑️ 部位已刪除成功！")
+            self._positions = new_positions
+            self._do_refresh_worker()
 
     def _handle_add_position_result(self, pos: Optional[Position]) -> None:
         if pos:
-            positions = load_manual_positions(self._user)
+            positions, cash_positions = load_manual_positions(self._user)
             matched = False
             for p in positions:
-                if p.broker.lower() == pos.broker.lower() and (p.account or "").lower() == (pos.account or "").lower() and p.symbol.upper() == pos.symbol.upper():
+                if (p.broker.lower() == pos.broker.lower() and
+                        (p.account or "").lower() == (pos.account or "").lower() and
+                        p.symbol.upper() == pos.symbol.upper() and
+                        p.instrument_type == pos.instrument_type):
                     old_qty = p.quantity
                     new_qty = old_qty + pos.quantity
-                    if new_qty > 0:
-                        if p.avg_cost is not None and pos.avg_cost is not None:
-                            p.avg_cost = (p.avg_cost * old_qty + pos.avg_cost * pos.quantity) / new_qty
+                    same_direction = (old_qty >= 0) == (pos.quantity >= 0)
+                    if same_direction:
+                        # 同方向加碼：以「絕對數量」加權平均成本，多單與空單皆正確
+                        # （舊版只在 new_qty > 0 時計算，導致空單加碼後成本永不更新）
+                        if p.avg_cost is not None and pos.avg_cost is not None and new_qty != 0:
+                            p.avg_cost = (
+                                p.avg_cost * abs(old_qty) + pos.avg_cost * abs(pos.quantity)
+                            ) / abs(new_qty)
                         else:
                             p.avg_cost = pos.avg_cost or p.avg_cost
+                    elif abs(pos.quantity) > abs(old_qty):
+                        # 反向且已翻倉：剩餘部位屬新方向，成本改採新進場成本
+                        p.avg_cost = pos.avg_cost if pos.avg_cost is not None else p.avg_cost
+                    # 反向但未翻倉（部分平倉）：保留原方向平均成本，不變動
                     p.quantity = new_qty
+                    p.market_price = None
+                    p.market_value = None
+                    p.prev_close = None
                     p.last_updated = datetime.utcnow()
                     matched = True
                     break
             if not matched:
                 positions.append(pos)
-            save_manual_positions(positions, self._user)
+            save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
             self.app.notify("✅ 新增持倉成功！")
             self._positions = positions
             self._do_refresh_worker()
@@ -2771,29 +2885,1191 @@ class DashboardScreen(Screen):
         if confirmed:
             self.dismiss(True)
 
-    def action_performance_history(self) -> None:
-        """[4] 歷史績效：推入 PerformanceHistoryScreen，不 suspend。"""
-        latest_positions = load_manual_positions(self._user)
-        self.app.push_screen(PerformanceHistoryScreen(self._user, latest_positions))
-
     def action_save_snapshot(self) -> None:
-        """[6] 儲存快照：背景非阻塞執行，不 suspend。"""
+        """[5] 儲存快照：背景非阻塞執行，不 suspend。"""
         self.app.notify("⚙️ 正在儲存市值快照...")
         self.run_save_snapshot()
 
     @work(thread=True)
     def run_save_snapshot(self) -> None:
-        from .cli import refresh_snapshot as cli_snapshot
-        ctx = SimpleNamespace(obj=self._user)
+        """直接實作快照邏輯，不依賴 cli.py（避免 thread worker 中的 Confirm.ask 問題）。"""
+        from .quotes import enrich_positions_with_quotes, current_portfolio_value
+        from .storage import Storage
+        from .models import PortfolioSnapshot
+        from datetime import datetime as _dt
         try:
-            cli_snapshot(ctx, save=True)
+            positions, _ = load_manual_positions(user=self._user)
+            enriched = enrich_positions_with_quotes(positions)
+            total_val = current_portfolio_value(enriched)
+            storage = Storage(user=self._user)
+            by_broker: dict[str, float] = {}
+            for p in enriched:
+                by_broker[p.broker] = by_broker.get(p.broker, 0.0) + (p.market_value or 0.0)
+            snap = PortfolioSnapshot(
+                timestamp=_dt.utcnow(),
+                total_value=total_val,
+                by_broker=by_broker,
+                positions=enriched,
+                notes="tui_snapshot"
+            )
+            storage.save_snapshot(snap)
             self.app.call_from_thread(self.app.notify, "✅ 市值快照儲存成功！", title="快照")
         except Exception as e:
             self.app.call_from_thread(self.app.notify, f"❌ 儲存快照失敗: {e}", title="快照", severity="error")
 
     def action_upcoming_events(self) -> None:
-        """[5] 近期重大事件：推入 UpcomingEventsScreen，不 suspend。"""
+        """[4] 近期重大事件：推入 UpcomingEventsScreen，不 suspend。"""
         self.app.push_screen(UpcomingEventsScreen(self._user, self._positions, self._rate, self._upcoming_events, self._events_fetched))
+
+    def action_active_etfs(self) -> None:
+        """[6] 主動式 ETF 排行：推入 ActiveETFsScreen，不 suspend。"""
+        self.app.push_screen(ActiveETFsScreen(self._user, self._rate))
+
+    def action_options_watchlist(self) -> None:
+        """[7] 期權觀察清單：推入 OptionsWatchlistScreen，不 suspend。"""
+        self.app.push_screen(OptionsWatchlistScreen(self._user, self._positions))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Active ETFs Screen
+# ─────────────────────────────────────────────────────────────────────────────
+# Ticker universe — single source of truth.
+# All AUM, performance, and holdings come from live yfinance calls (cached daily
+# per-ETF in data/etf_cache/). Symbols that yfinance has no data for simply show
+# "—" / "暫無資料" in the UI — nothing here is backfilled with fabricated data.
+
+US_ACTIVE_TICKERS: list[str] = [
+    # Top 20 largest actively managed ETFs by AUM
+    "DFAC", "JEPI", "JEPQ", "JPST", "DFUS", "DFIV", "DFAI", "DFUV", "DFAS", "DFAT",
+    "DFIC", "JCPB", "DUHP", "DFAU", "JIRE", "AVUV", "JPIE", "JGRO", "CGDV", "ARKK",
+    "SEQUX",
+    # Other active ETFs under consideration (will be filtered by top 30 size)
+    "AVDV", "AVDE", "ARKW", "AVUS", "AVIV", "CGGR", "CGGO", "AVLV", "AVMV", "ARKG",
+    "ARKQ", "ARKF", "DFGR", "DFHV", "DFSV", "DFVX", "MSTY", "CONY", "TSLY", "NVDY",
+    "AMZY", "FBCG", "FMAG", "FDIG", "JGLO", "JUSA", "AVSC", "AVMC", "AVQC", "AVLC",
+    "AVSF", "CGMU", "CGSD", "CGMS", "CGCP", "JEMA", "JGER", "JPMB", "JPIN", "DFIP",
+    "CGIC", "CVGD", "CVSM",
+]
+
+TWD_ACTIVE_TICKERS: list[str] = [
+    "0050.TW", "0056.TW", "00878.TW", "00919.TW", "00929.TW",
+    "00713.TW", "00940.TW", "00757.TW", "00850.TW", "00881.TW",
+    "00900.TW", "00905.TW", "00907.TW", "00915.TW", "00918.TW",
+    "00921.TW", "00922.TW", "00927.TW", "00930.TW", "00933.TW",
+]
+
+_ETF_TOP_N = 30  # ETFs shown per tab (AUM top-30)
+
+# yfinance FundsData.asset_classes keys -> display label. Used to show a fund's
+# full stock/bond/cash/preferred/convertible/other split in the holdings panel,
+# so it isn't limited to just the top named stock-type positions.
+_ASSET_CLASS_LABELS: dict[str, str] = {
+    "stockPosition": "📈 股票",
+    "bondPosition": "📄 債券",
+    "cashPosition": "💵 現金",
+    "preferredPosition": "⭐ 特別股",
+    "convertiblePosition": "🔄 可轉債",
+    "otherPosition": "❔ 其他（含衍生性金融商品等）",
+}
+
+
+class ActiveETFsScreen(Screen):
+    r"""主動式 ETF 績效與持股分析 - 三欄式版面。
+
+    Layout::
+
+        ┌──────────────┬──────────────────────┐
+        │  左欄 50%    │    右欄 50% (上下分割) │
+        │  US / TW 分頁│    持股細節           │
+        │              │    歷史買賣紀錄        │
+        └──────────────┴──────────────────────┘
+    """
+
+    BINDINGS = [
+        Binding("escape", "go_back", "返回看板"),
+        Binding("c",      "clear_cache", "清除快取並重新載入"),
+        Binding("a",      "advanced_analysis", "進階分析"),
+        Binding("q",      "go_back", "返回看板", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    ActiveETFsScreen {
+        background: #0d1117;
+        layout: vertical;
+    }
+    #etf-header {
+        height: auto;
+        padding: 0 1;
+        margin: 1 2 0 2;
+    }
+    #etf-body {
+        height: 1fr;
+        layout: horizontal;
+        margin: 1 2;
+    }
+    /* Left column */
+    #etf-left-col {
+        width: 50%;
+        height: 1fr;
+        layout: vertical;
+        margin-right: 1;
+    }
+    #etf-left-tabbed {
+        height: 1fr;
+        border: tall #334155;
+    }
+    #etf-left-tabbed:focus-within { border: tall $accent; }
+    #etf-us-table, #etf-twd-table {
+        height: 1fr;
+        border: none;
+    }
+    /* Right column (vertical split) */
+    #etf-right-col {
+        width: 50%;
+        height: 1fr;
+        layout: vertical;
+    }
+    #etf-holdings-box {
+        height: 1fr;
+        layout: vertical;
+        margin-bottom: 1;
+    }
+    #etf-holdings-title {
+        height: 1;
+        padding: 0 1;
+        color: $accent;
+        text-style: bold;
+    }
+    #etf-holdings-status {
+        height: 1;
+        padding: 0 1;
+    }
+    #etf-holdings-panel {
+        height: 1fr;
+        border: tall #334155;
+    }
+    #etf-holdings-panel:focus-within { border: tall $accent; }
+    #etf-holdings-table { height: 1fr; border: none; }
+
+    #etf-history-box {
+        height: 1fr;
+        layout: vertical;
+    }
+    #etf-history-title {
+        height: 1;
+        padding: 0 1;
+        color: $accent;
+        text-style: bold;
+    }
+    #etf-history-status {
+        height: 1;
+        padding: 0 1;
+    }
+    #etf-history-panel {
+        height: 1fr;
+        border: tall #334155;
+    }
+    #etf-history-panel:focus-within { border: tall $accent; }
+    #etf-history-table { height: 1fr; border: none; }
+    """
+
+    def __init__(self, user: str, rate: float) -> None:
+        super().__init__()
+        self.user = user
+        self.rate = rate
+        self.etf_cache: dict[str, dict] = {}
+        self.performance_data: dict = {}
+        self.realtime_aums: dict[str, float] = {}
+        self.us_symbols: list[str] = []
+        self.twd_symbols: list[str] = []
+        self.selected_symbol: str | None = None
+
+    # ── Compose ──────────────────────────────────────────────────────────────
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="etf-header")
+        with Horizontal(id="etf-body"):
+            # Left half: ranking
+            with Vertical(id="etf-left-col"):
+                with TabbedContent(id="etf-left-tabbed"):
+                    with TabPane("🇺🇸 美股主動型", id="tab-us-active"):
+                        yield DataTable(id="etf-us-table")
+                    with TabPane("🇹🇼 台股主動型", id="tab-twd-active"):
+                        yield DataTable(id="etf-twd-table")
+            # Right half: split vertically
+            with Vertical(id="etf-right-col"):
+                # Top half: holdings
+                with Vertical(id="etf-holdings-box"):
+                    yield Static("當下持股細節", id="etf-holdings-title")
+                    yield Static("", id="etf-holdings-status")
+                    with Container(id="etf-holdings-panel"):
+                        yield DataTable(id="etf-holdings-table")
+                # Bottom half: history
+                with Vertical(id="etf-history-box"):
+                    yield Static("歷史買賣紀錄", id="etf-history-title")
+                    yield Static("", id="etf-history-status")
+                    with Container(id="etf-history-panel"):
+                        yield DataTable(id="etf-history-table")
+        yield Footer()
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def on_mount(self) -> None:
+        from .storage import (
+            load_etf_symbol_cache,
+            cleanup_old_etf_caches,
+        )
+
+        # Setup tables
+        us_t = self.query_one("#etf-us-table", DataTable)
+        us_t.cursor_type = "row"
+        us_t.add_columns("Symbol", "AUM", "YTD", "1Y", "最大持股")
+
+        twd_t = self.query_one("#etf-twd-table", DataTable)
+        twd_t.cursor_type = "row"
+        twd_t.add_columns("Symbol", "AUM", "YTD", "1Y", "最大持股")
+
+        h_t = self.query_one("#etf-holdings-table", DataTable)
+        h_t.cursor_type = "row"
+        h_t.add_columns("Symbol", "名稱", "權重", "股數", "市值")
+
+        tr_t = self.query_one("#etf-history-table", DataTable)
+        tr_t.cursor_type = "row"
+        tr_t.add_columns("日期", "操作", "Symbol", "股數", "價格", "權重△")
+
+        self._set_header("⏳ 確認快取並載入資料...")
+        self._set_mid_status("[dim]← 選取左欄 ETF 以查看持股[/dim]")
+        self._set_right_status("[dim]← 選取左欄 ETF 以查看歷史[/dim]")
+        us_t.focus()
+
+        # Run 2-week cleanup in background (non-blocking)
+        cleanup_old_etf_caches(max_age_days=14)
+
+        # Load whatever is already cached for immediate display
+        all_symbols = US_ACTIVE_TICKERS + TWD_ACTIVE_TICKERS
+
+        # Trim each symbol's real daily-snapshot history log to the trailing
+        # ~65 days (comfortably covers the 60-day 進階分析 trend window without
+        # growing unbounded).
+        for sym in all_symbols:
+            prune_etf_history(sym, max_age_days=65)
+
+        for sym in all_symbols:
+            cached = load_etf_symbol_cache(sym)
+            if cached:
+                self.etf_cache[sym] = cached
+                if "aum" in cached and cached["aum"] is not None:
+                    self.realtime_aums[sym] = cached["aum"]
+                p = {k: cached[k] for k in ("return_ytd", "return_1y", "price", "change_pct") if k in cached}
+                if p:
+                    self.performance_data[sym] = p
+                # bug#00060: if this symbol's cache already holds real holdings
+                # fetched today (or a prior real fetch) but its history log doesn't
+                # have that date yet — e.g. right after this feature was added —
+                # backfill exactly that one already-real snapshot under its own
+                # actual holdings_as_of_date. Idempotent; never invents new dates.
+                if cached.get("holdings") and cached.get("holdings_as_of_date"):
+                    append_etf_daily_snapshot(
+                        sym, cached["holdings"], cached.get("aum"),
+                        snapshot_date=cached["holdings_as_of_date"],
+                    )
+
+        # Render immediately with whatever cache we have
+        self._render_ranking_tables()
+
+        # Automatically select the first symbol to view details
+        if self.us_symbols:
+            self._refresh_detail_panels(self.us_symbols[0])
+            try:
+                from textual.coordinate import Coordinate
+                us_t.cursor_coordinate = Coordinate(0, 0)
+            except Exception:
+                pass
+
+        # Launch background fetch (fetches what's missing or stale)
+        self.run_background_fetch()
+
+    # ── Status helpers ─────────────────────────────────────────────────────────
+
+    def _set_header(self, status: str) -> None:
+        from rich.panel import Panel as _Panel
+        self.query_one("#etf-header", Static).update(
+            _Panel(
+                f"[bold cyan]📈 主動式 ETF 排行與持股分析[/bold cyan]  [dim]│[/dim]  {status}",
+                border_style="cyan", padding=(0, 1),
+            )
+        )
+
+    def _set_mid_title(self, text: str) -> None:
+        self.query_one("#etf-holdings-title", Static).update(text)
+
+    def _set_right_title(self, text: str) -> None:
+        self.query_one("#etf-history-title", Static).update(text)
+
+    def _set_mid_status(self, text: str) -> None:
+        self.query_one("#etf-holdings-status", Static).update(text)
+
+    def _set_right_status(self, text: str) -> None:
+        self.query_one("#etf-history-status", Static).update(text)
+
+    # ── Keyboard Navigation ───────────────────────────────────────────────────
+
+    def on_key(self, event) -> None:
+        from textual.widgets import Tabs
+        
+        # Right arrow to move rightwards across columns
+        if event.key == "right":
+            focused = self.focused
+            if isinstance(focused, DataTable):
+                if focused.id in ("etf-us-table", "etf-twd-table"):
+                    self.query_one("#etf-holdings-table", DataTable).focus()
+                    event.prevent_default()
+                    event.stop()
+                elif focused.id == "etf-holdings-table":
+                    self.query_one("#etf-history-table", DataTable).focus()
+                    event.prevent_default()
+                    event.stop()
+        # Left arrow to move leftwards across columns
+        elif event.key == "left":
+            focused = self.focused
+            if isinstance(focused, DataTable):
+                if focused.id == "etf-holdings-table":
+                    active_tab = self.query_one(TabbedContent).active
+                    if active_tab == "tab-us-active":
+                        self.query_one("#etf-us-table", DataTable).focus()
+                    else:
+                        self.query_one("#etf-twd-table", DataTable).focus()
+                    event.prevent_default()
+                    event.stop()
+                elif focused.id == "etf-history-table":
+                    self.query_one("#etf-holdings-table", DataTable).focus()
+                    event.prevent_default()
+                    event.stop()
+        # Up arrow at the very top of lists to jump focus to the tab headers
+        elif event.key == "up":
+            focused = self.focused
+            if isinstance(focused, DataTable) and focused.id in ("etf-us-table", "etf-twd-table"):
+                if focused.cursor_row == 0:
+                    try:
+                        self.query_one(Tabs).focus()
+                        event.prevent_default()
+                        event.stop()
+                    except Exception:
+                        pass
+        # Down arrow on tab headers to jump focus to the list table
+        elif event.key == "down":
+            focused = self.focused
+            if isinstance(focused, Tabs):
+                try:
+                    active = self.query_one(TabbedContent).active
+                    if active == "tab-us-active":
+                        self.query_one("#etf-us-table", DataTable).focus()
+                    else:
+                        self.query_one("#etf-twd-table", DataTable).focus()
+                    event.prevent_default()
+                    event.stop()
+                except Exception:
+                    pass
+
+    # ── Background worker ──────────────────────────────────────────────────────
+
+    @work(thread=True)
+    def run_background_fetch(self) -> None:
+        """Parallel fetch of AUM, performance, and holdings for all ETFs."""
+        from concurrent.futures import ThreadPoolExecutor
+        import yfinance as _yf
+        from .storage import (
+            load_etf_symbol_cache, save_etf_symbol_cache,
+            etf_symbol_cache_fresh,
+        )
+        from .quotes import (
+            fetch_active_etf_performance, fetch_etf_holdings,
+            fetch_prices_batch, estimate_shares,
+        )
+
+        all_symbols = US_ACTIVE_TICKERS + TWD_ACTIVE_TICKERS
+
+        # ── 1. Identify stale symbols ─────────────────────────────────────────
+        stale_symbols = [sym for sym in all_symbols if not etf_symbol_cache_fresh(sym)]
+
+        if not stale_symbols:
+            self.app.call_from_thread(
+                self._set_header, "[green]✅ 快取皆為今日最新，已直接載入[/green]"
+            )
+            return
+
+        self.app.call_from_thread(
+            self._set_header, f"⏳ 正在背景更新 {len(stale_symbols)} 個 ETF 的即時數據..."
+        )
+
+        # ── 2. Batch fetch performance for stale symbols ──────────────────────
+        stale_perf = fetch_active_etf_performance(stale_symbols) if stale_symbols else {}
+
+        # ── 3. Fetch AUM, Name, Holdings for each stale symbol ────────────────
+        aums = dict(self.realtime_aums)
+        perf = dict(self.performance_data)
+        etf_cache = dict(self.etf_cache)
+
+        def _fetch_one_etf_details(sym: str) -> tuple[str, float | None, str | None, dict | None]:
+            import time as _time
+            # Add a small delay between requests to prevent Yahoo rate limiting
+            _time.sleep(0.35)
+            try:
+                t = _yf.Ticker(sym)
+                aum_val = t.info.get("totalAssets") or t.info.get("marketCap")
+                aum = float(aum_val) if aum_val else None
+                name = t.info.get("longName") or t.info.get("shortName") or sym
+                holdings_res = fetch_etf_holdings(sym, aum=aum)
+                return sym, aum, name, holdings_res
+            except Exception:
+                try:
+                    holdings_res = fetch_etf_holdings(sym, aum=None)
+                    name = holdings_res.get("name", sym) if holdings_res else sym
+                    return sym, None, name, holdings_res
+                except Exception:
+                    return sym, None, sym, None
+
+        # Fetch in parallel with small concurrency to prevent rate limiting
+        perf_fail_count = 0
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            fetched = list(ex.map(_fetch_one_etf_details, stale_symbols))
+
+        # bug#00061 follow-up: batch-fetch the *real* current price for every
+        # distinct holding symbol seen across all ETFs refreshed this cycle, in one
+        # pass — not per-ETF — since active ETFs' top-10 lists heavily overlap
+        # (mega-caps repeat across many funds), keeping total request volume
+        # bounded (same rate-limit lesson as bug#00058). This real price replaces
+        # estimate_shares()'s old fixed-average-price ($100/$150) assumption, and
+        # is what lets compute_symbol_trends() derive a real share-count delta
+        # instead of relying on weight% alone (which can't tell a real purchase
+        # from a stock simply rallying in price with zero trading).
+        holding_symbols: set[str] = set()
+        for _, _, _, holdings_res in fetched:
+            if holdings_res:
+                for h in holdings_res.get("holdings", []):
+                    if h.get("symbol"):
+                        holding_symbols.add(h["symbol"])
+        price_map = fetch_prices_batch(list(holding_symbols)) if holding_symbols else {}
+
+        for sym, aum, name, holdings_res in fetched:
+            cached = load_etf_symbol_cache(sym)
+            cached["name"] = name or cached.get("name") or sym
+            if aum is not None:
+                cached["aum"] = aum
+                aums[sym] = aum
+            else:
+                cached["aum"] = cached.get("aum")
+
+            # Update performance
+            p_item = stale_perf.get(sym, {})
+            if p_item.get("price") is None:
+                perf_fail_count += 1
+            for k in ("price", "change_pct", "return_ytd", "return_1y"):
+                if k in p_item:
+                    cached[k] = p_item[k]
+
+            p_constructed = {k: cached[k] for k in ("price", "change_pct", "return_ytd", "return_1y") if k in cached}
+            if p_constructed:
+                perf[sym] = p_constructed
+
+            # Update holdings + full stock/bond/cash/other asset-class breakdown
+            if holdings_res:
+                holdings_list = holdings_res.get("holdings", [])
+                for h in holdings_list:
+                    real_price = price_map.get(h.get("symbol"))
+                    h["price"] = real_price
+                    h["shares"] = estimate_shares(h.get("symbol", ""), h.get("weight", 0.0), aum, real_price)
+                cached["holdings"] = holdings_list
+                cached["asset_classes"] = holdings_res.get("asset_classes", {})
+                cached["holdings_as_of_date"] = holdings_res.get("as_of_date", "")
+
+                # 進階分析 (bug#00060): record today's *real* holdings as one
+                # dated line in this symbol's history log. This is the only
+                # source the trend/consensus report reads from — nothing here
+                # is backfilled or estimated for days we didn't actually fetch.
+                append_etf_daily_snapshot(sym, cached["holdings"], cached.get("aum"))
+
+            # No real trade-history source exists (yfinance does not expose it);
+            # `history` stays whatever is already cached (usually empty), and the
+            # detail panel shows an explicit "no data" status instead of fabricating one.
+
+            # Save cache file
+            save_etf_symbol_cache(sym, cached)
+            etf_cache[sym] = cached
+
+        self.app.call_from_thread(
+            self._on_fetch_complete, aums, perf, etf_cache, perf_fail_count, len(stale_symbols)
+        )
+
+    def _on_fetch_complete(
+        self,
+        aums: dict[str, float],
+        perf: dict[str, dict],
+        etf_cache: dict[str, dict],
+        perf_fail_count: int = 0,
+        perf_attempted_count: int = 0,
+    ) -> None:
+        self.realtime_aums = aums
+        self.performance_data = perf
+        self.etf_cache = etf_cache
+        if perf_fail_count > 0:
+            # bug#00058: surface partial performance-fetch failures instead of
+            # silently showing "—" with no explanation of why.
+            self._set_header(
+                f"[yellow]⚠️ 即時數據載入完成，但 {perf_fail_count}/{perf_attempted_count} 檔 ETF 績效抓取失敗"
+                f"（將於下次刷新自動重試）[/yellow]"
+            )
+        else:
+            self._set_header("[green]✅ 即時數據載入完成[/green]")
+        self._render_ranking_tables()
+        sym = self.selected_symbol or (self.us_symbols[0] if self.us_symbols else None)
+        if sym:
+            self._refresh_detail_panels(sym)
+
+    # ── Render ranking tables (left col) ──────────────────────────────────────
+
+    def _render_ranking_tables(self) -> None:
+        new_us: list[str] = []
+        self._render_one_tab("#etf-us-table", US_ACTIVE_TICKERS, new_us)
+        self.us_symbols = new_us
+
+        new_twd: list[str] = []
+        self._render_one_tab("#etf-twd-table", TWD_ACTIVE_TICKERS, new_twd)
+        self.twd_symbols = new_twd
+
+    def _render_one_tab(
+        self,
+        selector: str,
+        universe: list[str],
+        out_symbols: list[str],
+    ) -> None:
+        table = self.query_one(selector, DataTable)
+        table.clear(columns=False)
+
+        # Sort purely by AUM descending
+        by_aum = sorted(
+            universe, key=lambda s: self.realtime_aums.get(s, 0.0), reverse=True
+        )[:_ETF_TOP_N]
+
+        for symbol in by_aum:
+            is_tw = symbol.endswith(".TW") or symbol.endswith(".TWO")
+            aum_s = self._fmt_aum(self.realtime_aums.get(symbol), is_tw=is_tw)
+            p = self.performance_data.get(symbol, {})
+            holdings = self.etf_cache.get(symbol, {}).get("holdings", [])
+
+            # Yellow star prefix for the one non-ETF mutual fund in the universe
+            is_special = symbol == "SEQUX"
+            sym_display = f"[bold yellow]★ {symbol}[/bold yellow]" if is_special else f"[bold white]{symbol}[/bold white]"
+
+            if holdings:
+                top_h = max(holdings, key=lambda h: h.get("weight", 0.0))
+                w = top_h.get("weight", 0.0)
+                top_h_s = f"[dim]{top_h.get('symbol', '—')} ({w:.1f}%)[/dim]"
+            else:
+                top_h_s = "[dim]—[/dim]"
+
+            table.add_row(
+                sym_display,
+                f"[dim]{aum_s}[/dim]",
+                self._fmt_pct(p.get("return_ytd")),
+                self._fmt_pct(p.get("return_1y")),
+                top_h_s,
+            )
+            out_symbols.append(symbol)
+
+    # ── Detail panels (middle + right cols) ───────────────────────────────────
+
+    def _refresh_detail_panels(self, symbol: str) -> None:
+        self.selected_symbol = symbol
+        cached = self.etf_cache.get(symbol, {})
+        fund_name = cached.get("name") or symbol
+        self._set_mid_title(f"[bold cyan]{symbol}[/bold cyan]  [dim]{fund_name}[/dim]  當下持股細節")
+        self._set_right_title(f"[bold cyan]{symbol}[/bold cyan]  歷史買賣紀錄")
+        self._set_mid_status(f"[yellow]⏳ 載入 {symbol} 持股...[/yellow]")
+        self._set_right_status(f"[yellow]⏳ 載入 {symbol} 歷史...[/yellow]")
+        self._render_holdings(symbol)
+        self._render_history(symbol)
+
+    def _render_holdings(self, symbol: str) -> None:
+        table = self.query_one("#etf-holdings-table", DataTable)
+        table.clear(columns=False)
+
+        info = self.etf_cache.get(symbol, {})
+        holdings = info.get("holdings", [])
+        asset_classes = info.get("asset_classes") or {}
+        as_of = info.get("holdings_as_of_date", "")
+
+        if not holdings and not asset_classes:
+            self._set_mid_status(
+                f"[dim]{symbol} 持股資料更新中，或 yfinance 未提供此 ETF 持股[/dim]"
+            )
+            return
+
+        date_badge = (
+            f"[green]✅ 資訊更新日: {as_of}[/green]" if as_of
+            else "[dim]資訊更新日: 未知[/dim]"
+        )
+        self._set_mid_status(date_badge)
+
+        aum = info.get("aum")
+        is_tw = symbol.endswith(".TW") or symbol.endswith(".TWO")
+
+        # Section 1: whole-fund stock/bond/cash/preferred/convertible/other split.
+        # `holdings` below is only Yahoo's curated top-N *named* positions (mostly
+        # equities); a fund with a meaningful cash/bond/options-overlay sleeve would
+        # otherwise look 100% stock-only. This surfaces the real full composition.
+        if asset_classes:
+            table.add_row("[bold cyan]▾ 資產配置[/bold cyan]", "[dim]整體基金比例[/dim]", "", "", "")
+            for key, label in _ASSET_CLASS_LABELS.items():
+                w = asset_classes.get(key)
+                if w is None:
+                    continue
+                mv_s = "—"
+                if aum and w:
+                    mv_s = self._fmt_aum(aum * (w / 100.0), is_tw=is_tw)
+                table.add_row(
+                    f"[bold yellow]{label}[/bold yellow]",
+                    "[dim]資產類別佔比[/dim]",
+                    f"{w:.2f}%",
+                    "—",
+                    mv_s,
+                )
+
+        # Section 2: named top holdings (individual positions within the fund)
+        if holdings:
+            if asset_classes:
+                table.add_row("[bold cyan]▾ 前十大持股[/bold cyan]", "[dim]個股持有明細[/dim]", "", "", "")
+            for h in holdings:
+                w = h.get("weight")
+                s = h.get("shares")
+                mv_s = "—"
+                if aum and w:
+                    mv_s = self._fmt_aum(aum * (w / 100.0), is_tw=is_tw)
+                table.add_row(
+                    f"[bold white]{h.get('symbol', '—')}[/bold white]",
+                    f"[dim]{h.get('name', '—')}[/dim]",
+                    f"{w:.2f}%" if w is not None else "—",
+                    f"{int(s):,}" if s is not None else "—",
+                    mv_s,
+                )
+
+    def _render_history(self, symbol: str) -> None:
+        table = self.query_one("#etf-history-table", DataTable)
+        table.clear(columns=False)
+
+        history = self.etf_cache.get(symbol, {}).get("history", [])
+        if history:
+            self._set_right_status(
+                f"[green]✅ {symbol} 歷史交易 ({len(history)} 筆)[/green]"
+            )
+            for h in history:
+                action = h.get("action", "—")
+                a_col = "green" if action == "BUY" else "red"
+                wc = h.get("weight_change")
+                wc_s = "—"
+                if wc is not None:
+                    col = "green" if wc >= 0 else "red"
+                    sign = "+" if wc >= 0 else ""
+                    wc_s = f"[{col}]{sign}{wc:.2f}%[/{col}]"
+                price = h.get("price")
+                shares = h.get("shares")
+                table.add_row(
+                    h.get("date", "—"),
+                    f"[{a_col}]{action}[/{a_col}]",
+                    f"[bold white]{h.get('symbol', '—')}[/bold white]",
+                    f"{int(shares):,}" if shares is not None else "—",
+                    f"${price:,.2f}" if price is not None else "—",
+                    wc_s,
+                )
+        else:
+            self._set_right_status(
+                f"[dim]{symbol} 無歷史交易紀錄 "
+                f"(ETF 持股調整紀錄需由外部 scraper 寫入)[/dim]"
+            )
+
+    # ── Unified row navigation ─────────────────────────────────────────────────
+
+    def _handle_row(self, table_id: str, row_idx: int) -> None:
+        if table_id == "etf-us-table" and 0 <= row_idx < len(self.us_symbols):
+            self._refresh_detail_panels(self.us_symbols[row_idx])
+        elif table_id == "etf-twd-table" and 0 <= row_idx < len(self.twd_symbols):
+            self._refresh_detail_panels(self.twd_symbols[row_idx])
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        self._handle_row(event.data_table.id, event.cursor_row)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        self._handle_row(event.data_table.id, event.cursor_row)
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        self._handle_row(event.data_table.id, event.coordinate.row)
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        self._handle_row(event.data_table.id, event.coordinate.row)
+
+    # ── Static formatting ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _fmt_aum(val: float | None, is_tw: bool = False) -> str:
+        if val is None:
+            return "—"
+        prefix = "NT$" if is_tw else "$"
+        if val >= 1e12:
+            return f"{prefix}{val / 1e12:.2f}T"
+        if val >= 1e9:
+            return f"{prefix}{val / 1e9:.1f}B"
+        if val >= 1e6:
+            return f"{prefix}{val / 1e6:.1f}M"
+        return f"{prefix}{val:,.0f}"
+
+    @staticmethod
+    def _fmt_pct(val: float | None) -> str:
+        if val is None:
+            return "—"
+        color = "green" if val >= 0 else "red"
+        sign  = "+" if val >= 0 else ""
+        return f"[{color}]{sign}{val:.2f}%[/{color}]"
+
+    def action_go_back(self) -> None:
+        self.dismiss()
+
+    def action_clear_cache(self) -> None:
+        """清除快取：刪除快取檔案並在背景發起全新的即時抓取載入流程。"""
+        from .storage import get_etf_cache_dir
+        cache_dir = get_etf_cache_dir()
+        if cache_dir.exists():
+            for f in cache_dir.glob("*.json"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+        # Clear memory caches
+        self.etf_cache.clear()
+        self.realtime_aums.clear()
+        self.performance_data.clear()
+        self.us_symbols.clear()
+        self.twd_symbols.clear()
+        self.selected_symbol = None
+        
+        # Clear UI tables
+        self.query_one("#etf-us-table", DataTable).clear(columns=False)
+        self.query_one("#etf-twd-table", DataTable).clear(columns=False)
+        self.query_one("#etf-holdings-table", DataTable).clear(columns=False)
+        self.query_one("#etf-history-table", DataTable).clear(columns=False)
+        
+        # Reset headers and statuses
+        self._set_header("⏳ 快取已清除，正在重新抓取全部新數據...")
+        self._set_mid_status("[dim]← 快取已清除，等待重新載入[/dim]")
+        self._set_right_status("[dim]← 快取已清除，等待重新載入[/dim]")
+        
+        # Kick off background fetch
+        self.run_background_fetch()
+
+    def action_advanced_analysis(self) -> None:
+        """[a] 進階分析：離線讀取本機已累積的真實每日快照，計算跨ETF持股趨勢共識。"""
+        self.app.push_screen(AdvancedAnalysisScreen())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Advanced Analysis Screen (進階分析)
+# ─────────────────────────────────────────────────────────────────────────────
+# bug#00060: 100% 離線運算 —— 只讀取 storage.py 已在背景刷新時逐日真實累積下來的
+# per-ETF 快照（etf_cache/history/*.jsonl），不打任何網路請求，也不對缺資料的日子
+# 做任何估計或回填。60 天視窗內若某檔 ETF 累積不足 2 筆真實快照，就不會被納入計算，
+# 並誠實在畫面上顯示目前的資料收集進度。
+
+ADVANCED_ANALYSIS_WINDOW_DAYS = 60
+
+
+class AdvancedAnalysisScreen(Screen):
+    """跨主動式ETF持股趨勢共識報告 —— 純本機離線運算，無網路請求。"""
+
+    BINDINGS = [
+        Binding("escape", "go_back", "返回"),
+        Binding("q",      "go_back", "返回", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    AdvancedAnalysisScreen {
+        background: #0d1117;
+        layout: vertical;
+    }
+    #aa-header {
+        height: auto;
+        padding: 0 1;
+        margin: 1 2 0 2;
+    }
+    #aa-conclusions {
+        height: auto;
+        padding: 0 1;
+        margin: 1 2 0 2;
+    }
+    #aa-body {
+        height: 1fr;
+        margin: 1 2;
+        border: tall #334155;
+    }
+    #aa-body:focus-within { border: tall $accent; }
+    #aa-table { height: 1fr; border: none; }
+    #aa-empty { padding: 2 3; height: 1fr; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="aa-header")
+        yield Static("", id="aa-conclusions")
+        with Container(id="aa-body"):
+            yield DataTable(id="aa-table")
+            yield Static("", id="aa-empty")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#aa-table", DataTable)
+        table.cursor_type = "row"
+        table.add_columns("股票代碼", "共識方向", "共識比例", "看漲ETF", "看跌ETF", "持平ETF", "估計總股數變化")
+        table.display = False
+        self.query_one("#aa-empty", Static).display = False
+
+        self._run_analysis()
+
+    def _run_analysis(self) -> None:
+        all_symbols = US_ACTIVE_TICKERS + TWD_ACTIVE_TICKERS
+        snapshots_by_etf = {sym: load_etf_daily_snapshots(sym) for sym in all_symbols}
+
+        report = compute_symbol_trends(snapshots_by_etf, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS)
+        ranked = rank_symbol_trends(report)
+
+        coverage_line = (
+            f"[bold cyan]📊 進階分析 — 跨ETF持股趨勢共識[/bold cyan]  [dim]│[/dim]  "
+            f"視窗 {report['window_days']} 天　"
+            f"資料收集進度：{report['etfs_ready_count']}/{report['etfs_total_count']} 檔 ETF 已有 ≥2 天真實快照 "
+            f"({report['etfs_ready_pct']:.0f}%)　更新於 {report['as_of']}"
+        )
+        from rich.panel import Panel as _Panel
+        self.query_one("#aa-header", Static).update(
+            _Panel(coverage_line, border_style="cyan", padding=(0, 1))
+        )
+
+        # bug#00061: 結論區塊 — 多數性 + 規模性 bullets，與 Dashboard 首頁卡片共用同一份
+        # generate_etf_conclusions() 輸出，確保兩處文字永遠一致。
+        bullets = generate_etf_conclusions(report)
+        if bullets:
+            conclusion_body = "\n".join(f"• {b}" for b in bullets)
+        else:
+            conclusion_body = "[dim]目前尚無足夠真實資料可生成結論（需要更多 ETF 累積 ≥2 天快照）。[/dim]"
+        self.query_one("#aa-conclusions", Static).update(
+            _Panel(conclusion_body, title="[bold]📝 結論[/bold]", border_style="magenta", padding=(0, 1))
+        )
+
+        table = self.query_one("#aa-table", DataTable)
+        empty = self.query_one("#aa-empty", Static)
+
+        if not ranked:
+            table.display = False
+            empty.display = True
+            if report["etfs_ready_count"] == 0:
+                empty.update(
+                    "[yellow]目前所有主動式 ETF 均尚未累積滿 2 天的真實每日持股快照，"
+                    "無法計算任何趨勢。[/yellow]\n\n"
+                    "[dim]本功能只使用系統背景刷新時真實記錄下來的每日持股快照（不會回填或"
+                    "捏造歷史資料），每次你開啟「主動式ETF排行」畫面且該ETF快取過期時，"
+                    "就會多累積一筆真實紀錄。請持續使用幾天後再回來查看，資料越多、"
+                    "趨勢判讀會越準確。[/dim]"
+                )
+            else:
+                empty.update(
+                    "[dim]目前已有部分 ETF 累積到足夠資料，但尚未出現任何跨 ETF 一致的"
+                    "買進/賣出共識（或個股僅被單一 ETF 持有，未達最低比較門檻）。"
+                    "隨著資料持續累積，此頁面會自動更新。[/dim]"
+                )
+            return
+
+        table.display = True
+        empty.display = False
+        table.clear(columns=False)
+
+        for sym, info in ranked:
+            consensus = info["consensus"]
+            if consensus == "up":
+                dir_s = "[bold green]▲ 買超[/bold green]"
+            elif consensus == "down":
+                dir_s = "[bold red]▼ 賣超[/bold red]"
+            else:
+                dir_s = "[dim]分歧[/dim]"
+
+            delta = info["est_total_share_delta"]
+            delta_s = f"~{delta:,} 股" if delta is not None else "—"
+
+            table.add_row(
+                f"[bold white]{sym}[/bold white]",
+                dir_s,
+                f"{info['consensus_pct']:.0f}%",
+                f"[green]{len(info['etfs_up'])}[/green]",
+                f"[red]{len(info['etfs_down'])}[/red]",
+                f"[dim]{len(info['etfs_flat'])}[/dim]",
+                delta_s,
+            )
+
+    def action_go_back(self) -> None:
+        self.dismiss()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Options Watchlist Screen (期權觀察清單)
+# ─────────────────────────────────────────────────────────────────────────────
+# bug#00061: 依使用者實際持有的標的建立期權觀察清單，每日真實累積 28-60 天到期、
+# 價平 ±15% 履約價合約的快照（quotes.fetch_options_snapshot），離線比對偵測大量
+# 建倉（未平倉量變化）與大幅價格波動（options_analysis.py）。100% 離線運算，
+# 資料不足時誠實顯示收集進度，絕不回填或捏造。
+
+OPTIONS_FLOW_WINDOW_DAYS = 14
+
+
+def _underlyings_from_positions(positions: list[Position]) -> list[str]:
+    """Real underlyings only — from the user's own tracked positions.
+    Options use their `underlying`; stocks/ETFs use their own `symbol`."""
+    syms: set[str] = set()
+    for p in positions:
+        if p.instrument_type == "option" and p.underlying:
+            syms.add(p.underlying.upper())
+        elif p.instrument_type in ("stock", "etf"):
+            syms.add(p.symbol.upper())
+    return sorted(syms)
+
+
+class OptionsWatchlistScreen(Screen):
+    """期權建倉與價格波動觀察清單 —— 依真實持倉標的追蹤，離線運算。"""
+
+    BINDINGS = [
+        Binding("escape", "go_back", "返回看板"),
+        Binding("c",      "clear_cache", "清除快取並重新載入"),
+        Binding("q",      "go_back", "返回看板", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    OptionsWatchlistScreen {
+        background: #0d1117;
+        layout: vertical;
+    }
+    #ow-header {
+        height: auto;
+        padding: 0 1;
+        margin: 1 2 0 2;
+    }
+    #ow-conclusions {
+        height: auto;
+        padding: 0 1;
+        margin: 1 2 0 2;
+    }
+    #ow-body {
+        height: 1fr;
+        layout: horizontal;
+        margin: 1 2;
+    }
+    #ow-left-col {
+        width: 40%;
+        height: 1fr;
+        border: tall #334155;
+        margin-right: 1;
+    }
+    #ow-left-col:focus-within { border: tall $accent; }
+    #ow-list-table { height: 1fr; border: none; }
+    #ow-right-col {
+        width: 60%;
+        height: 1fr;
+        border: tall #334155;
+    }
+    #ow-right-col:focus-within { border: tall $accent; }
+    #ow-events-table { height: 1fr; border: none; }
+    """
+
+    def __init__(self, user: str, positions: list[Position]) -> None:
+        super().__init__()
+        self.user = user
+        self.positions = positions
+        self.underlyings = _underlyings_from_positions(positions)
+        self.report: dict = {}
+        self.selected_underlying: Optional[str] = None
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="ow-header")
+        yield Static("", id="ow-conclusions")
+        with Horizontal(id="ow-body"):
+            with Container(id="ow-left-col"):
+                yield DataTable(id="ow-list-table")
+            with Container(id="ow-right-col"):
+                yield DataTable(id="ow-events-table")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        list_t = self.query_one("#ow-list-table", DataTable)
+        list_t.cursor_type = "row"
+        list_t.add_columns("標的", "訊號數", "偏向")
+
+        ev_t = self.query_one("#ow-events-table", DataTable)
+        ev_t.cursor_type = "row"
+        ev_t.add_columns("合約", "類型", "未平倉變化", "價格變化", "期間")
+
+        if not self.underlyings:
+            self._set_header("[yellow]⚠️ 目前沒有任何持倉可供建立期權觀察清單[/yellow]")
+            list_t.focus()
+            return
+
+        self._set_header(f"⏳ 確認快取並載入 {len(self.underlyings)} 檔標的資料...")
+        list_t.focus()
+
+        for u in self.underlyings:
+            prune_options_history(u, max_age_days=65)
+
+        self._run_analysis()
+        self.run_background_fetch()
+
+    def _set_header(self, status: str) -> None:
+        from rich.panel import Panel as _Panel
+        self.query_one("#ow-header", Static).update(
+            _Panel(
+                f"[bold cyan]🎯 期權觀察清單 — 建倉與價格波動偵測[/bold cyan]  [dim]│[/dim]  {status}",
+                border_style="cyan", padding=(0, 1),
+            )
+        )
+
+    # ── Background worker ──────────────────────────────────────────────────────
+
+    @work(thread=True)
+    def run_background_fetch(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        import time as _time
+        from .quotes import fetch_options_snapshot
+        from .storage import options_symbol_fresh, append_options_daily_snapshot
+
+        stale = [u for u in self.underlyings if not options_symbol_fresh(u)]
+        if not stale:
+            self.app.call_from_thread(self._set_header, "[green]✅ 快取皆為今日最新，已直接載入[/green]")
+            return
+
+        self.app.call_from_thread(self._set_header, f"⏳ 正在背景更新 {len(stale)} 檔標的的期權資料...")
+
+        def _fetch_one(u: str):
+            _time.sleep(0.35)  # pacing to avoid Yahoo rate limiting, same pattern as ETF fetch
+            try:
+                return u, fetch_options_snapshot(u)
+            except Exception:
+                return u, {"spot_price": None, "contracts": []}
+
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            for u, res in ex.map(_fetch_one, stale):
+                if res.get("contracts"):
+                    append_options_daily_snapshot(u, res["contracts"], res.get("spot_price"))
+
+        self.app.call_from_thread(self._on_fetch_complete)
+
+    def _on_fetch_complete(self) -> None:
+        self._set_header("[green]✅ 期權資料載入完成[/green]")
+        self._run_analysis()
+
+    # ── Analysis + render ────────────────────────────────────────────────────
+
+    def _run_analysis(self) -> None:
+        snapshots_by_underlying = {u: load_options_daily_snapshots(u) for u in self.underlyings}
+        self.report = compute_options_flow(snapshots_by_underlying, window_days=OPTIONS_FLOW_WINDOW_DAYS)
+        report = self.report
+
+        from rich.panel import Panel as _Panel
+        bullets = generate_options_conclusions(report, positions=self.positions)
+        if bullets:
+            body = "\n".join(f"• {b}" for b in bullets)
+        else:
+            body = "[dim]目前尚無足夠真實資料可生成結論（需要更多標的累積 ≥2 天快照）。[/dim]"
+        self.query_one("#ow-conclusions", Static).update(
+            _Panel(body, title="[bold]📝 結論[/bold]", border_style="magenta", padding=(0, 1))
+        )
+
+        self._set_header(
+            f"資料收集進度：{report['ready_count']}/{report['total_count']} 檔標的已有 ≥2 天真實快照 "
+            f"({report['ready_pct']:.0f}%)　視窗 {report['window_days']} 天　更新於 {report['as_of']}"
+        )
+
+        list_t = self.query_one("#ow-list-table", DataTable)
+        list_t.clear(columns=False)
+
+        events_by_underlying: dict[str, list[dict]] = {}
+        for e in report.get("events", []):
+            events_by_underlying.setdefault(e["underlying"], []).append(e)
+
+        for u in self.underlyings:
+            evs = events_by_underlying.get(u, [])
+            skew = report.get("underlying_skew", {}).get(u)
+            if skew:
+                if skew["call_pct"] >= 70:
+                    bias = "[green]偏多[/green]"
+                elif skew["call_pct"] <= 30:
+                    bias = "[red]偏空[/red]"
+                else:
+                    bias = "[dim]中性[/dim]"
+            else:
+                bias = "[dim]—[/dim]"
+            list_t.add_row(f"[bold white]{u}[/bold white]", str(len(evs)), bias)
+
+        if self.underlyings:
+            self.selected_underlying = self.underlyings[0]
+            self._render_events(self.selected_underlying)
+
+    def _render_events(self, underlying: str) -> None:
+        table = self.query_one("#ow-events-table", DataTable)
+        table.clear(columns=False)
+
+        evs = [e for e in self.report.get("events", []) if e["underlying"] == underlying]
+        if not evs:
+            cov = self.report.get("coverage", {}).get(underlying, {})
+            if not cov.get("ready"):
+                table.add_row("[dim]資料收集中，尚不足 2 天真實快照[/dim]", "", "", "", "")
+            else:
+                table.add_row("[dim]此標的近期無明顯建倉或價格波動訊號[/dim]", "", "", "", "")
+            return
+
+        for e in evs:
+            cp = "[green]買權[/green]" if e["type"] == "call" else "[red]賣權[/red]"
+            oi_s = "—"
+            if e["oi_delta"] is not None:
+                sign = "+" if e["oi_delta"] >= 0 else ""
+                pct_s = f" ({sign}{e['oi_pct']:.0f}%)" if e["oi_pct"] is not None else ""
+                oi_s = f"{sign}{int(e['oi_delta']):,} 口{pct_s}"
+            price_s = "—"
+            if e["price_delta_pct"] is not None:
+                sign = "+" if e["price_delta_pct"] >= 0 else ""
+                price_s = f"{sign}{e['price_delta_pct']:.0f}%"
+            table.add_row(
+                f"[bold white]${e['strike']:g} {e['expiry']}[/bold white]",
+                cp,
+                oi_s,
+                price_s,
+                f"[dim]{e['first_date']}~{e['last_date']}[/dim]",
+            )
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id == "ow-list-table" and 0 <= event.cursor_row < len(self.underlyings):
+            self.selected_underlying = self.underlyings[event.cursor_row]
+            self._render_events(self.selected_underlying)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        self.on_data_table_row_highlighted(event)
+
+    def action_go_back(self) -> None:
+        self.dismiss()
+
+    def action_clear_cache(self) -> None:
+        """清除快取：刪除本觀察清單的期權歷史記錄並重新真實抓取。"""
+        from .storage import get_options_history_dir
+        cache_dir = get_options_history_dir()
+        if cache_dir.exists():
+            for f in cache_dir.glob("*.jsonl"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+        self._set_header("⏳ 快取已清除，正在重新抓取全部新數據...")
+        self.run_background_fetch()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2871,34 +4147,55 @@ class AssetTrackApp(App):
     #recent-events-panel {
         width: 1.5fr;
     }
+
+    #strategy-panels {
+        height: 12;
+        padding: 0 1;
+    }
+
+    #etf-conclusions-panel {
+        width: 1fr;
+    }
+
+    #options-flow-panel {
+        width: 1fr;
+    }
     """
 
-    def __init__(self, user: str = "default", positions: Optional[list[Position]] = None, rate: float = 32.5) -> None:
+    def __init__(
+        self,
+        user: str = "default",
+        positions: Optional[list[Position]] = None,
+        cash_positions: Optional[list[CashPosition]] = None,
+        rate: float = 32.5,
+    ) -> None:
         super().__init__()
         self.default_user = user
         self._user = user
         self._positions = positions if positions is not None else []
+        self._cash_positions = cash_positions if cash_positions is not None else []
         self._rate = rate
 
     def on_mount(self) -> None:
-        if self._positions:
-            self._start_dashboard(self._user, self._positions)
+        if self._positions or self._cash_positions:
+            self._start_dashboard(self._user, self._positions, self._cash_positions)
         else:
             self.push_screen(LoginScreen(default_user=self.default_user), self._handle_login_complete)
 
-    def _handle_login_complete(self, result: Optional[tuple[str, list[Position]]]) -> None:
+    def _handle_login_complete(self, result: Optional[tuple[str, list[Position], list[CashPosition]]]) -> None:
         if result is None:
             self.exit()
             return
             
-        user, positions = result
+        user, positions, cash_positions = result
         self._user = user
         self._positions = positions
+        self._cash_positions = cash_positions
         
-        if not positions:
+        if not positions and not cash_positions:
             self.push_screen(OnboardingModal(), lambda choice: self._handle_onboarding_choice(choice, user))
         else:
-            self._start_dashboard(user, positions)
+            self._start_dashboard(user, positions, cash_positions)
 
     def _handle_onboarding_choice(self, choice: str, user: str) -> None:
         if choice == "sample":
@@ -2924,23 +4221,23 @@ class AssetTrackApp(App):
                     last_updated=datetime.utcnow()
                 )
             ]
-            save_manual_positions(sample_positions, user=user)
+            save_manual_positions(sample_positions, [], user=user)
             self.notify("✅ 已為您成功建立 AAPL (50股) 與 TSLA (10股) 預設範例部位！")
-            self._start_dashboard(user, sample_positions)
+            self._start_dashboard(user, sample_positions, [])
         elif choice == "manual":
             self.push_screen(AddPositionModal(), lambda pos: self._handle_first_position(pos, user))
         else:
-            self._start_dashboard(user, [])
+            self._start_dashboard(user, [], [])
 
     def _handle_first_position(self, pos: Optional[Position], user: str) -> None:
         if pos:
-            save_manual_positions([pos], user=user)
+            save_manual_positions([pos], [], user=user)
             self.notify("✅ 新增持倉成功！")
-            self._start_dashboard(user, [pos])
+            self._start_dashboard(user, [pos], [])
         else:
-            self._start_dashboard(user, [])
+            self._start_dashboard(user, [], [])
 
-    def _start_dashboard(self, user: str, positions: list[Position]) -> None:
+    def _start_dashboard(self, user: str, positions: list[Position], cash_positions: list[CashPosition] = None) -> None:
         rate = 32.0
         try:
             rate = _get_cached_usdtwd_rate()
@@ -2948,7 +4245,8 @@ class AssetTrackApp(App):
             pass
         self._rate = rate
         self._positions = positions
-        self.push_screen(DashboardScreen(user, positions, rate), self._handle_dashboard_exit)
+        self._cash_positions = cash_positions if cash_positions is not None else []
+        self.push_screen(DashboardScreen(user, positions, self._cash_positions, self._rate), self._handle_dashboard_exit)
 
     def _handle_dashboard_exit(self, should_logout: bool) -> None:
         if should_logout:
@@ -2968,3 +4266,28 @@ def run_tui_dashboard(user: str) -> None:
     """
     app = AssetTrackApp(user=user)
     app.run()
+
+
+def main() -> None:
+    """
+    套件命令列進入點（取代已移除的 cli.py/Typer 層）。
+
+    整個系統只有單一功能（啟動 TUI 看板）與單一選項（--user/-u），
+    不需要 Typer 的子指令框架，改用標準函式庫 argparse 即可。
+    對應 `pyproject.toml` 的 `[project.scripts]` 與 `entrypoint.py`。
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="assettrack",
+        description="AssetTrack 投資組合追蹤器 — 全功能 TUI 介面。",
+    )
+    parser.add_argument(
+        "--user", "-u", default="default", help="指定使用者帳戶"
+    )
+    args = parser.parse_args()
+    run_tui_dashboard(args.user)
+
+
+if __name__ == "__main__":
+    main()
