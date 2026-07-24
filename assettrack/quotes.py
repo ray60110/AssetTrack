@@ -291,6 +291,541 @@ def fetch_beta(symbol: str, instrument_type: str = "stock", underlying: Optional
     return beta_val
 
 
+_rf_cache: dict[str, tuple[float, float]] = {}
+_RF_CACHE_TTL = 6 * 3600  # 6 hours — the short-rate barely moves intraday
+
+
+def fetch_risk_free_rate(default: float = 0.04) -> float:
+    """回傳無風險利率（小數，例如 0.043）供 Black-Scholes 計算使用。
+
+    以 ^IRX（13 週美國國庫券殖利率，yfinance 報價為年化百分比，如 4.35 代表 4.35%）
+    為來源，除以 100 轉為小數；抓取失敗或無資料時回退 `default`。以 6 小時 TTL 快取，
+    避免每次渲染都發出阻塞性網路請求（比照 fetch_beta 的快取模式）。
+    """
+    cached = _rf_cache.get("^IRX")
+    if cached is not None and (time.time() - cached[1]) < _RF_CACHE_TTL:
+        return cached[0]
+
+    rate = default
+    try:
+        with silence_output():
+            ticker = yf.Ticker("^IRX")
+            val: Optional[float] = None
+            try:
+                fi = ticker.fast_info
+                val = _clean_float(getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None))
+            except Exception:
+                val = None
+            if val is None:
+                hist = ticker.history(period="5d", auto_adjust=False)
+                if not hist.empty:
+                    val = _clean_float(hist["Close"].iloc[-1])
+            if val is not None and val > 0:
+                rate = val / 100.0
+    except Exception:
+        pass
+
+    _rf_cache["^IRX"] = (rate, time.time())
+    return rate
+
+
+def cached_risk_free_rate(default: float = 0.04) -> float:
+    """Non-blocking: return the last fetched ^IRX rate if present in the module
+    cache, else `default`. Does NOT trigger any network request, so it is safe to
+    call on the UI render path (the Dashboard card uses this; a background worker
+    calls fetch_risk_free_rate() to warm the same cache, keeping card and page
+    aligned on one rate)."""
+    cached = _rf_cache.get("^IRX")
+    return cached[0] if cached is not None else default
+
+
+# ── bug#00084: 已結束總經事件（CPI/FED）結論更新 ────────────────────────────
+# CPI 月增/年增：FRED 官方已公佈指數值直接計算，非估算。
+# FED 會議決議：FRED 官方目標利率區間（DFEDTARU/DFEDTARL）真實變動，非估算。
+# 下次會議升降息機率：Fed Funds 期貨市場價格反推——真實市場定價，但屬簡化版
+# 方法論（未依會議在當月中的日期位置做逐日加權，不等同 CME FedWatch 精確值），
+# 已於呼叫端文字註明「僅供參考」。三者共通原則：任一步驟缺資料（缺
+# FRED_API_KEY／API 失敗／期貨無報價）一律誠實回傳 None，不以預設值或估計值
+# 填補（比照全專案「不臆測」慣例）。
+
+_FRED_CACHE: dict[str, tuple[list, float]] = {}
+_FRED_CACHE_TTL = 6 * 3600  # 6 hours — 總經數據非日內更新頻率
+_FRED_FAILURES: dict[str, str] = {}
+
+
+def fred_failure_reason(*series_ids: str) -> Optional[str]:
+    """Return the most actionable failure reason for the requested FRED series."""
+    priority = (
+        "missing_key",
+        "auth_error",
+        "network_error",
+        "http_error",
+        "invalid_response",
+        "no_data",
+    )
+    reasons = {_FRED_FAILURES.get(series_id) for series_id in series_ids}
+    return next((reason for reason in priority if reason in reasons), None)
+
+
+def fred_api_key() -> Optional[str]:
+    """讀取 FRED_API_KEY 環境變數（可放在專案根目錄 .env，main() 已呼叫
+    load_dotenv() 載入）。未設定時回傳 None，呼叫端須誠實顯示「尚未設定」
+    而非假裝有資料。"""
+    key = os.environ.get("FRED_API_KEY", "").strip()
+    return key or None
+
+
+def fetch_fred_series(series_id: str, limit: int = 15) -> Optional[list]:
+    """向 FRED（Federal Reserve Economic Data）API 取得 series_id 最近 `limit`
+    筆觀測值，回傳 [(date, value), ...]（新到舊排序），皆為 FRED 官方已公佈
+    真實數值。無 API key、網路失敗、或該序列查無資料時回傳 None（不捏造）。"""
+    api_key = fred_api_key()
+    if not api_key:
+        _FRED_FAILURES[series_id] = "missing_key"
+        return None
+
+    cache_key = f"{series_id}:{limit}"
+    cached = _FRED_CACHE.get(cache_key)
+    if cached is not None and (time.time() - cached[1]) < _FRED_CACHE_TTL:
+        _FRED_FAILURES.pop(series_id, None)
+        return cached[0]
+
+    import requests
+    from datetime import datetime as _dt
+
+    try:
+        resp = requests.get(
+            "https://api.stlouisfed.org/fred/series/observations",
+            params={
+                "series_id": series_id,
+                "api_key": api_key,
+                "file_type": "json",
+                "sort_order": "desc",
+                "limit": limit,
+            },
+            timeout=10,
+        )
+    except requests.RequestException:
+        _FRED_FAILURES[series_id] = "network_error"
+        return None
+
+    if not resp.ok:
+        reason = "http_error"
+        try:
+            error_message = str(resp.json().get("error_message", "")).lower()
+        except (ValueError, AttributeError):
+            error_message = ""
+        if resp.status_code in (400, 401, 403) and "api_key" in error_message:
+            reason = "auth_error"
+        _FRED_FAILURES[series_id] = reason
+        return None
+
+    try:
+        data = resp.json()
+        out = []
+        for obs in data.get("observations", []):
+            raw_val = obs.get("value")
+            if raw_val in (None, ".", ""):
+                continue
+            try:
+                d = _dt.strptime(obs["date"], "%Y-%m-%d").date()
+                out.append((d, float(raw_val)))
+            except (ValueError, KeyError):
+                continue
+        if not out:
+            _FRED_FAILURES[series_id] = "no_data"
+            return None
+    except (ValueError, AttributeError, TypeError):
+        _FRED_FAILURES[series_id] = "invalid_response"
+        return None
+
+    _FRED_CACHE[cache_key] = (out, time.time())
+    _FRED_FAILURES.pop(series_id, None)
+    return out
+
+
+def compute_cpi_conclusion() -> Optional[dict]:
+    """回傳最新一期 CPI 的月增/年增百分比。月增用 CPIAUCSL（季節調整後），
+    年增用 CPIAUCNS（未季調）——比照 BLS 官方新聞稿慣例（YoY 本身已隱含消去
+    季節性，媒體慣例改採未季調數列）。皆由 FRED 官方已公佈指數值直接計算，
+    非估算。資料不足或 API 不可用時回傳 None。"""
+    sa = fetch_fred_series("CPIAUCSL", limit=3)
+    # FRED may include one not-yet-released "." observation in the requested
+    # limit. Ask for one extra row so 14 numeric periods remain available for
+    # the previous month's YoY comparison.
+    nsa = fetch_fred_series("CPIAUCNS", limit=15)
+    if not sa or len(sa) < 2 or not nsa or len(nsa) < 13:
+        return None
+
+    latest_date, latest_sa = sa[0]
+    prev_sa = sa[1][1]
+    latest_nsa = nsa[0][1]
+    yoy_base_nsa = nsa[12][1]
+    if prev_sa == 0 or yoy_base_nsa == 0:
+        return None
+
+    mom_pct = (latest_sa / prev_sa - 1.0) * 100.0
+    yoy_pct = (latest_nsa / yoy_base_nsa - 1.0) * 100.0
+    prev_mom_pct = None
+    if len(sa) >= 3 and sa[2][1] != 0:
+        prev_mom_pct = (sa[1][1] / sa[2][1] - 1.0) * 100.0
+    prev_yoy_pct = None
+    if len(nsa) >= 14 and nsa[13][1] != 0:
+        prev_yoy_pct = (nsa[1][1] / nsa[13][1] - 1.0) * 100.0
+
+    return {
+        "as_of": latest_date,
+        "mom_pct": mom_pct,
+        "yoy_pct": yoy_pct,
+        "prev_mom_pct": prev_mom_pct,
+        "mom_change_pp": mom_pct - prev_mom_pct if prev_mom_pct is not None else None,
+        "prev_yoy_pct": prev_yoy_pct,
+        "yoy_change_pp": yoy_pct - prev_yoy_pct if prev_yoy_pct is not None else None,
+    }
+
+
+def compute_core_cpi_conclusion() -> Optional[dict]:
+    """回傳最新一期「核心 CPI」（排除食物與能源）的月增/年增百分比與較上期變動比較。
+    月增用 CPILFESL（季節調整後），年增用 CPILFENS（未季調）——與 BLS 官方慣例一致。
+    由 FRED 官方指數值直接計算，非估算。"""
+    sa = fetch_fred_series("CPILFESL", limit=4)
+    nsa = fetch_fred_series("CPILFENS", limit=15)
+    if not sa or len(sa) < 2 or not nsa or len(nsa) < 13:
+        return None
+
+    latest_date, latest_sa = sa[0]
+    prev_sa = sa[1][1]
+    latest_nsa = nsa[0][1]
+    yoy_base_nsa = nsa[12][1]
+    if prev_sa == 0 or yoy_base_nsa == 0:
+        return None
+
+    mom_pct = (latest_sa / prev_sa - 1.0) * 100.0
+    yoy_pct = (latest_nsa / yoy_base_nsa - 1.0) * 100.0
+
+    prev_mom_pct = None
+    mom_change_pp = None
+    if len(sa) >= 3 and sa[2][1] > 0:
+        prev_mom_pct = (sa[1][1] / sa[2][1] - 1.0) * 100.0
+        mom_change_pp = mom_pct - prev_mom_pct
+
+    prev_yoy_pct = None
+    yoy_change_pp = None
+    if len(nsa) >= 14 and nsa[13][1] > 0:
+        prev_yoy_pct = (nsa[1][1] / nsa[13][1] - 1.0) * 100.0
+        yoy_change_pp = yoy_pct - prev_yoy_pct
+
+    if mom_change_pp is not None and mom_change_pp < 0:
+        interpretation = (
+            f"核心 CPI 月增率 ({mom_pct:.2f}%) 較上期 ({prev_mom_pct:.2f}%) 放緩 {abs(mom_change_pp):.2f}pp，"
+            f"顯示核心物價漲幅收斂，通膨壓力減緩，有利聯準會維持降息與寬鬆空間。"
+        )
+    elif mom_change_pp is not None and mom_change_pp > 0:
+        interpretation = (
+            f"核心 CPI 月增率 ({mom_pct:.2f}%) 較上期 ({prev_mom_pct:.2f}%) 回升 {abs(mom_change_pp):.2f}pp，"
+            f"反映粘性通膨反彈壓力，降息時程與寬鬆預期可能延後。"
+        )
+    else:
+        interpretation = f"核心 CPI 月增率 ({mom_pct:.2f}%) 與上期相當，核心通膨趨勢維持平穩。"
+
+    return {
+        "as_of": latest_date,
+        "mom_pct": mom_pct,
+        "yoy_pct": yoy_pct,
+        "prev_mom_pct": prev_mom_pct,
+        "mom_change_pp": mom_change_pp,
+        "prev_yoy_pct": prev_yoy_pct,
+        "yoy_change_pp": yoy_change_pp,
+        "interpretation": interpretation,
+    }
+
+
+def compute_pce_conclusion() -> Optional[dict]:
+    """回傳最新一期「核心 PCE」（Fed 首要通膨指標）的月增/年增百分比與較上期變動比較。
+    使用 PCEPILFE 指數計算，為官方已公佈真實數值。"""
+    idx = fetch_fred_series("PCEPILFE", limit=15)
+    if not idx or len(idx) < 13:
+        return None
+
+    latest_date, latest = idx[0]
+    prev = idx[1][1]
+    yoy_base = idx[12][1]
+    if prev == 0 or yoy_base == 0:
+        return None
+
+    mom_pct = (latest / prev - 1.0) * 100.0
+    yoy_pct = (latest / yoy_base - 1.0) * 100.0
+
+    prev_mom_pct = None
+    mom_change_pp = None
+    if len(idx) >= 3 and idx[2][1] > 0:
+        prev_mom_pct = (idx[1][1] / idx[2][1] - 1.0) * 100.0
+        mom_change_pp = mom_pct - prev_mom_pct
+
+    prev_yoy_pct = None
+    yoy_change_pp = None
+    if len(idx) >= 14 and idx[13][1] > 0:
+        prev_yoy_pct = (idx[1][1] / idx[13][1] - 1.0) * 100.0
+        yoy_change_pp = yoy_pct - prev_yoy_pct
+
+    if mom_change_pp is not None and mom_change_pp < 0:
+        interpretation = (
+            f"核心 PCE 月增率 ({mom_pct:.2f}%) 較上期 ({prev_mom_pct:.2f}%) 放緩 {abs(mom_change_pp):.2f}pp，"
+            f"強化 Fed 認為通膨邁向 2% 目標的信心，有利市場風險偏好。"
+        )
+    elif mom_change_pp is not None and mom_change_pp > 0:
+        interpretation = (
+            f"核心 PCE 月增率 ({mom_pct:.2f}%) 較上期 ({prev_mom_pct:.2f}%) 擴大 {abs(mom_change_pp):.2f}pp，"
+            f"反映消費端通膨頑強，利率緊縮時間可能拉長。"
+        )
+    else:
+        interpretation = f"核心 PCE 月增率 ({mom_pct:.2f}%) 與上期相當，通膨趨勢符合預期。"
+
+    return {
+        "as_of": latest_date,
+        "mom_pct": mom_pct,
+        "yoy_pct": yoy_pct,
+        "prev_mom_pct": prev_mom_pct,
+        "mom_change_pp": mom_change_pp,
+        "prev_yoy_pct": prev_yoy_pct,
+        "yoy_change_pp": yoy_change_pp,
+        "interpretation": interpretation,
+    }
+
+
+def compute_unemployment_conclusion() -> Optional[dict]:
+    """回傳最新一期失業率（FRED UNRATE）與較上期變動（百分點）比較與解析。"""
+    ur = fetch_fred_series("UNRATE", limit=4)
+    if not ur or len(ur) < 2:
+        return None
+
+    latest_date, latest = ur[0]
+    prev = ur[1][1]
+    change_pp = latest - prev
+
+    prev_change_pp = None
+    if len(ur) >= 3:
+        prev_change_pp = prev - ur[2][1]
+
+    if change_pp > 0:
+        interpretation = (
+            f"失業率 ({latest:.1f}%) 較上期 ({prev:.1f}%) 上升 {abs(change_pp):.1f}pp，"
+            f"顯示就業市場鬆動與勞動降溫，減輕薪資通膨壓力、拉升降息預期。"
+        )
+    elif change_pp < 0:
+        interpretation = (
+            f"失業率 ({latest:.1f}%) 較上期 ({prev:.1f}%) 下降 {abs(change_pp):.1f}pp，"
+            f"顯示勞工市場持續緊繃，經濟與就業韌性強勁。"
+        )
+    else:
+        interpretation = f"失業率維持於 {latest:.1f}%，就業市場供需保持平衡。"
+
+    return {
+        "as_of": latest_date,
+        "rate_pct": latest,
+        "prev_pct": prev,
+        "change_pp": change_pp,
+        "prev_change_pp": prev_change_pp,
+        "interpretation": interpretation,
+    }
+
+
+def compute_nfp_conclusion() -> Optional[dict]:
+    """回傳最新一期非農就業（FRED PAYEMS）月增人數與較上月變動比較與解析。"""
+    pe = fetch_fred_series("PAYEMS", limit=4)
+    if not pe or len(pe) < 2:
+        return None
+
+    latest_date, latest_k = pe[0]
+    prev_k = pe[1][1]
+    latest_change = (latest_k - prev_k) * 1000.0
+
+    prev_change = None
+    change_diff = None
+    if len(pe) >= 3:
+        prev_change = (prev_k - pe[2][1]) * 1000.0
+        change_diff = latest_change - prev_change
+
+    if change_diff is not None and change_diff < 0:
+        interpretation = (
+            f"非農新增就業 ({latest_change / 1000.0:+,.0f}K) 較上月 ({prev_change / 1000.0:+,.0f}K) 放緩 {abs(change_diff) / 1000.0:,.0f}K，"
+            f"就業增長適度降溫，有助緩解薪資壓力。"
+        )
+    elif change_diff is not None and change_diff > 0:
+        interpretation = (
+            f"非農新增就業 ({latest_change / 1000.0:+,.0f}K) 較上月 ({prev_change / 1000.0:+,.0f}K) 增加 {abs(change_diff) / 1000.0:,.0f}K，"
+            f"顯示就業市場擴張加速，反映美國經濟軟著陸與經濟韌性。"
+        )
+    else:
+        interpretation = f"非農新增就業 ({latest_change / 1000.0:+,.0f}K) 與上月增幅相近，就業成長步調穩定。"
+
+    return {
+        "as_of": latest_date,
+        "change": latest_change,
+        "level": latest_k * 1000.0,
+        "prev_change": prev_change,
+        "change_diff": change_diff,
+        "interpretation": interpretation,
+    }
+
+
+def compute_fed_funds_rate_conclusion() -> Optional[dict]:
+    """回傳最新有效聯邦資金利率（FRED FEDFUNDS）與較上期變動比較與解析。"""
+    ff = fetch_fred_series("FEDFUNDS", limit=3)
+    if not ff or len(ff) < 2:
+        return None
+
+    latest_date, latest = ff[0]
+    prev = ff[1][1]
+    change_pp = latest - prev
+
+    if change_pp < 0:
+        interpretation = f"有效聯邦資金利率 ({latest:.2f}%) 較上期下降 {abs(change_pp):.2f}pp，反映央行降息進入寬鬆週期。"
+    elif change_pp > 0:
+        interpretation = f"有效聯邦資金利率 ({latest:.2f}%) 較上期調升 {abs(change_pp):.2f}pp，反映央行維持升息緊縮姿態。"
+    else:
+        interpretation = f"有效聯邦資金利率維持在 {latest:.2f}%，聯準會處於政策觀望與既有緊縮效果評估期。"
+
+    return {
+        "as_of": latest_date,
+        "rate_pct": latest,
+        "prev_pct": prev,
+        "change_pp": change_pp,
+        "interpretation": interpretation,
+    }
+
+
+def fetch_latest_macro_readings() -> dict:
+    """彙整 UpcomingEventsScreen 追蹤的重要總經指標「最新一期已公佈數值」，全部
+    取自 FRED 官方 API。回傳 dict，key 為指標代號、value 為各 compute_* 函式的結果
+    （查無資料或無 API key 時該項為 None，不捏造）：
+        core_cpi      → compute_core_cpi_conclusion()
+        core_pce      → compute_pce_conclusion()
+        unemployment  → compute_unemployment_conclusion()
+        nfp           → compute_nfp_conclusion()
+        fed_funds     → compute_fed_funds_rate_conclusion()
+    """
+    return {
+        "core_cpi": compute_core_cpi_conclusion(),
+        "core_pce": compute_pce_conclusion(),
+        "unemployment": compute_unemployment_conclusion(),
+        "nfp": compute_nfp_conclusion(),
+        "fed_funds": compute_fed_funds_rate_conclusion(),
+    }
+
+
+def compute_fed_decision_conclusion(meeting_date) -> Optional[dict]:
+    """回傳某次 FOMC 會議前後，聯邦資金目標利率區間的真實變動（FRED
+    DFEDTARU/DFEDTARL 官方每日數值，非估算）。取會議日前最近一筆與會議日起
+    5 天內最新一筆做比較。查無足夠資料時回傳 None。"""
+    from datetime import timedelta as _td
+
+    upper = fetch_fred_series("DFEDTARU", limit=30)
+    lower = fetch_fred_series("DFEDTARL", limit=30)
+    if not upper or not lower:
+        return None
+
+    def _pick(series, before: bool):
+        for d, v in series:  # series 為新到舊排序
+            if before and d < meeting_date:
+                return v
+            if not before and meeting_date <= d <= meeting_date + _td(days=5):
+                return v
+        return None
+
+    up_before, up_after = _pick(upper, True), _pick(upper, False)
+    lo_before, lo_after = _pick(lower, True), _pick(lower, False)
+    if None in (up_before, up_after, lo_before, lo_after):
+        return None
+
+    delta_bps = round((up_after - up_before) * 100)
+    return {
+        "range_before": (lo_before, up_before),
+        "range_after": (lo_after, up_after),
+        "delta_bps": delta_bps,
+    }
+
+
+_FED_FUTURES_MONTH_CODES = "FGHJKMNQUVXZ"  # CME 期貨月份代碼：Jan..Dec
+_FED_FUTURES_CACHE: dict[str, tuple] = {}
+_FED_FUTURES_CACHE_TTL = 3600  # 1 hour — 期貨盤中會變動
+
+
+def _fedfunds_futures_symbol_candidates(meeting_date) -> list:
+    """建構 CME 30-Day Fed Funds Futures（ZQ）對應會議月份合約的 Yahoo Finance
+    代碼候選清單。Yahoo 對 CBOT 期貨代碼慣例可能隨時間調整，故列出多個候選
+    依序嘗試，全數失敗才視為無資料（不捏造）。"""
+    code = _FED_FUTURES_MONTH_CODES[meeting_date.month - 1]
+    yy = meeting_date.year % 100
+    return [
+        f"ZQ{code}{yy:02d}.CBT",
+        f"ZQ{code}{yy:02d}=F",
+    ]
+
+
+def fetch_fedfunds_futures_price(meeting_date) -> Optional[float]:
+    """取得對應會議月份的 Fed Funds 期貨（ZQ）最新收盤價，用於推算市場隱含
+    利率（100 - price）。找不到報價時回傳 None（不捏造）。"""
+    cache_key = meeting_date.strftime("%Y-%m")
+    cached = _FED_FUTURES_CACHE.get(cache_key)
+    if cached is not None and (time.time() - cached[1]) < _FED_FUTURES_CACHE_TTL:
+        return cached[0]
+
+    price: Optional[float] = None
+    for sym in _fedfunds_futures_symbol_candidates(meeting_date):
+        try:
+            with silence_output():
+                t = yf.Ticker(sym)
+                hist = t.history(period="5d", auto_adjust=False)
+                if not hist.empty:
+                    price = _clean_float(hist["Close"].iloc[-1])
+                    if price is not None:
+                        break
+        except Exception:
+            continue
+
+    _FED_FUTURES_CACHE[cache_key] = (price, time.time())
+    return price
+
+
+def compute_next_fed_meeting_probability(meeting_date) -> Optional[dict]:
+    """依 Fed Funds 期貨市場價格，簡化推算下次 FOMC 會議升息/降息/不變的機率。
+
+    方法論（簡化版，非 CME FedWatch 完整逐日加權公式）：
+      1. 取得會議當月 Fed Funds 期貨收盤價，隱含月平均利率 = 100 - price。
+      2. 以 FRED DFF（有效聯邦資金利率）最新一筆真實數值為基準利率。
+      3. 假設利率變動皆以 25bp 為單位，將期貨隱含利率與基準利率的差距換算
+         為升息/降息機率（差距 25bp = 100% 機率）。
+      此法未依會議發生在當月中的日期位置做逐日加權（CME 官方方法會依此加
+      權），故僅供參考、非精確值，呼叫端文字需註明。任一步驟缺資料即誠實
+      回傳 None。
+    """
+    futures_price = fetch_fedfunds_futures_price(meeting_date)
+    if futures_price is None:
+        return None
+
+    implied_rate = 100.0 - futures_price
+
+    dff = fetch_fred_series("DFF", limit=5)
+    if not dff:
+        return None
+    base_rate = dff[0][1]
+
+    delta_bps = (implied_rate - base_rate) * 100.0
+    hike_prob = max(0.0, min(1.0, delta_bps / 25.0))
+    cut_prob = max(0.0, min(1.0, -delta_bps / 25.0))
+    hold_prob = max(0.0, 1.0 - hike_prob - cut_prob)
+
+    return {
+        "implied_rate": implied_rate,
+        "base_rate": base_rate,
+        "delta_bps": delta_bps,
+        "hike_prob": hike_prob,
+        "cut_prob": cut_prob,
+        "hold_prob": hold_prob,
+    }
+
+
 def fetch_benchmark_history(
     symbol: str,
     start_date: "datetime",
@@ -521,18 +1056,24 @@ def group_positions_by_broker(
 
 def fetch_earnings_calendar(
     symbols: list[str],
+    timezone_name: str = "Asia/Taipei",
 ) -> dict[str, tuple[list, Optional[object], Optional[str], Optional[str]]]:
     """
     Fetch earnings calendar for multiple symbols from yfinance in parallel.
 
     Returns {symbol: (dates_list, info_date, time_str, period_str)} where:
     - dates_list : list[date] from t.calendar["Earnings Date"]
-    - info_date  : precise date (GMT+8) from earningsTimestampStart
-    - time_str   : "HH:MM" (GMT+8)
+    - info_date  : precise date in ``timezone_name`` from earningsTimestampStart
+    - time_str   : "HH:MM" in ``timezone_name``
     - period_str : "盤前" | "盤後" based on US Eastern time
     """
     import concurrent.futures
-    from datetime import datetime as _dt, timezone as _tz, timedelta
+    from datetime import datetime as _dt, timedelta as _td, timezone as _timezone
+
+    try:
+        tz_target = _zoneinfo.ZoneInfo(timezone_name)
+    except (KeyError, ValueError, TypeError):
+        tz_target = _TZ_TW or _timezone(_td(hours=8))
 
     def _fetch_one(symbol: str):
         try:
@@ -548,10 +1089,9 @@ def fetch_earnings_calendar(
                 info_date = None
                 period_str = None
                 if ts:
-                    tz_gmt8 = _tz(timedelta(hours=8))
-                    dt_gmt8 = _dt.fromtimestamp(ts, tz_gmt8)
-                    info_date = dt_gmt8.date()
-                    time_str = dt_gmt8.strftime("%H:%M")
+                    dt_local = _dt.fromtimestamp(ts, tz_target)
+                    info_date = dt_local.date()
+                    time_str = dt_local.strftime("%H:%M")
                     dt_us = _dt.fromtimestamp(ts, _TZ_US)
                     period_str = "盤前" if dt_us.hour < 12 else "盤後"
                 return symbol, dates, info_date, time_str, period_str
@@ -562,6 +1102,148 @@ def fetch_earnings_calendar(
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(symbols))) as ex:
         for sym, d, id_, ts_, ps_ in ex.map(_fetch_one, symbols):
             result[sym] = (d, id_, ts_, ps_)
+    return result
+
+
+def fetch_next_earnings_dates(underlyings: list[str]) -> dict[str, str]:
+    """回傳 {underlying(大寫): 'YYYY-MM-DD'} 的下次(已知)財報日 (bug#00068)。
+
+    薄包裝 fetch_earnings_calendar()——取其 info_date(精確下次財報日)，無則以
+    calendar 的最近一個未來日期補上；查不到的標的不列入。供期權每日快照記錄財報日，
+    讓 divergence 分析能標記「區間含財報」的預期性波動。
+    """
+    if not underlyings:
+        return {}
+    from datetime import datetime as _dt, date as _date
+    data = fetch_earnings_calendar(list(underlyings))
+    out: dict[str, str] = {}
+    for sym, (dates_list, info_date, _t, _p) in data.items():
+        chosen = info_date
+        if chosen is None and dates_list:
+            future = sorted(d for d in dates_list if isinstance(d, _date))
+            chosen = future[0] if future else None
+        if chosen is not None:
+            try:
+                out[sym.upper()] = chosen.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+    return out
+
+
+def fetch_earnings_actuals(symbol: str) -> Optional[dict]:
+    """Return latest reported Revenue/CAPEX/EBIT/FCF and same-quarter YoY.
+
+    Current values are returned whenever available. YoY uses the quarter four
+    columns earlier and remains ``None`` when the provider has fewer than five
+    quarters. CAPEX is normalized to a positive spend amount before comparison.
+    Legacy gross-profit/net-income YoY keys remain for compatibility.
+    """
+    try:
+        with silence_output():
+            t = yf.Ticker(symbol)
+            income_df = t.quarterly_income_stmt
+            cashflow_df = t.quarterly_cashflow
+    except Exception:
+        return None
+    info = {}
+    try:
+        with silence_output():
+            fetched_info = t.info
+        if isinstance(fetched_info, dict):
+            info = fetched_info
+    except Exception:
+        pass
+
+    income_empty = income_df is None or income_df.empty
+    cashflow_empty = cashflow_df is None or cashflow_df.empty
+    if income_empty and cashflow_empty:
+        return None
+
+    def _clean_statement_value(value) -> Optional[float]:
+        try:
+            cleaned = float(value)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(cleaned):
+            return None
+        return cleaned
+
+    def _row_metric(df, row_names: tuple[str, ...], absolute: bool = False) -> Optional[dict]:
+        if df is None or df.empty:
+            return None
+        row_name = next((name for name in row_names if name in df.index), None)
+        if row_name is None:
+            return None
+        row = df.loc[row_name]
+        try:
+            latest = _clean_statement_value(row.iloc[0])
+        except IndexError:
+            return None
+        if latest is None:
+            return None
+        if absolute:
+            latest = abs(latest)
+
+        prior = None
+        if len(row) >= 5:
+            prior = _clean_statement_value(row.iloc[4])
+            if prior is not None and absolute:
+                prior = abs(prior)
+        yoy = None
+        if prior not in (None, 0):
+            yoy = (latest / prior - 1.0) * 100.0
+        return {"value": latest, "prior_year_value": prior, "yoy_pct": yoy}
+
+    revenue = _row_metric(income_df, ("Total Revenue",))
+    capex = _row_metric(cashflow_df, ("Capital Expenditure", "Capital Expenditures"), absolute=True)
+    ebit = _row_metric(income_df, ("EBIT",))
+    fcf = _row_metric(cashflow_df, ("Free Cash Flow",))
+
+    gross = _row_metric(income_df, ("Gross Profit",))
+    net_income = _row_metric(income_df, ("Net Income", "Net Income Common Stockholders"))
+
+    metrics = {
+        "revenue": revenue,
+        "capex": capex,
+        "ebit": ebit,
+        "fcf": fcf,
+    }
+    if not any(metrics.values()):
+        return None
+
+    period_label = None
+    try:
+        period_df = income_df if not income_empty else cashflow_df
+        col0 = period_df.columns[0]
+        period_label = f"{col0.year}Q{(col0.month - 1) // 3 + 1}"
+    except Exception:
+        pass
+
+    return {
+        "period": period_label,
+        "currency": info.get("financialCurrency") or info.get("currency") or "USD",
+        "metrics": metrics,
+        "revenue_yoy": revenue["yoy_pct"] if revenue else None,
+        "gross_profit_yoy": gross["yoy_pct"] if gross else None,
+        "net_income_yoy": net_income["yoy_pct"] if net_income else None,
+    }
+
+
+def fetch_earnings_actuals_batch(symbols: list[str]) -> dict:
+    """並行呼叫 fetch_earnings_actuals()，比照 fetch_earnings_calendar() 的平行
+    抓取模式，避免逐檔序列等待拖慢畫面。"""
+    import concurrent.futures
+    result: dict = {}
+    if not symbols:
+        return result
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(symbols))) as ex:
+        futs = {ex.submit(fetch_earnings_actuals, sym): sym for sym in symbols}
+        for fut in concurrent.futures.as_completed(futs):
+            sym = futs[fut]
+            try:
+                result[sym] = fut.result()
+            except Exception:
+                result[sym] = None
     return result
 
 
@@ -782,6 +1464,128 @@ def fetch_prices_batch(symbols: list[str], chunk_size: int = 20) -> dict[str, Op
     return result
 
 
+def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[str, dict]:
+    """Batch-fetch real market data for sector-group members (類股板塊分析).
+
+    Prices / returns / volume come from chunked yf.download() (1-month daily bars,
+    same chunking approach as fetch_prices_batch). Market cap comes from per-symbol
+    yfinance fast_info — acceptable here because sector groups are small (a few
+    dozen names total across all groups), unlike the ~84-ticker ETF universe.
+
+    Any field yfinance has no data for is left as None — never fabricated or
+    defaulted. day_pct / week_pct / month_pct are real close-to-close % returns
+    over 1 / ~5 / ~21 trading bars.
+
+    Returns {symbol: {"price","prev_close","day_pct","week_pct","month_pct",
+                      "volume","turnover","marketcap"}}.
+    """
+    if not symbols:
+        return {}
+    uniq = sorted(set(symbols))
+    chunks = [uniq[i:i + chunk_size] for i in range(0, len(uniq), chunk_size)]
+    empty = lambda: {
+        "price": None, "prev_close": None, "day_pct": None, "week_pct": None,
+        "month_pct": None, "volume": None, "turnover": None, "marketcap": None,
+    }
+    result: dict[str, dict] = {s: empty() for s in uniq}
+
+    for chunk in chunks:
+        try:
+            with silence_output():
+                data = yf.download(
+                    tickers=chunk,
+                    period="1mo",
+                    interval="1d",
+                    auto_adjust=True,
+                    actions=False,
+                    progress=False,
+                    group_by="ticker" if len(chunk) > 1 else "column",
+                )
+            import pandas as _pd
+            for sym in chunk:
+                try:
+                    if len(chunk) > 1:
+                        if sym in data.columns.get_level_values(0):
+                            sub = data[sym]
+                        else:
+                            continue
+                        closes = sub["Close"].dropna()
+                        vols = sub["Volume"].dropna() if "Volume" in sub.columns else _pd.Series(dtype=float)
+                    else:
+                        closes = data["Close"].dropna()
+                        vols = data["Volume"].dropna() if "Volume" in data.columns else _pd.Series(dtype=float)
+                    if isinstance(closes, _pd.DataFrame):
+                        closes = closes[sym] if sym in closes.columns else closes.squeeze()
+                    if closes.empty:
+                        continue
+
+                    r = result[sym]
+                    price = _clean_float(closes.iloc[-1])
+                    r["price"] = price
+                    if len(closes) >= 2:
+                        prev = _clean_float(closes.iloc[-2])
+                        r["prev_close"] = prev
+                        if price is not None and prev:
+                            r["day_pct"] = round((price / prev - 1.0) * 100, 2)
+                    if len(closes) >= 6:
+                        wk = _clean_float(closes.iloc[-6])
+                        if price is not None and wk:
+                            r["week_pct"] = round((price / wk - 1.0) * 100, 2)
+                    if len(closes) >= 2:
+                        first = _clean_float(closes.iloc[0])
+                        if price is not None and first:
+                            r["month_pct"] = round((price / first - 1.0) * 100, 2)
+                    if not vols.empty:
+                        vol = _clean_float(vols.iloc[-1])
+                        r["volume"] = vol
+                        if vol is not None and price is not None:
+                            r["turnover"] = vol * price
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    # Market cap per symbol via fast_info (bounded number of symbols). The same
+    # fast_info call also serves as a price fallback: yfinance's batch download()
+    # flakily drops tickers under load (returning close data for only a subset),
+    # yet the per-symbol fast_info endpoint often still answers. So whenever the
+    # batch download produced no price for a symbol, backfill price / prev_close /
+    # day_pct from fast_info's real last_price / previous_close (never fabricated;
+    # week/month % stay None because fast_info carries no history).
+    for sym in uniq:
+        try:
+            with silence_output():
+                fi = yf.Ticker(sym).fast_info
+            mc = None
+            for key in ("market_cap", "marketCap"):
+                try:
+                    mc = fi[key]
+                except Exception:
+                    mc = getattr(fi, "market_cap", None) if key == "market_cap" else mc
+                if mc:
+                    break
+            result[sym]["marketcap"] = _clean_float(mc) if mc else None
+
+            r = result[sym]
+            if r["price"] is None:
+                px = _clean_float(
+                    getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
+                )
+                if px is not None:
+                    r["price"] = px
+                    pc = _clean_float(
+                        getattr(fi, "regular_market_previous_close", None)
+                        or getattr(fi, "previous_close", None)
+                    )
+                    if pc:
+                        r["prev_close"] = pc
+                        r["day_pct"] = round((px / pc - 1.0) * 100, 2)
+        except Exception:
+            continue
+
+    return result
+
+
 def fetch_etf_holdings(symbol: str, aum: float | None = None) -> dict | None:
     """Fetch live top-holdings + full asset-class breakdown for an ETF via yfinance.
     Returns holdings=[]/asset_classes={} (no fallback/mock data) if yfinance has no
@@ -840,27 +1644,33 @@ def fetch_etf_holdings(symbol: str, aum: float | None = None) -> dict | None:
     # all ETFs' holdings (see quotes.fetch_prices_batch) and fills in "price"/"shares"
     # afterward — left as None/unset here rather than guessed.
 
+    # bug#00061 follow-up: date-stamped in Taiwan time (matches
+    # storage.taiwan_now(), which the ETF/options daily-snapshot system now
+    # uses throughout) rather than UTC, so this "as of" date lines up with the
+    # date the corresponding history-log line actually gets stored under.
+    as_of_now = _dt_mod.datetime.now(_TZ_TW) if _TZ_TW is not None else _dt_mod.datetime.utcnow()
+
     return {
         "name": fund_name,
         "holdings": holdings,
         "asset_classes": asset_classes,
-        "as_of_date": _dt_mod.datetime.utcnow().strftime("%Y-%m-%d"),
+        "as_of_date": as_of_now.strftime("%Y-%m-%d"),
     }
 
 
 def fetch_options_snapshot(
     underlying: str,
-    min_dte: int = 28,
+    min_dte: int = 1,
     max_dte: int = 60,
-    strike_band_pct: float = 15.0,
+    strike_band_pct: float = 20.0,
 ) -> dict:
     """Fetch a real, current options-chain snapshot for `underlying` via yfinance.
 
-    Scope is deliberately bounded (per explicit user decision, bug#00061):
-    expiries 28-60 days out only (very near-term contracts swing on gamma/theta
-    noise rather than real positioning signal), and strikes within
-    +/- strike_band_pct of spot (keeps the fetch volume bounded and focuses on
-    where real volume/OI concentrates, instead of pulling the entire chain).
+    Scope (bug#00066, per user request「價內價外 60 日內」): expiries within 60 days
+    (min_dte=1 excludes already-expired/0-DTE), strikes within +/- strike_band_pct
+    of spot so both in-the-money and out-of-the-money contracts around spot are
+    captured while keeping the fetch bounded (pulling the entire chain for every
+    watched ticker every day is too slow / rate-limit-prone).
 
     yfinance's option_chain() is a live snapshot only — no history — so this
     fetch alone cannot tell you whether a position is being "built"; that
@@ -871,8 +1681,9 @@ def fetch_options_snapshot(
     Returns {"spot_price": float|None, "contracts": [...]}. contracts is [] (no
     fallback/mock data) if yfinance has nothing usable for this underlying.
     Each contract: contractSymbol, type ("call"/"put"), strike, expiry,
-    lastPrice, volume, openInterest, impliedVolatility — all real fields as
-    reported by yfinance, nothing derived or estimated.
+    lastPrice, bid, ask, lastTradeDate, volume, openInterest,
+    impliedVolatility — all real fields as reported by yfinance, nothing
+    derived or estimated.
     """
     import datetime as _dt_mod
 
@@ -934,6 +1745,12 @@ def fetch_options_snapshot(
                             "strike": strike,
                             "expiry": exp_str,
                             "lastPrice": _clean_float(row.get("lastPrice")),
+                            # bug#00077: 保存雙邊報價與最後成交時間，讓預期波動/ATM IV
+                            # 可改用 (bid+ask)/2 中間價、並判斷 lastPrice 是否過期。
+                            "bid": _clean_float(row.get("bid")),
+                            "ask": _clean_float(row.get("ask")),
+                            "lastTradeDate": (str(row.get("lastTradeDate"))
+                                              if row.get("lastTradeDate") is not None else None),
                             "volume": _clean_float(row.get("volume")),
                             "openInterest": _clean_float(row.get("openInterest")),
                             "impliedVolatility": _clean_float(row.get("impliedVolatility")),

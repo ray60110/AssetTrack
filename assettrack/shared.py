@@ -6,12 +6,111 @@ assettrack/shared.py — 共享純邏輯模組
   - MACRO_EVENT_NAMES: dict[str, str]          — 總經事件顯示名稱對照
   - get_upcoming_macro_events()                 — 取得 FED/NFP/CPI 硬編碼日期
   - draw_history_chart()                        — ASCII 組合 + 大盤 bar/line 圖
+  - is_taiwan_position()                         — 判斷部位是否為台股（投資建議一律排除）
   - position_stance_by_symbol()                 — 依持倉判斷各標的的淨多空立場
+  - format_updated_at()                          — 統一「更新時間」時間戳記格式 (yyyy-mm-dd hh:mm)
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 投資建議三層寫作格式（bug#00117）——所有投資建議的單一真理來源
+# ─────────────────────────────────────────────────────────────────────────────
+# 使用者要求把「投資建議的寫作格式全部調整」成清楚三層：
+#   1. 結論（verdict）      ：先點出標的的多空方向與結論（單行）。
+#   2. 判斷依據（basis）    ：1–2 句「如何判斷此結論」。
+#   3. breakdown（detail_sections）：解釋為何、給公式與帶入本標的數字的計算方式，
+#      並收納所有量化附註（回測命中率／顯著性、財報降權、部位一致性、IV 位階…）。
+# 各分析模組的生成函式一律先組出 list[Recommendation]，主頁卡片只投影第一＋二層
+# （dashboard_line 收斂成一句），detail 畫面投影第一＋二層＋可點選連結（detail_headline），
+# 公式細節頁（RecommendationDetailScreen）投影完整第三層——三種投影、同一份真理來源，
+# 維持「結論＝被回測＝同一函式」紀律。
+
+@dataclass
+class Recommendation:
+    """一則投資建議的結構化表示（三層寫作格式的單一真理來源）。"""
+    rec_id: str                       # 穩定唯一 id（僅供辨識/測試；畫面點選用 render token）
+    category: str                     # 'etf'|'etf_stance'|'sector'|'options'|'event'|'cross_model'
+    direction: Optional[str]          # '多'|'空'|'觀望'|None（事件為 None，資訊性）
+    verdict: str                      # 第一層：emoji＋方向＋標的＋結論（單行 Rich markup）
+    basis: str                        # 第二層：1–2 句「如何判斷」（Rich markup，可空）
+    detail_sections: list = field(default_factory=list)  # 第三層：list[dict]
+    #   每個 section: {'heading': str, 'formula': str, 'substitution': str, 'explanation': str}
+
+
+def _section(heading: str, formula: str = "", substitution: str = "", explanation: str = "") -> dict:
+    """建一個第三層 breakdown section。缺項留空字串（畫面自動略過空列）。"""
+    return {"heading": heading, "formula": formula, "substitution": substitution,
+            "explanation": explanation}
+
+
+def dashboard_line(rec: "Recommendation") -> str:
+    """主頁投影：把第一層結論＋第二層判斷依據收斂成「一句話」（bug#00117）。"""
+    basis = (rec.basis or "").strip()
+    if basis:
+        return f"{rec.verdict}　[dim]—[/dim] {basis}"
+    return rec.verdict
+
+
+def detail_headline(rec: "Recommendation", token: str) -> str:
+    """detail 畫面投影：第一層結論＋第二層判斷依據＋可點選「查看公式細節」連結
+    （bug#00118）。token 為該畫面本次 render 指派的 ASCII 安全點選代號；點選觸發
+    該畫面的 action_show_formula(token) 推入公式細節頁。"""
+    lines = [rec.verdict]
+    basis = (rec.basis or "").strip()
+    if basis:
+        lines.append(f"   [dim]依據：[/dim]{basis}")
+    lines.append(f"   [@click=screen.show_formula('{token}')]🔍 查看公式細節 ›[/]")
+    return "\n".join(lines)
+
+
+def render_detail_recs(recs: "list[Recommendation]", header: Optional[str] = None,
+                       start: int = 0) -> "tuple[str, dict]":
+    """把一串 Recommendation render 成 detail 畫面用的 markup 字串，並回傳
+    {token: rec} 對照（供 action_show_formula 查詢）。token 為 'r0','r1',…（ASCII
+    安全，避開 Chinese/引號破壞 @click markup 解析與 hotkey 佔用問題，bug#00118）。
+    `start` 供同一畫面多段 render 時延續編號避免碰撞。"""
+    mapping: dict = {}
+    blocks: list[str] = []
+    if header:
+        blocks.append(header)
+    for i, rec in enumerate(recs):
+        tok = f"r{start + i}"
+        mapping[tok] = rec
+        blocks.append(detail_headline(rec, tok))
+    return "\n\n".join(blocks), mapping
+
+
+def format_updated_at(dt: Optional[datetime]) -> str:
+    """將 datetime 格式化為全畫面統一的「更新時間」戳記字串：yyyy-mm-dd hh:mm。
+
+    尚未有資料（dt 為 None）時回傳「—」，不臆測時間。"""
+    if dt is None:
+        return "—"
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def is_taiwan_position(p) -> bool:
+    """判斷一筆部位是否屬於台股 / 台幣市場。
+
+    bug#00091（使用者決策：投資建議一律以美股為主、移除台股）：四大分析功能
+    （主動式ETF／期權觀察清單／類股板塊／跨模型總結）與其回測，一律排除台股
+    部位；台股/TWD 的「持倉追蹤、報價、基準幣別換算」不受影響、照常運作，僅
+    「投資建議」層面剔除台股。判定口徑與 models.Position 內建的 is_tw 完全一致
+    （幣別 TWD、代碼 .TW/.TWO 結尾、或 market == "TW"），是唯一的判定來源。"""
+    currency = (getattr(p, "currency", None) or "")
+    symbol = (getattr(p, "symbol", None) or "")
+    market = (getattr(p, "market", None) or "")
+    return (
+        currency == "TWD"
+        or symbol.endswith(".TW")
+        or symbol.endswith(".TWO")
+        or market == "TW"
+    )
 
 
 def position_stance_by_symbol(positions) -> "dict[str, str]":
@@ -27,6 +126,10 @@ def position_stance_by_symbol(positions) -> "dict[str, str]":
     """
     lean: dict[str, float] = {}
     for p in positions or []:
+        # 投資建議一律排除台股（bug#00091）——台股持倉仍照常追蹤，只是不進入
+        # ETF／期權等結論的「與你部位方向一致/相反」交叉比對。
+        if is_taiwan_position(p):
+            continue
         if p.instrument_type == "option":
             sym = (p.underlying or "").upper()
             if not sym:
@@ -51,8 +154,227 @@ MACRO_EVENT_NAMES: dict[str, str] = {
     "◆CPI": "◆ CPI 通膨指數公佈",
 }
 
+DEFAULT_EVENT_TIMEZONE = "Asia/Taipei"
 
-def get_upcoming_macro_events(days: int = 90, start_days_ago: int = 0) -> "list[tuple]":
+
+def event_timezone(timezone_name: str = DEFAULT_EVENT_TIMEZONE):
+    """Return a validated IANA timezone for event display.
+
+    Invalid or unavailable timezone names fall back to Asia/Taipei so calendar
+    rendering never fails. UI input validates before persisting, making this
+    fallback primarily useful for old/corrupt preference files.
+    """
+    import zoneinfo
+
+    try:
+        return zoneinfo.ZoneInfo(timezone_name)
+    except (KeyError, ValueError, TypeError):
+        return zoneinfo.ZoneInfo(DEFAULT_EVENT_TIMEZONE)
+
+
+def format_timezone_label(timezone_name: str, at: Optional[datetime] = None) -> str:
+    """Format an IANA timezone with its date-aware UTC offset."""
+    tz = event_timezone(timezone_name)
+    local_dt = (at or datetime.now(tz)).astimezone(tz)
+    offset = local_dt.utcoffset()
+    total_minutes = int(offset.total_seconds() // 60) if offset is not None else 0
+    sign = "+" if total_minutes >= 0 else "-"
+    total_minutes = abs(total_minutes)
+    return f"{getattr(tz, 'key', timezone_name)} (UTC{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d})"
+
+
+def _fmt_signed_pct(v: float, decimals: int = 1) -> str:
+    """帶正負號的百分比字串，並依方向上色（升為紅、降為綠，符合通膨/利率語意）。"""
+    sign = "+" if v >= 0 else ""
+    color = "red" if v > 0 else "green" if v < 0 else "dim"
+    return f"[{color}]{sign}{v:.{decimals}f}%[/{color}]"
+
+
+def format_macro_readings(readings: "Optional[dict]") -> Optional[str]:
+    """將 fetch_latest_macro_readings() 的結果格式化為單行 Rich markup，供
+    UpcomingEventsScreen 顯示各總經指標「最新一期已公佈數值」。
+
+    每項資料若為 None（缺 FRED_API_KEY／API 失敗／資料不足）則跳過該項，不以
+    預設值填補（比照全專案「不臆測」慣例）。全部皆缺時回傳 None，呼叫端可據此
+    顯示「尚未取得」而非空白。日期以 (as_of) 標註資料所屬月份。"""
+    if not readings:
+        return None
+
+    parts: list[str] = []
+
+    cpi = readings.get("core_cpi")
+    if cpi:
+        parts.append(
+            f"[bold]核心CPI[/bold] {_fmt_signed_pct(cpi['yoy_pct'])}[dim]YoY[/dim] "
+            f"{_fmt_signed_pct(cpi['mom_pct'])}[dim]MoM[/dim]"
+        )
+
+    pce = readings.get("core_pce")
+    if pce:
+        parts.append(
+            f"[bold]核心PCE[/bold] {_fmt_signed_pct(pce['yoy_pct'])}[dim]YoY[/dim] "
+            f"{_fmt_signed_pct(pce['mom_pct'])}[dim]MoM[/dim]"
+        )
+
+    nfp = readings.get("nfp")
+    if nfp:
+        chg_k = nfp["change"] / 1000.0
+        sign = "+" if chg_k >= 0 else ""
+        color = "green" if chg_k >= 0 else "red"
+        parts.append(f"[bold]NFP[/bold] [{color}]{sign}{chg_k:,.0f}K[/{color}]")
+
+    ur = readings.get("unemployment")
+    if ur:
+        chg = ur["change_pp"]
+        arrow = "▲" if chg > 0 else "▼" if chg < 0 else "＝"
+        acolor = "red" if chg > 0 else "green" if chg < 0 else "dim"
+        parts.append(
+            f"[bold]失業率[/bold] {ur['rate_pct']:.1f}% "
+            f"[{acolor}]{arrow}{abs(chg):.1f}[/{acolor}]"
+        )
+
+    ff = readings.get("fed_funds")
+    if ff:
+        parts.append(f"[bold]聯邦資金利率[/bold] {ff['rate_pct']:.2f}%")
+
+    if not parts:
+        return None
+
+    return "[dim]│[/dim] ".join(parts)
+
+
+def macro_recommendations(readings: "Optional[dict]") -> "list[Recommendation]":
+    """把 fetch_latest_macro_readings() 的重點總經指標組成三層結構化建議（bug#00117）。
+    此類為「資訊性」——不投多空方向票（direction=None）：第一層＝指標＋期對期變動、
+    第二層＝經濟意涵如何解讀、第三層＝期對期變動公式＋帶入上期/本期實際值＋來源說明。
+    UpcomingEventsScreen 以此為單一真理來源，format_macro_analysis_lines 為其薄 wrapper。"""
+    if not readings:
+        return []
+
+    recs: list[Recommendation] = []
+
+    cpi = readings.get("core_cpi")
+    if cpi and cpi.get("mom_pct") is not None:
+        chg_s = f"{cpi['mom_change_pp']:+.2f}pp" if cpi.get("mom_change_pp") is not None else "—"
+        prev_s = f"{cpi['prev_mom_pct']:.2f}%" if cpi.get("prev_mom_pct") is not None else "—"
+        color = "green" if (cpi.get("mom_change_pp") or 0) < 0 else "red" if (cpi.get("mom_change_pp") or 0) > 0 else "yellow"
+        recs.append(Recommendation(
+            rec_id="event:core_cpi", category="event", direction=None,
+            verdict=(f"📌 [bold white]核心 CPI[/bold white] ({cpi['as_of']}): "
+                     f"月增 [bold]{cpi['mom_pct']:.2f}%[/bold] (較上期 {prev_s} [{color}]{chg_s}[/{color}]) │ "
+                     f"年增 {cpi['yoy_pct']:.2f}%"),
+            basis=cpi.get("interpretation") or "",
+            detail_sections=[_section(
+                "期對期變動計算（月增率）",
+                formula="月增率變動量 Δ = 本期月增率(MoM) − 上期月增率(MoM)",
+                substitution=(f"= {cpi['mom_pct']:.2f}% − {prev_s} = {chg_s}"
+                              f"（年增率 YoY = {cpi['yoy_pct']:.2f}%）"),
+                explanation=("月增率反映最近一個月的通膨動能：Δ<0（放緩）為通膨壓力減緩、"
+                             "利於降息與寬鬆；Δ>0（回升）為粘性通膨反彈、降息預期可能延後。"
+                             "資料來源：FRED 核心 CPI（剔除食品與能源），零臆測、缺資料即不列。"))],
+        ))
+
+    pce = readings.get("core_pce")
+    if pce and pce.get("mom_pct") is not None:
+        chg_s = f"{pce['mom_change_pp']:+.2f}pp" if pce.get("mom_change_pp") is not None else "—"
+        prev_s = f"{pce['prev_mom_pct']:.2f}%" if pce.get("prev_mom_pct") is not None else "—"
+        color = "green" if (pce.get("mom_change_pp") or 0) < 0 else "red" if (pce.get("mom_change_pp") or 0) > 0 else "yellow"
+        recs.append(Recommendation(
+            rec_id="event:core_pce", category="event", direction=None,
+            verdict=(f"📌 [bold white]核心 PCE (Fed首要指標)[/bold white] ({pce['as_of']}): "
+                     f"月增 [bold]{pce['mom_pct']:.2f}%[/bold] (較上期 {prev_s} [{color}]{chg_s}[/{color}]) │ "
+                     f"年增 {pce['yoy_pct']:.2f}%"),
+            basis=pce.get("interpretation") or "",
+            detail_sections=[_section(
+                "期對期變動計算（月增率）",
+                formula="月增率變動量 Δ = 本期月增率(MoM) − 上期月增率(MoM)",
+                substitution=(f"= {pce['mom_pct']:.2f}% − {prev_s} = {chg_s}"
+                              f"（年增率 YoY = {pce['yoy_pct']:.2f}%）"),
+                explanation=("核心 PCE 為 Fed 貨幣政策首要通膨指標。Δ<0（放緩）強化降息與寬鬆空間、"
+                             "Δ>0（回升）延後寬鬆預期。資料來源：FRED 核心 PCE（剔除食品與能源）。"))],
+        ))
+
+    nfp = readings.get("nfp")
+    if nfp and nfp.get("change") is not None:
+        chg_k = nfp["change"] / 1000.0
+        prev_k = nfp["prev_change"] / 1000.0 if nfp.get("prev_change") is not None else None
+        prev_s = f"{prev_k:+,.0f}K" if prev_k is not None else "—"
+        diff_k = nfp["change_diff"] / 1000.0 if nfp.get("change_diff") is not None else None
+        diff_s = f"{diff_k:+,.0f}K" if diff_k is not None else "—"
+        color = "green" if (diff_k or 0) < 0 else "yellow"
+        recs.append(Recommendation(
+            rec_id="event:nfp", category="event", direction=None,
+            verdict=(f"📌 [bold white]非農就業 (NFP)[/bold white] ({nfp['as_of']}): "
+                     f"新增 [bold]{chg_k:+,.0f}K[/bold] (較上月 {prev_s} [{color}]{diff_s}[/{color}])"),
+            basis=nfp.get("interpretation") or "",
+            detail_sections=[_section(
+                "期對期變動計算（新增就業人數）",
+                formula="人數變動 Δ = 本期新增非農就業 − 上期新增非農就業（單位：千人 K）",
+                substitution=f"= {chg_k:+,.0f}K − {prev_s} = {diff_s}",
+                explanation=("NFP 為勞動市場強弱指標。就業降溫（Δ<0）通常減緩薪資-通膨壓力、"
+                             "利於寬鬆；過熱（Δ>0）則可能延後降息。資料來源：FRED 非農就業總人數月變動。"))],
+        ))
+
+    ur = readings.get("unemployment")
+    if ur and ur.get("rate_pct") is not None:
+        chg = ur["change_pp"]
+        prev_r = ur.get("prev_pct")
+        prev_s = f"{prev_r:.1f}%" if prev_r is not None else "—"
+        color = "green" if chg > 0 else "red" if chg < 0 else "yellow"
+        recs.append(Recommendation(
+            rec_id="event:unemployment", category="event", direction=None,
+            verdict=(f"📌 [bold white]失業率[/bold white] ({ur['as_of']}): "
+                     f"[bold]{ur['rate_pct']:.1f}%[/bold] (較上期 {prev_s} [{color}]{chg:+.1f}pp[/{color}])"),
+            basis=ur.get("interpretation") or "",
+            detail_sections=[_section(
+                "期對期變動計算（失業率）",
+                formula="百分點變動 Δ = 本期失業率 − 上期失業率",
+                substitution=f"= {ur['rate_pct']:.1f}% − {prev_s} = {chg:+.1f}pp",
+                explanation=("失業率上升（Δ>0）通常伴隨經濟降溫、支持寬鬆；下降（Δ<0）為勞動市場"
+                             "緊俏。資料來源：FRED 失業率（U-3）。"))],
+        ))
+
+    ff = readings.get("fed_funds")
+    if ff and ff.get("rate_pct") is not None:
+        chg = ff["change_pp"]
+        prev_r = ff.get("prev_pct")
+        prev_s = f"{prev_r:.2f}%" if prev_r is not None else "—"
+        color = "green" if chg < 0 else "red" if chg > 0 else "yellow"
+        recs.append(Recommendation(
+            rec_id="event:fed_funds", category="event", direction=None,
+            verdict=(f"📌 [bold white]有效聯邦資金利率[/bold white] ({ff['as_of']}): "
+                     f"[bold]{ff['rate_pct']:.2f}%[/bold] (較上期 {prev_s} [{color}]{chg:+.2f}pp[/{color}])"),
+            basis=ff.get("interpretation") or "",
+            detail_sections=[_section(
+                "期對期變動計算（政策利率）",
+                formula="百分點變動 Δ = 本期有效聯邦資金利率 − 上期",
+                substitution=f"= {ff['rate_pct']:.2f}% − {prev_s} = {chg:+.2f}pp",
+                explanation=("政策利率下行（Δ<0）為寬鬆、支撐風險資產；上行（Δ>0）為緊縮。"
+                             "資料來源：FRED 有效聯邦資金利率 (EFFR)。"))],
+        ))
+
+    return recs
+
+
+def format_macro_analysis_lines(readings: "Optional[dict]") -> list[str]:
+    """將重點經濟指標格式化為期對期比較與經濟意涵解析 bullet 清單。薄 wrapper：以
+    macro_recommendations() 為單一真理來源，投影為原本的「📌 指標 / 💡 意涵」兩行格式，
+    維持既有呼叫端輸出不變（bug#00117）。"""
+    lines: list[str] = []
+    for rec in macro_recommendations(readings):
+        lines.append(rec.verdict)
+        if (rec.basis or "").strip():
+            lines.append(f"   💡 [cyan]{rec.basis}[/cyan]")
+    return lines
+
+
+
+def get_upcoming_macro_events(
+    days: int = 90,
+    start_days_ago: int = 0,
+    timezone_name: str = DEFAULT_EVENT_TIMEZONE,
+    reference_date=None,
+) -> "list[tuple]":
     """
     Returns upcoming macro events within the next ~days days as (date, label, time_str) tuples.
     Hardcoded 2025-2027 schedule. Sorted ascending.
@@ -93,32 +415,32 @@ def get_upcoming_macro_events(days: int = 90, start_days_ago: int = 0) -> "list[
         date_type(2027, 10, 13), date_type(2027, 11, 10), date_type(2027, 12, 10),
     ]
 
-    today = datetime.utcnow().date()
+    tz_target = event_timezone(timezone_name)
+    today = reference_date or datetime.now(tz_target).date()
     start_date = today - timedelta(days=start_days_ago)
     cutoff = today + timedelta(days=days)
 
     events: list[tuple] = []
     import zoneinfo
-    from datetime import datetime as dt_cls, time as time_cls, timezone as tz_cls
+    from datetime import datetime as dt_cls, time as time_cls
 
     tz_et = zoneinfo.ZoneInfo("America/New_York")
-    tz_gmt8 = tz_cls(timedelta(hours=8))
 
-    def to_gmt8(d, time_et):
+    def to_local(d, time_et):
         dt_et = dt_cls.combine(d, time_et).replace(tzinfo=tz_et)
-        dt_local = dt_et.astimezone(tz_gmt8)
+        dt_local = dt_et.astimezone(tz_target)
         return dt_local.date(), dt_local.strftime("%H:%M")
 
     for d in fed_dates:
-        local_d, local_t = to_gmt8(d, time_cls(14, 0))
+        local_d, local_t = to_local(d, time_cls(14, 0))
         if start_date <= local_d <= cutoff:
             events.append((local_d, "▼FED", local_t))
     for d in nfp_dates:
-        local_d, local_t = to_gmt8(d, time_cls(8, 30))
+        local_d, local_t = to_local(d, time_cls(8, 30))
         if start_date <= local_d <= cutoff:
             events.append((local_d, "★NFP", local_t))
     for d in cpi_dates:
-        local_d, local_t = to_gmt8(d, time_cls(8, 30))
+        local_d, local_t = to_local(d, time_cls(8, 30))
         if start_date <= local_d <= cutoff:
             events.append((local_d, "◆CPI", local_t))
 

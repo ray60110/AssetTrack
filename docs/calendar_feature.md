@@ -6,7 +6,8 @@ This document details the architecture, design choices, concurrency consideratio
 
 ## 1. Feature Specifications
 
-The Event Calendar aggregates and displays critical upcoming dates within a rolling 90-day window:
+The Event Calendar aggregates historical events from the current and immediately
+preceding calendar month, plus upcoming dates through the next 90 days:
 1. **User Holdings Earnings**: Earnings call dates for all stock and ETF tickers in the user's manual positions (as well as underlying stock symbols for options).
 2. **SOX Top 10 Semiconductor Holdings**: Earnings dates for the top 10 semiconductor companies:
    - `NVDA`, `AVGO`, `AMD`, `QCOM`, `INTC`, `AMAT`, `LRCX`, `MU`, `ASML`, `TXN`.
@@ -14,13 +15,20 @@ The Event Calendar aggregates and displays critical upcoming dates within a roll
    - **FED FOMC Interest Rate Decisions**: Announced at 2:00 PM Eastern Time (ET).
    - **NFP (Non-Farm Payrolls / Unemployment Rate)**: Announced at 8:30 AM Eastern Time (ET).
    - **CPI (Consumer Price Index Inflation)**: Announced at 8:30 AM Eastern Time (ET).
+4. **Completed-event actuals**:
+   - Earnings: Revenue, CAPEX, EBIT, and FCF current values, same-quarter prior-year values, and YoY.
+   - Macro: current reading, prior reading, and the period-over-period change.
+5. **Per-user timezone preference**:
+   - Defaults to `Asia/Taipei`.
+   - Press `T` in `UpcomingEventsScreen` to enter any valid IANA timezone.
+   - The choice is persisted in the user's preferences file.
 
 > [!IMPORTANT]
-> **GMT+8 Time & Date Adjustments**:
-> All macro events are combined with their ET announcement times and converted to the local GMT+8 timezone, accounting for US Daylight Saving Time (DST):
+> **Timezone-aware date adjustments**:
+> All macro events are combined with their ET announcement times and converted to the user's selected timezone, accounting for DST. With the default `Asia/Taipei` setting:
 > - **Daylight Time (EDT, GMT-4)**: FED decisions are shifted to **02:00 AM local time the next day** (placing them on the next local calendar day). NFP/CPI convert to **20:30 (8:30 PM) the same day**.
 >   - **Standard Time (EST, GMT-5)**: FED decisions are shifted to **03:00 AM local time the next day**. NFP/CPI convert to **21:30 (9:30 PM) the same day**.
-> The local GMT+8 date is used for all sorting, preview filters, and calendar grid renderings.
+> The converted local date is used for sorting and calendar-grid placement.
 
 ---
 
@@ -30,24 +38,24 @@ The calendar is fully integrated across the CLI and TUI screens with background 
 
 ```mermaid
 graph TD
-    User([User]) -->|CLI| CLI[cli.py: calendar_cmd]
     User -->|TUI| TUI[tui.py: UpcomingEventsScreen]
     
-    TUI -->|Pushed screen| CacheRead[Read self._upcoming_events cache]
-    TUI_Dash[tui.py: DashboardScreen] -->|Background mount worker| Fetcher[Calendar Fetching Engine]
-    CLI -->|Execute| Fetcher
+    TUI -->|Own background worker| Fetcher[Extended Calendar Fetcher]
+    TUI_Dash[tui.py: DashboardScreen] -->|Background mount worker| SummaryFetcher[Future-only Summary Fetcher]
     
     Fetcher -->|Parallel yfinance| Tickers[Tickers Union]
-    Fetcher -->|Schedule Parsing & GMT+8 conversion| Macro[Macro Events Schedule]
+    Fetcher -->|Schedule parsing & user-timezone conversion| Macro[Macro Events Schedule]
+    Fetcher -->|Read/write| History[Retained earnings-event history]
+    Fetcher -->|Completed earnings| Statements[Revenue / CAPEX / EBIT / FCF]
+    Fetcher -->|Completed macro events| FRED[Current / prior actuals]
     
     Tickers -->|Merge & Sort| Chrono[Chronological Event List]
     Macro -->|Merge & Sort| Chrono
     
-    Chrono -->|Group & Cache| DashboardCache[Dashboard _upcoming_events]
+    SummaryFetcher -->|Group & Cache| DashboardCache[Dashboard _upcoming_events]
+    Chrono --> TUI
     
     DashboardCache -->|Display next 30 days| PanelWidget[recent-events-panel]
-    DashboardCache -->|Pass directly| TUI
-    
     TUI -->|Render side-by-side| CalendarGrid[Monthly Grid Panel]
     TUI -->|Render side-by-side| MonthlyEvents[Event Details List]
 ```
@@ -67,19 +75,20 @@ To prevent yfinance rate limits and dashboard lag during standard 60-second quot
 - Once fetched, it stores the list in `self._upcoming_events` and marks `self._events_fetched = True`.
 - During subsequent 60-second quote refreshes, standard quotes are updated, but the calendar database is skipped.
 - **Invalidation**: Whenever positions are added, modified, or deleted, `self._events_fetched` is set to `False` and a new background calendar fetch is triggered to keep listings in sync.
+- `UpcomingEventsScreen` deliberately uses a separate worker because retained history and completed-event actuals need a wider data contract than the compact dashboard cache.
 
-### C. GMT+8 Timezone Conversion Logic
+### C. User Timezone Conversion Logic
 Macroeconomic announcements are parsed through standard zone files:
 ```python
 import zoneinfo
-from datetime import datetime, time, timezone, timedelta
+from datetime import datetime, time
 
 tz_et = zoneinfo.ZoneInfo("America/New_York")
-tz_gmt8 = timezone(timedelta(hours=8))
+tz_target = zoneinfo.ZoneInfo(user_timezone)
 
 # Combine ET date with ET standard release time
 dt_et = datetime.combine(et_date, time_cls(14, 0)).replace(tzinfo=tz_et) # e.g. 14:00 for FED
-dt_local = dt_et.astimezone(tz_gmt8)
+dt_local = dt_et.astimezone(tz_target)
 
 local_date = dt_local.date()
 local_time_str = dt_local.strftime("%H:%M")
@@ -96,21 +105,20 @@ During development, wrapping yfinance operations in a global standard output/err
 
 ## 4. UI Rendering & Monthly Grouping
 
-### CLI Command (`assettrack calendar`)
-- Generates a separate `rich.table.Table` for each month in the console.
-- Displays GMT+8 times in parentheses next to event names.
-
 ### TUI Summary Dashboard Panel (`#recent-events-panel`)
 - Replaces the legacy sector breakdown widget next to `#pnl-leaderboard`.
 - Slices events occurring within the next 30 days and simplifies event names to keep them compact (e.g. `▼ FED 利率 (02:00)` or `🔔 AAPL 財報`).
 - Fits up to 8 events cleanly inside the side-panels layout.
 
 ### TUI Calendar Screen (`UpcomingEventsScreen`)
-- Pushed onto the screen stack via shortcut `5` or the left sidebar menu option `"📅 近期重大事件"`.
-- Uses the cached `_upcoming_events` from the main dashboard, rendering **instantly** without additional fetching overhead.
+- Pushed onto the screen stack via shortcut `4`.
+- Runs its own extended-window fetch instead of reusing the dashboard's future-only summary cache.
+- Retains observed earnings metadata locally, so a completed event remains visible after the provider advances to the next quarter.
+- Prunes completed earnings older than the first day of the previous month from both the table and retained event history.
+- Marks events by exact converted release time, including same-day `(已發生)` status.
 - Grouped by month and displayed in a **side-by-side visual layout**:
   - **Left Column (Grid Panel)**: A Sunday-based monthly calendar grid where dates with major events are reverse-highlighted and color-coded (green for holdings, yellow for SOX components, and cyan for macro events).
-  - **Right Column (Details Panel)**: Lists the events chronologically with days-away counters and local times.
+  - **Right Column (Details Panel)**: Uses a single vertical card stack with fixed date/status/content columns. Completed cards use a high-contrast light-gray background plus `✓ 已發生`; upcoming cards use `○ 待發生` and semantic event-type borders. This keeps wrapped actuals aligned and does not rely on color alone.
 
 ---
 
@@ -118,9 +126,13 @@ During development, wrapping yfinance operations in a global standard output/err
 
 An automated integration test has been added to [verify_tui.py](file:///Users/rayyj/Projects/AssetTrack/scripts/verify_tui.py):
 - **`verify_upcoming_events_screen`**: 
-  - Simulates keyboard key `5` presses.
-  - Mounts the `UpcomingEventsScreen` using the cache.
+  - Simulates keyboard key `4` presses.
+  - Mounts the `UpcomingEventsScreen`.
   - Verifies presence of `#events-static`.
   - Returns safely to the dashboard via `escape`.
 - **`verify_bindings`**:
   - Confirms keys `1` through `6`, `r`, and `q` are properly registered in `DashboardScreen`.
+- **`verify_event_actuals_and_timezones`**:
+  - Verifies all four earnings metrics and YoY calculations.
+  - Verifies the same FOMC release converts to `14:00` New York and `02:00` next-day Taipei time.
+  - Verifies per-user timezone preference persistence.

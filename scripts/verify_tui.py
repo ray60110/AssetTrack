@@ -13,12 +13,9 @@ from assettrack.tui import (
     LogoutConfirmModal,
     LoginScreen,
     OnboardingModal,
-    AdjustPositionsModal,
     AddPositionModal,
-    _build_broker_panel,
     _build_holdings_table,
     _build_metrics_panel,
-    _build_pnl_panel,
     _calc_weights,
     run_tui_dashboard,
 )
@@ -76,13 +73,172 @@ def verify_render_builders() -> None:
     weights = _calc_weights(positions, rate)
     metrics = _build_metrics_panel(positions, rate)
     holdings = _build_holdings_table(positions, rate, weights)
-    broker = _build_broker_panel(positions, rate)
-    pnl = _build_pnl_panel(positions, rate)
     assert metrics is not None
     assert holdings is not None
-    assert broker is not None
-    assert pnl is not None
     assert len(weights) == 2
+
+
+def verify_environment_loading() -> None:
+    """The real main() startup path must load a deterministic .env location."""
+    import os
+    import sys
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from assettrack.tui import _load_environment, main
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        env_path = Path(temp_dir) / ".env"
+        env_path.write_text("FRED_API_KEY=test-only-key\n")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FRED_API_KEY", None)
+            assert _load_environment(env_path) == env_path.resolve()
+            assert os.environ["FRED_API_KEY"] == "test-only-key"
+
+        with patch.dict(os.environ, {"FRED_API_KEY": "already-exported"}, clear=False):
+            _load_environment(env_path)
+            assert os.environ["FRED_API_KEY"] == "already-exported"
+
+    with patch("assettrack.tui._load_environment") as load_env, patch(
+        "assettrack.tui.run_tui_dashboard"
+    ) as run_dashboard, patch.object(sys, "argv", ["assettrack", "--user", "testuser"]):
+        main()
+        load_env.assert_called_once_with()
+        run_dashboard.assert_called_once_with("testuser")
+
+
+def verify_event_actuals_and_timezones() -> None:
+    """Upcoming events retain comparable actuals and convert source times."""
+    from datetime import datetime as dt
+    from pathlib import Path
+    import os
+    import tempfile
+    from unittest.mock import MagicMock, PropertyMock, patch
+
+    import pandas as pd
+
+    from assettrack.quotes import (
+        compute_cpi_conclusion,
+        fetch_earnings_actuals,
+        fetch_fred_series,
+        fred_failure_reason,
+    )
+    from assettrack.shared import get_upcoming_macro_events
+    from assettrack.storage import load_user_preferences, save_user_preferences
+    from assettrack.tui import (
+        _event_card,
+        _event_history_start,
+        _format_cpi_event_actuals,
+        _format_earnings_actuals,
+        _format_nfp_event_actuals,
+        _retain_event_history,
+    )
+
+    columns = pd.to_datetime([
+        "2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30"
+    ])
+    income = pd.DataFrame(
+        [
+            [110.0, 0, 0, 0, 100.0],
+            [22.0, 0, 0, 0, 20.0],
+            [55.0, 0, 0, 0, 50.0],
+            [11.0, 0, 0, 0, 10.0],
+        ],
+        index=["Total Revenue", "EBIT", "Gross Profit", "Net Income"],
+        columns=columns,
+    )
+    cashflow = pd.DataFrame(
+        [[-12.0, 0, 0, 0, -10.0], [18.0, 0, 0, 0, 15.0]],
+        index=["Capital Expenditure", "Free Cash Flow"],
+        columns=columns,
+    )
+    ticker = MagicMock()
+    type(ticker).quarterly_income_stmt = PropertyMock(return_value=income)
+    type(ticker).quarterly_cashflow = PropertyMock(return_value=cashflow)
+    with patch("assettrack.quotes.yf.Ticker", return_value=ticker):
+        actuals = fetch_earnings_actuals("INTC")
+
+    assert actuals is not None
+    assert round(actuals["metrics"]["revenue"]["yoy_pct"], 1) == 10.0
+    assert actuals["metrics"]["capex"]["value"] == 12.0
+    assert round(actuals["metrics"]["fcf"]["yoy_pct"], 1) == 20.0
+    rendered = _format_earnings_actuals(actuals)
+    for metric in ("Revenue", "CAPEX", "EBIT", "FCF", "去年同期"):
+        assert metric in rendered
+
+    completed_card = _event_card(
+        dt(2026, 7, 23).date(),
+        "💻 INTC[bold red](已發生)[/bold red] 財報公佈",
+        dt(2026, 7, 24).date(),
+        "SOX",
+    )
+    completed_panel = completed_card.renderable
+    assert completed_panel.style == "black on #d1d5db"
+    assert completed_panel.border_style == "#9ca3af"
+    assert [column.width for column in completed_panel.renderable.columns[:2]] == [15, 10]
+
+    upcoming_card = _event_card(
+        dt(2026, 7, 30).date(),
+        "▼ FED 利率決議 (02:00 UTC+08:00)",
+        dt(2026, 7, 24).date(),
+        "MACRO",
+    )
+    assert upcoming_card.renderable.style == "white on #161b22"
+    assert upcoming_card.renderable.border_style == "#58a6ff"
+
+    assert _event_history_start(dt(2026, 7, 24).date()) == dt(2026, 6, 1).date()
+    assert _event_history_start(dt(2026, 1, 5).date()) == dt(2025, 12, 1).date()
+    assert _retain_event_history(dt(2026, 6, 1).date(), dt(2026, 7, 24).date())
+    assert not _retain_event_history(dt(2026, 5, 31).date(), dt(2026, 7, 24).date())
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("FRED_API_KEY", None)
+        assert fetch_fred_series("CPIAUCSL", limit=3) is None
+        assert fetch_fred_series("CPIAUCNS", limit=14) is None
+        assert fetch_fred_series("PAYEMS", limit=4) is None
+        assert fetch_fred_series("UNRATE", limit=4) is None
+        assert fred_failure_reason("CPIAUCSL", "CPIAUCNS") == "missing_key"
+        assert "未載入 FRED_API_KEY" in _format_cpi_event_actuals(None)
+        assert "未載入 FRED_API_KEY" in _format_nfp_event_actuals(None, None)
+
+    sa_rows = [
+        (dt(2026, 6, 1).date(), 320.0),
+        (dt(2026, 5, 1).date(), 319.0),
+        (dt(2026, 4, 1).date(), 318.0),
+    ]
+    nsa_rows = [
+        (dt(2026, 6, 1).date(), 320.0 - i)
+        for i in range(14)
+    ]
+    with patch(
+        "assettrack.quotes.fetch_fred_series",
+        side_effect=lambda series_id, limit: (
+            sa_rows if series_id == "CPIAUCSL" else nsa_rows
+        ),
+    ) as fetch_series:
+        cpi_result = compute_cpi_conclusion()
+        assert cpi_result is not None
+        assert cpi_result["prev_yoy_pct"] is not None
+        fetch_series.assert_any_call("CPIAUCNS", limit=15)
+
+    reference_date = dt(2026, 7, 24).date()
+    taipei = get_upcoming_macro_events(
+        30, timezone_name="Asia/Taipei", reference_date=reference_date
+    )
+    new_york = get_upcoming_macro_events(
+        30, timezone_name="America/New_York", reference_date=reference_date
+    )
+    taipei_fed = next(item for item in taipei if item[1] == "▼FED")
+    new_york_fed = next(item for item in new_york if item[1] == "▼FED")
+    assert taipei_fed[0] == dt(2026, 7, 30).date() and taipei_fed[2] == "02:00"
+    assert new_york_fed[0] == dt(2026, 7, 29).date() and new_york_fed[2] == "14:00"
+
+    with tempfile.TemporaryDirectory() as temp_dir, patch(
+        "assettrack.storage.get_data_dir", return_value=Path(temp_dir)
+    ):
+        save_user_preferences({"event_timezone": "America/New_York"}, "testuser")
+        assert load_user_preferences("testuser")["event_timezone"] == "America/New_York"
 
 
 async def verify_dashboard_mounts() -> None:
@@ -91,12 +247,10 @@ async def verify_dashboard_mounts() -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         screen = pilot.app.screen
         assert isinstance(screen, DashboardScreen)
-        assert screen.query_one("#tui-header")
         assert screen.query_one("#metrics-row")
         assert screen.query_one("#holdings-scroll")
-        assert screen.query_one("#sidebar-nav")
-        assert screen.query_one("#broker-dist")
-        assert screen.query_one("#pnl-leaderboard")
+        assert screen.query_one("#cross-model-panel")
+        assert screen.query_one("#status-bar")
 
 
 async def verify_bindings() -> None:
@@ -112,9 +266,8 @@ async def verify_logout_modal() -> None:
     positions = _sample_positions()
     app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("down", "down", "down", "down", "down", "down")
-        await pilot.press("enter")
-        await pilot.pause()
+        await pilot.press("q")
+        await pilot.pause(0.2)
         assert isinstance(pilot.app.screen, LogoutConfirmModal)
         
         # Verify initial focus and arrow keys
@@ -135,36 +288,43 @@ async def verify_logout_modal() -> None:
 
 
 async def verify_empty_positions_onboarding_path() -> None:
-    """Empty portfolio mounts after mocked TUI login and onboarding selection."""
+    """Empty portfolio mounts after mocked TUI login and onboarding selection.
+
+    Hermetic: the storage data dir is redirected to a fresh temp dir so the test
+    (a) starts from a guaranteed-empty state without deleting anything in the real
+    ``data/`` dir, and (b) doesn't depend on being able to unlink a real file
+    (which fails under sandboxed/read-only filesystems). Fixes the long-standing
+    intermittent "11/12 — Operation not permitted: data/testuser_positions.json".
+    """
     from unittest.mock import patch
     import subprocess
-    import os
+    import tempfile
+    from pathlib import Path
 
-    test_positions_path = "data/testuser_positions.json"
-    if os.path.exists(test_positions_path):
-        os.remove(test_positions_path)
+    tmp_data_dir = Path(tempfile.mkdtemp())
 
-    app = AssetTrackApp(user="testuser", positions=[], rate=32.5)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0.2)
-        assert isinstance(pilot.app.screen, LoginScreen)
-        
-        pilot.app.screen.query_one("#user-input").value = "testuser"
-        
-        with patch("keyring.get_password", return_value="pwd123"), \
-             patch("subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-            
-            await pilot.press("enter")
+    with patch("assettrack.storage.get_data_dir", return_value=tmp_data_dir):
+        app = AssetTrackApp(user="testuser", positions=[], rate=32.5)
+        async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
-            
-            assert isinstance(pilot.app.screen, OnboardingModal)
-            
-            await pilot.press("down", "down", "enter")
-            await pilot.pause(0.2)
-            
-            assert isinstance(pilot.app.screen, DashboardScreen)
-            assert pilot.app.screen.query_one("#holdings-table")
+            assert isinstance(pilot.app.screen, LoginScreen)
+
+            pilot.app.screen.query_one("#user-input").value = "testuser"
+
+            with patch("keyring.get_password", return_value="pwd123"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+
+                await pilot.press("enter")
+                await pilot.pause(0.2)
+
+                assert isinstance(pilot.app.screen, OnboardingModal)
+
+                await pilot.press("down", "down", "enter")
+                await pilot.pause(0.2)
+
+                assert isinstance(pilot.app.screen, DashboardScreen)
+                assert pilot.app.screen.query_one("#holdings-table")
 
 
 async def verify_refresh_action() -> None:
@@ -181,24 +341,19 @@ async def verify_keyboard_navigation() -> None:
     app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
     async with app.run_test(size=(120, 40)) as pilot:
         screen = pilot.app.screen
-        sidebar = screen.query_one("#sidebar-nav")
         table = screen.query_one("#holdings-table")
-        
-        assert screen.focused == sidebar
-        
+
+        assert screen.focused == table
+        assert table.cursor_coordinate.column == 0
+
         await pilot.press("right")
         await pilot.pause(0.1)
-        assert screen.focused == table
-        
         assert table.cursor_coordinate.column == 1
+
         await pilot.press("left")
         await pilot.pause(0.1)
         assert table.cursor_coordinate.column == 0
         assert screen.focused == table
-
-        await pilot.press("left")
-        await pilot.pause(0.1)
-        assert screen.focused == sidebar
 
 
 async def verify_modal_editing() -> None:
@@ -230,26 +385,92 @@ async def verify_modal_editing() -> None:
 
 
 async def verify_add_position_modal() -> None:
-    """測試新增部位對話框 (AddPositionModal) 的欄位與資料提交。"""
+    """測試新增部位對話框：按 1 直接開啟、批次累積（儲存並繼續）、完成儲存。"""
     positions = _sample_positions()
     app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.press("1")
-        await pilot.pause(0.1)
-        assert isinstance(pilot.app.screen, AdjustPositionsModal)
-        
-        await pilot.press("enter")
         await pilot.pause(0.2)
         assert isinstance(pilot.app.screen, AddPositionModal)
-        
+
         modal = pilot.app.screen
+        # 第一筆：MSFT → 儲存並繼續（加入待存清單，表單重置）
         modal.query_one("#add-symbol").value = "MSFT"
         modal.query_one("#add-qty").value = "15"
         modal.query_one("#add-cost").value = "420.0"
-        
+        modal.query_one("#confirm-next").focus()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert len(modal._pending) == 1
+        assert modal._pending[0].symbol == "MSFT"
+        assert modal.query_one("#add-symbol").value == ""
+
+        # 第二筆：NVDA → 完成儲存（整批回傳）
+        modal.query_one("#add-symbol").value = "NVDA"
+        modal.query_one("#add-qty").value = "5"
         modal.query_one("#confirm").focus()
         await pilot.press("enter")
         await pilot.pause(0.2)
+        assert isinstance(pilot.app.screen, DashboardScreen)
+
+
+async def verify_symbol_auto_inference() -> None:
+    """測試 Symbol 輸入自動推斷市場/幣別（2330 → TW/TWD）。"""
+    positions = _sample_positions()
+    app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("1")
+        await pilot.pause(0.2)
+        modal = pilot.app.screen
+        assert isinstance(modal, AddPositionModal)
+
+        modal.query_one("#add-symbol").value = "2330"
+        await pilot.pause(0.1)
+        assert str(modal.query_one("#add-market").value) == "TW"
+        assert modal.query_one("#add-curr").value == "TWD"
+
+        modal.query_one("#add-symbol").value = "AAPL"
+        await pilot.pause(0.1)
+        assert str(modal.query_one("#add-market").value) == "US"
+        assert modal.query_one("#add-curr").value == "USD"
+
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert isinstance(pilot.app.screen, DashboardScreen)
+
+
+async def verify_table_direct_ops() -> None:
+    """測試 Holdings 表格直接操作：space 多選標記、e 編輯、x 刪除確認。"""
+    from assettrack.tui import DeleteConfirmModal
+    positions = _sample_positions()
+    app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = pilot.app.screen
+        table = screen.query_one("#holdings-table")
+        table.focus()
+        await pilot.pause(0.1)
+        table.cursor_coordinate = (1, 0)  # row 0 是券商群組列，row 1 為第一筆部位
+
+        await pilot.press("space")
+        await pilot.pause(0.1)
+        assert len(screen._marked) == 1
+        await pilot.press("space")
+        await pilot.pause(0.1)
+        assert len(screen._marked) == 0
+
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        assert isinstance(pilot.app.screen, AddPositionModal)
+        assert pilot.app.screen.position is not None  # 編輯模式
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert isinstance(pilot.app.screen, DashboardScreen)
+
+        await pilot.press("x")
+        await pilot.pause(0.2)
+        assert isinstance(pilot.app.screen, DeleteConfirmModal)
+        await pilot.press("escape")
+        await pilot.pause(0.1)
         assert isinstance(pilot.app.screen, DashboardScreen)
 
 
@@ -265,7 +486,8 @@ async def verify_upcoming_events_screen() -> None:
         
         screen = pilot.app.screen
         assert screen.query_one("#events-static")
-        
+        assert "t" in {binding.key for binding in screen.BINDINGS}
+
         await pilot.press("escape")
         await pilot.pause(0.1)
         assert isinstance(pilot.app.screen, DashboardScreen)
@@ -284,7 +506,13 @@ async def verify_active_etfs_screen() -> None:
         screen = pilot.app.screen
         assert screen.query_one("#etf-left-tabbed")
         assert screen.query_one("#etf-us-table")
-        assert screen.query_one("#etf-twd-table")
+        # bug#00091：台股主動式ETF排行已移除，TWD 表格不應存在。
+        from textual.css.query import NoMatches
+        try:
+            screen.query_one("#etf-twd-table")
+            raise AssertionError("#etf-twd-table should have been removed")
+        except NoMatches:
+            pass
         assert screen.query_one("#etf-holdings-table")
         assert screen.query_one("#etf-history-table")
         
@@ -305,7 +533,11 @@ def patch_workers() -> None:
         ActiveETFsScreen,
     )
     # Stub out slow background network workers to avoid background thread race conditions
+    from assettrack.tui import AssetTrackApp
     UpcomingEventsScreen.run_calendar_fetch = MagicMock()
+    # bug#00096: login now kicks off analysis fetch immediately — stub it so the
+    # headless harness stays hermetic (no network on mount).
+    AssetTrackApp._background_data_refresh = MagicMock()
     DashboardScreen._do_refresh_worker = MagicMock()
     DashboardScreen._fetch_upcoming_events_worker = MagicMock()
     ActiveETFsScreen.run_background_fetch = MagicMock()
@@ -317,6 +549,8 @@ def main() -> int:
     checks = [
         ("imports", verify_imports),
         ("render_builders", verify_render_builders),
+        ("environment_loading", verify_environment_loading),
+        ("event_actuals_and_timezones", verify_event_actuals_and_timezones),
         ("dashboard_mounts", verify_dashboard_mounts),
         ("bindings", verify_bindings),
         ("logout_modal", verify_logout_modal),
@@ -325,6 +559,8 @@ def main() -> int:
         ("keyboard_navigation", verify_keyboard_navigation),
         ("modal_editing", verify_modal_editing),
         ("add_position_modal", verify_add_position_modal),
+        ("symbol_auto_inference", verify_symbol_auto_inference),
+        ("table_direct_ops", verify_table_direct_ops),
         ("upcoming_events_screen", verify_upcoming_events_screen),
         ("active_etfs_screen", verify_active_etfs_screen),
     ]
