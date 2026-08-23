@@ -10,13 +10,14 @@ AssetTrack Textual TUI — 全螢幕事件驅動即時看板
 """
 from __future__ import annotations
 
+import logging
 import time
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import calendar
 from typing import Optional
 from pathlib import Path
 import subprocess
-import keyring
 
 from rich.box import Box as RichBox
 from rich.panel import Panel
@@ -27,38 +28,96 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Footer, Static, DataTable, OptionList, Input, Select, Label, TabbedContent, TabPane
+from textual.widgets import (
+    Button,
+    Checkbox,
+    DataTable,
+    Footer,
+    Input,
+    Label,
+    OptionList,
+    Select,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 from textual.widgets.option_list import Option
 
-from .models import Position, CashPosition
+from .models import (
+    CashPosition,
+    Position,
+    calculate_cash_ratio,
+    cash_value_usd,
+    merge_cash_position,
+    portfolio_unrealized_performance,
+    total_asset_value_usd,
+)
 from .quotes import (
-    enrich_positions_with_quotes, fetch_usdtwd_rate, fetch_beta,
-    draw_bar, nearest_price, is_market_open,
+    enrich_positions_with_quotes, fetch_usdtwd_rate, fetch_beta, cached_beta,
+    cached_usdtwd_rate,
+    draw_bar, is_market_open,
     SOX_TICKERS, group_positions_by_broker, fetch_earnings_calendar,
     fetch_active_etf_performance, fetch_etf_holdings,
     fetch_prices_batch, estimate_shares,
 )
+from .auth import (
+    account_exists,
+    lock_vault,
+    register_account,
+    touchid_enrolled,
+    unlock_vault,
+    unlock_vault_with_touchid,
+    verify_password,
+)
 from .storage import (
-    load_manual_positions, save_manual_positions, KEYCHAIN_SERVICE,
-    load_active_etf_data, save_active_etf_holdings, etf_cache_needs_refresh,
+    load_manual_positions, save_manual_positions, get_data_dir, seal_user_files,
     load_etf_symbol_cache, save_etf_symbol_cache, etf_symbol_cache_fresh,
-    load_aum_perf_cache, save_aum_perf_cache, aum_perf_cache_fresh,
     cleanup_old_etf_caches,
     append_etf_daily_snapshot, load_etf_daily_snapshots, prune_etf_history,
     load_options_daily_snapshots, prune_options_history,
+    apply_quote_overlay, save_quote_overlay, drop_quote_overlay_keys,
+    load_etf_watchlist, save_etf_watchlist, etf_watchlist_is_configured,
 )
-from .analysis import (compute_symbol_trends, rank_symbol_trends, generate_etf_conclusions,
-    generate_etf_recommendations, etf_stance_recommendation,
-    backtest_etf_consensus, compute_etf_selection_tilt, etf_stance_phrase,
-    backtest_etf_selection_tilt, etf_backtest_note)
+from .performance import PortfolioPerformanceTracker, YFinanceBenchmarkPrices
+from .exposure import calculate_portfolio_exposure
+from .analysis import (compute_symbol_trends,
+    backtest_etf_consensus, compute_etf_selection_tilt,
+    backtest_etf_selection_tilt, render_etf_advice_view,
+    watchlist_etf_activity, holding_on_watchlist, holding_display_symbol,
+    suggested_etf_watchlist,
+    normalize_etf_watchlist_symbol,
+    compute_institution_trends, build_ticker_name_index, resolve_position_ticker)
 from .options_analysis import (
-    compute_options_flow, generate_options_conclusions,
-    compute_iv_divergence, generate_divergence_conclusions, build_contract_view,
-    generate_grouped_analysis_card, generate_options_recommendations, compute_iv_percentile,
-    compute_portfolio_greeks,
-    compute_expected_move, compute_directional_verdicts, generate_verdict_cards,
+    compute_observed_regime, compute_portfolio_greeks,
+    compute_expected_move,
 )
-from .shared import Recommendation, dashboard_line, render_detail_recs
+from .options_valuation import (
+    RICHNESS_HISTORY_DAYS,
+    RV_WINDOW,
+    _select_atm_pair,
+    days_to_earnings,
+    earnings_remaining_note,
+    format_richness_history,
+    invert_contract_iv_series,
+    richness_from_history,
+    richness_series,
+)
+from .shared import render_detail_recs
+from .institutional import (
+    active_etf_symbols,
+    classify_holdings,
+    ensure_active_etf_universe,
+    ensure_hedge_fund_filings,
+    hedge_fund_records,
+    load_active_etf_universe,
+    load_hedge_fund_cache,
+)
+from .sec_identity import (
+    delete_sec_identity,
+    load_sec_identity,
+    masked_sec_identity,
+    save_sec_identity,
+)
 
 # Rich Box: invisible borders except head_row underline and end_section separator
 _SEC_BOX = RichBox(
@@ -80,32 +139,122 @@ _SEC_BOX = RichBox(
 
 _last_rate: Optional[float] = None
 _last_rate_time: float = 0.0
+_EVENTS_REFRESH_INTERVAL_SECONDS = 6 * 60 * 60
+_EVENTS_RETRY_INTERVAL_SECONDS = 15 * 60
+_DASHBOARD_ANALYSIS_REFRESH_SECONDS = 5 * 60
 
 
 def _get_cached_usdtwd_rate() -> float:
+    """UI-safe last known USDTWD rate. Never hits the network."""
     global _last_rate, _last_rate_time
-    now = time.time()
-    if _last_rate is None or (now - _last_rate_time) > 3600:
-        try:
-            rate = fetch_usdtwd_rate()
-            if rate > 0:
-                _last_rate = rate
-                _last_rate_time = now
-        except Exception:
-            if _last_rate is not None:
-                return _last_rate
-            raise
-    return _last_rate
+    rate = cached_usdtwd_rate(default=_last_rate if _last_rate is not None else 32.0)
+    if rate > 0:
+        _last_rate = rate
+        _last_rate_time = time.time()
+    return rate
+
+
+def _tracking_state(user: str):
+    return PortfolioPerformanceTracker(
+        user=user,
+        data_dir=get_data_dir(),
+    ).state()
+
+
+def _process_declared_cash_flow(
+    *,
+    user: str,
+    positions: list[Position],
+    cash_positions: list[CashPosition],
+    rate: float,
+    declaration: dict,
+) -> tuple[list[Position], list[CashPosition]]:
+    """Persist a declared external flow and mirror it into the cash holdings."""
+    tracker = PortfolioPerformanceTracker(
+        user=user,
+        data_dir=get_data_dir(),
+        benchmark_prices=YFinanceBenchmarkPrices(),
+    )
+    if not tracker.state().enabled:
+        raise ValueError("請先啟用績效追蹤")
+
+    result_cash = [item.model_copy(deep=True) for item in cash_positions]
+    broker = declaration["broker"]
+    account = declaration.get("account")
+    currency = declaration["currency"]
+    amount = float(declaration["amount"])
+    target = next(
+        (
+            item
+            for item in result_cash
+            if item.broker.casefold() == broker.casefold()
+            and (item.account or "").casefold() == (account or "").casefold()
+            and item.currency == currency
+        ),
+        None,
+    )
+    if declaration["direction"] == "withdrawal":
+        if target is None or target.amount < amount:
+            raise ValueError("出金金額超過該券商帳戶的可用現金")
+
+    amount_usd = amount if currency == "USD" else amount / rate
+    tracker.declare_cash_flow(
+        direction=declaration["direction"],
+        amount=amount,
+        currency=currency,
+        amount_usd=amount_usd,
+        fx_rate_to_usd=1 if currency == "USD" else rate,
+        category=declaration["category"],
+        channel=declaration["channel"],
+        broker=broker,
+        account=account,
+        notes=declaration.get("notes"),
+    )
+
+    if declaration["direction"] == "deposit":
+        merge_cash_position(
+            result_cash,
+            CashPosition(
+                broker=broker,
+                account=account,
+                currency=currency,
+                amount=amount,
+                notes=declaration.get("notes"),
+            ),
+        )
+    else:
+        target.amount -= amount
+        if target.amount == 0:
+            result_cash.remove(target)
+
+    save_manual_positions(
+        positions,
+        cash_positions=result_cash,
+        user=user,
+    )
+    total_value = total_asset_value_usd(positions, result_cash, rate)
+    if total_value is not None and total_value > 0:
+        tracker.record_valuation(total_value_usd=total_value)
+    return positions, result_cash
 
 
 
-def _calc_weights(positions: list[Position], rate: float) -> dict:
-    total = sum(p.value if p.currency == "USD" else p.value / rate for p in positions)
+def _calc_weights(
+    positions: list[Position],
+    rate: float,
+    cash_positions: Optional[list[CashPosition]] = None,
+) -> dict:
+    cash_positions = cash_positions or []
+    total = total_asset_value_usd(positions, cash_positions, rate) or 0.0
     weights: dict = {}
     for p in positions:
         v = p.value if p.currency == "USD" else p.value / rate
         key = (p.broker, p.account or "", p.symbol)
         weights[key] = (v / total * 100) if total > 0 else 0.0
+    for cash in cash_positions:
+        value = cash.amount if cash.currency == "USD" else cash.amount / rate
+        key = (cash.broker, cash.account or "", f"CASH {cash.currency}")
+        weights[key] = (value / total * 100) if total > 0 else 0.0
     return weights
 
 
@@ -113,32 +262,32 @@ def _calc_weights(positions: list[Position], rate: float) -> dict:
 # Rich renderable builders (return renderables, never print)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_metrics_panel(positions: list[Position], rate: float) -> Table:
+def _build_metrics_panel(
+    positions: list[Position],
+    rate: float,
+    cash_positions: Optional[list[CashPosition]] = None,
+    stale_quotes: bool = False,
+) -> Table:
     """3-panel metrics row as a Rich Table (Portfolio Value, PnL, Beta)."""
-    total_usd = 0.0
-    total_cost_usd = 0.0
-    has_cost = False
-    has_quotes = any(p.market_price is not None or p.market_value is not None for p in positions)
-
-    for p in positions:
-        v = p.value if p.currency == "USD" else p.value / rate
-        total_usd += v
-        if p.total_cost is not None:
-            c = p.total_cost if p.currency == "USD" else p.total_cost / rate
-            total_cost_usd += c
-            has_cost = True
-
-    pnl_usd = (total_usd - total_cost_usd) if (has_cost and has_quotes) else None
-    pnl_pct = (
-        (pnl_usd / total_cost_usd * 100)
-        if (pnl_usd is not None and total_cost_usd > 0) else None
+    cash_positions = cash_positions or []
+    cash_usd = cash_value_usd(cash_positions, rate) or 0.0
+    total_usd = total_asset_value_usd(positions, cash_positions, rate)
+    has_quotes = all(
+        p.market_price is not None or p.market_value is not None
+        for p in positions
     )
+    performance = portfolio_unrealized_performance(
+        positions,
+        cash_positions,
+        rate,
+    )
+    pnl_usd, pnl_pct = performance if performance is not None else (None, None)
 
-    # Weighted portfolio beta
+    # Weighted portfolio beta — UI path never fetches; worker warms cached_beta.
     b_num = 0.0
-    b_den = 0.0
+    b_den = cash_usd
     for p in positions:
-        beta = fetch_beta(p.symbol, p.instrument_type, p.underlying, p.currency)
+        beta = cached_beta(p.symbol, p.instrument_type, p.underlying, p.currency)
         if beta is not None:
             v = p.value if p.currency == "USD" else p.value / rate
             b_num += beta * v
@@ -150,13 +299,16 @@ def _build_metrics_panel(positions: list[Position], rate: float) -> Table:
         tbl.add_column(justify="center", ratio=ratio)
 
     # Panel 1 – Total Value
-    if has_quotes:
+    fx_line = f"[dim]USDTWD: {rate:.2f}[/dim]"
+    if stale_quotes:
+        fx_line += "  [dim]上次價格[/dim]"
+    if has_quotes and total_usd is not None:
         p1 = Panel(
             f"[bold green]${total_usd:,.2f} USD[/bold green]\n"
             f"[dim]NT${total_usd * rate:,.2f} TWD[/dim]\n"
-            f"[dim]USDTWD: {rate:.2f}[/dim]",
+            f"{fx_line}",
             title="📊 Total Portfolio Value",
-            border_style="green",
+            border_style="green" if not stale_quotes else "yellow",
         )
     else:
         p1 = Panel(
@@ -297,17 +449,41 @@ def _build_holdings_table(
     return tbl
 
 
-def _build_broker_panel(positions: list[Position], rate: float) -> Panel:
-    has_quotes = any(p.market_price is not None or p.market_value is not None for p in positions)
+def _build_broker_panel(
+    positions: list[Position],
+    rate: float,
+    cash_positions: Optional[list[CashPosition]] = None,
+    loading: bool = False,
+    underlying_prices: Optional[dict[str, float]] = None,
+    risk_free_rate: float = 0.04,
+) -> Panel:
+    cash_positions = cash_positions or []
+    has_quotes = all(
+        p.market_price is not None or p.market_value is not None
+        for p in positions
+    )
     if not has_quotes:
-        return Panel("\n [yellow]⏳ 載入中...[/yellow]", title="🏦 券商資產分布", border_style="cyan")
-    total = sum(p.value if p.currency == "USD" else p.value / rate for p in positions)
+        state = "計算中" if loading else "報價不足"
+        return Panel(
+            f"\n [yellow]{state}[/yellow]\n\n現金比例：{state}\n槓桿比例（總曝險／資產）：{state}",
+            title="🏦 券商資產分布",
+            border_style="cyan",
+        )
+    total = total_asset_value_usd(positions, cash_positions, rate) or 0.0
     broker_vals: dict[str, float] = {}
     for p in positions:
         bk = f"{p.broker} ({p.account})" if p.account else p.broker
         broker_vals[bk] = broker_vals.get(bk, 0.0) + (
             p.value if p.currency == "USD" else p.value / rate
         )
+    for cash in cash_positions:
+        bk = (
+            f"{cash.broker} ({cash.account})"
+            if cash.account
+            else cash.broker
+        )
+        value = cash.amount if cash.currency == "USD" else cash.amount / rate
+        broker_vals[bk] = broker_vals.get(bk, 0.0) + value
     max_bv = max(broker_vals.values()) if broker_vals else 1.0
     lines = []
     for bk, bv in sorted(broker_vals.items(), key=lambda x: -x[1]):
@@ -317,6 +493,63 @@ def _build_broker_panel(positions: list[Position], rate: float) -> Panel:
             f"[cyan]{bk:<22}[/cyan] [green]{bar}[/green]  "
             f"[bold]${bv:,.0f}[/bold] [dim]({pct:.1f}%)[/dim]"
         )
+    ratio = calculate_cash_ratio(positions, cash_positions, rate)
+    if ratio is None:
+        ratio_line = "現金比例：報價不足"
+    elif ratio > 20:
+        ratio_line = f"現金比例：[bold yellow]{ratio:.1f}%｜防守狀態[/bold yellow]"
+    elif ratio < 5:
+        ratio_line = f"現金比例：[bold green]{ratio:.1f}%｜進攻狀態[/bold green]"
+    else:
+        ratio_line = f"現金比例：[bold cyan]{ratio:.1f}%｜中性狀態[/bold cyan]"
+    exposure = calculate_portfolio_exposure(
+        positions,
+        cash_positions,
+        rate,
+        underlying_prices=underlying_prices,
+        risk_free_rate=risk_free_rate,
+    )
+    if exposure.gross_ratio_pct is None:
+        exposure_line = "槓桿比例（總曝險／資產）：[yellow]資料不足[/yellow]"
+        if exposure.unpriced:
+            missing = "、".join(exposure.unpriced[:3])
+            if len(exposure.unpriced) > 3:
+                missing += f" 等 {len(exposure.unpriced)} 筆"
+            exposure_detail = f"[dim]缺少 Delta／標的報價：{missing}[/dim]"
+        else:
+            exposure_detail = "[dim]無法取得完整資產價值[/dim]"
+        exposure_breakdown = None
+    else:
+        ratio_color = (
+            "green" if exposure.gross_ratio_pct <= 100.0
+            else "yellow" if exposure.gross_ratio_pct <= 150.0
+            else "red"
+        )
+        exposure_line = (
+            f"槓桿比例（總曝險／資產）：[{ratio_color} bold]{exposure.gross_ratio_pct:.1f}%"
+            f"｜{exposure.gross_ratio_pct / 100.0:.2f}x[/{ratio_color} bold]"
+        )
+        net_sign = "+" if exposure.net_exposure_usd >= 0 else ""
+        net_ratio = exposure.net_ratio_pct or 0.0
+        exposure_detail = (
+            f"總曝險：[bold]${exposure.gross_exposure_usd:,.0f}[/bold]　"
+            f"淨曝險：[bold]{net_sign}${exposure.net_exposure_usd:,.0f}"
+            f" ({net_sign}{net_ratio:.1f}%)[/bold]"
+        )
+        exposure_breakdown = (
+            f"[dim]槓桿曝險拆分：倍數 ETF ${exposure.leveraged_etf_exposure_usd:,.0f}"
+            f"｜期權 ${exposure.option_exposure_usd:,.0f}[/dim]"
+        )
+    exposure_lines = [
+        "",
+        ratio_line,
+        exposure_line,
+        exposure_detail,
+    ]
+    if exposure_breakdown:
+        exposure_lines.append(exposure_breakdown)
+    exposure_lines.append("[dim]股票 1x｜倍數 ETF 依倍數｜期權採 Delta 等值[/dim]")
+    lines.extend(exposure_lines)
     return Panel("\n".join(lines), title="🏦 券商資產分布", border_style="cyan")
 
 
@@ -336,7 +569,6 @@ def _simplify_event_label(label: str) -> str:
     
     m = re.search(r'(🔔|💻)\s*(?:\[bold white\])?([A-Z0-9.\-]+)(?:\[/bold white\])?\s*財報公佈', label)
     if m:
-        emoji = m.group(1)
         sym = m.group(2)
         is_sox = "SOX" in label
         is_user = "持倉" in label
@@ -695,14 +927,16 @@ class LoginScreen(Screen):
         if not user:
             user = "default"
             
-        pwd = keyring.get_password(KEYCHAIN_SERVICE, user)
-        
-        if pwd is None:
+        if not account_exists(user):
             modal = RegisterModal(user)
             self.app.push_screen(modal, lambda success: self._on_register_complete(success, user))
         else:
-            self.query_one("#login-error-msg", Label).update("🔍 正在嘗試 Touch ID 登入...")
-            self.run_touchid_auth(user)
+            if touchid_enrolled(user):
+                self.query_one("#login-error-msg", Label).update("🔍 正在嘗試 Touch ID 登入...")
+                self.run_touchid_auth(user)
+            else:
+                modal = PasswordModal(user)
+                self.app.push_screen(modal, lambda login_success: self._on_password_complete(login_success, user))
 
     @work(thread=True)
     def run_touchid_auth(self, user: str) -> None:
@@ -710,11 +944,15 @@ class LoginScreen(Screen):
         success = False
         if touchid_helper_path.exists():
             try:
-                res = subprocess.run([str(touchid_helper_path)], capture_output=True)
+                res = subprocess.run(
+                    [str(touchid_helper_path), user],
+                    capture_output=True,
+                )
                 if res.returncode == 0:
+                    unlock_vault_with_touchid(user)
                     success = True
             except Exception:
-                pass
+                success = False
         self.app.call_from_thread(self._on_touchid_complete, success, user)
 
     def _on_touchid_complete(self, success: bool, user: str) -> None:
@@ -740,8 +978,16 @@ class LoginScreen(Screen):
             self.query_one("#login-error-msg", Label).update("❌ 取消註冊。")
 
     def _login_success(self, user: str) -> None:
+        seal_user_files(user)
         positions, cash_positions = load_manual_positions(user=user)
-        self.dismiss((user, positions, cash_positions))
+        result = (user, positions, cash_positions)
+        if load_sec_identity(user) is None:
+            self.app.push_screen(
+                SECIdentityModal(user),
+                lambda _configured: self.dismiss(result),
+            )
+            return
+        self.dismiss(result)
 
 
 class PasswordModal(ModalScreen[bool]):
@@ -784,6 +1030,7 @@ class PasswordModal(ModalScreen[bool]):
     def __init__(self, user: str) -> None:
         super().__init__()
         self.user = user
+        self._test_mode_reader = None
         self.attempts = 3
 
     def compose(self) -> ComposeResult:
@@ -815,8 +1062,8 @@ class PasswordModal(ModalScreen[bool]):
     def _submit(self) -> None:
         val = self.query_one("#pwd-input", Input).value
         error_lbl = self.query_one("#pwd-error", Label)
-        stored_pwd = keyring.get_password(KEYCHAIN_SERVICE, self.user)
-        if stored_pwd is not None and val == stored_pwd:
+        if verify_password(self.user, val):
+            unlock_vault(self.user, val)
             self.dismiss(True)
         else:
             self.attempts -= 1
@@ -860,6 +1107,15 @@ class RegisterModal(ModalScreen[bool]):
         margin-bottom: 1;
         height: 1;
     }
+    #performance-tracking-copy {
+        color: #8b949e;
+        height: auto;
+        margin: 1 0;
+    }
+    #performance-tracking-toggle {
+        height: auto;
+        margin-bottom: 1;
+    }
     #reg-buttons {
         height: auto;
         align: right middle;
@@ -879,6 +1135,16 @@ class RegisterModal(ModalScreen[bool]):
             yield Label("系統偵測到您是第一次使用此 ID，請設定登入密碼：", id="reg-desc")
             yield Input(placeholder="輸入密碼", password=True, id="pwd1", classes="reg-field")
             yield Input(placeholder="再次輸入確認密碼", password=True, id="pwd2", classes="reg-field")
+            yield Label(
+                "別只看帳面損益，確認每一塊資本是否真正跑贏市場。"
+                "\n啟用後，出入金必須宣告，買賣則在持倉與現金間轉換。",
+                id="performance-tracking-copy",
+            )
+            yield Checkbox(
+                "啟用績效追蹤（預設比較 QQQ／VT）",
+                value=False,
+                id="performance-tracking-toggle",
+            )
             yield Label("", id="reg-error")
             with Horizontal(id="reg-buttons"):
                 yield Button("註冊", variant="primary", id="confirm")
@@ -909,8 +1175,208 @@ class RegisterModal(ModalScreen[bool]):
         if pwd1 != pwd2:
             error_lbl.update("❌ 兩次輸入密碼不一致！")
             return
-            
-        keyring.set_password(KEYCHAIN_SERVICE, self.user, pwd1)
+
+        try:
+            register_account(self.user, pwd1)
+            unlock_vault(self.user, pwd1)
+        except ValueError as exc:
+            error_lbl.update(f"❌ {exc}")
+            return
+        if self.query_one("#performance-tracking-toggle", Checkbox).value:
+            PortfolioPerformanceTracker(
+                user=self.user,
+                data_dir=get_data_dir(),
+            ).enable(new_account=True)
+        self.dismiss(True)
+
+
+class SECIdentityDeleteConfirmModal(ModalScreen[bool]):
+    """Confirm removal of the current account's SEC identity."""
+
+    DEFAULT_CSS = """
+    SECIdentityDeleteConfirmModal {
+        align: center middle;
+    }
+    #sec-identity-delete-dialog {
+        width: 58;
+        height: auto;
+        border: thick #f85149;
+        background: #161b22;
+        padding: 1 2;
+    }
+    #sec-identity-delete-buttons {
+        height: auto;
+        align: right middle;
+        margin-top: 1;
+    }
+    #sec-identity-delete-buttons Button {
+        margin-left: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="sec-identity-delete-dialog"):
+            yield Label(
+                "刪除後，這個帳號將停止自動更新 SEC 13F。"
+                "公開持股快取不會被刪除；名稱與信箱會從 Keychain 移除。"
+            )
+            with Horizontal(id="sec-identity-delete-buttons"):
+                yield Button(
+                    "確認刪除",
+                    variant="error",
+                    id="sec-identity-delete-confirm",
+                )
+                yield Button("取消", id="sec-identity-delete-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "sec-identity-delete-confirm":
+            self.dismiss(True)
+        elif event.button.id == "sec-identity-delete-cancel":
+            self.dismiss(False)
+
+
+class SECIdentityModal(ModalScreen[bool]):
+    """Create, update, or delete one account's SEC request identity."""
+
+    DEFAULT_CSS = """
+    SECIdentityModal {
+        align: center middle;
+    }
+    #sec-identity-dialog {
+        width: 72;
+        height: auto;
+        max-height: 90%;
+        border: thick #58a6ff;
+        background: #161b22;
+        padding: 1 2;
+    }
+    #sec-identity-title {
+        color: #58a6ff;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #sec-identity-privacy {
+        height: auto;
+        color: #c9d1d9;
+        margin-bottom: 1;
+    }
+    .sec-identity-field {
+        margin-bottom: 1;
+        border: solid #30363d;
+        background: #0d1117;
+    }
+    #sec-identity-consent {
+        height: auto;
+        margin-bottom: 1;
+    }
+    #sec-identity-error {
+        color: #ff7b72;
+        height: auto;
+        min-height: 1;
+        margin-bottom: 1;
+    }
+    #sec-identity-buttons {
+        height: auto;
+        align: right middle;
+    }
+    #sec-identity-buttons Button {
+        margin-left: 1;
+    }
+    """
+
+    def __init__(self, user: str) -> None:
+        super().__init__()
+        self.user = user
+        self.existing = load_sec_identity(user)
+
+    def compose(self) -> ComposeResult:
+        existing = self.existing or {}
+        with Vertical(id="sec-identity-dialog"):
+            yield Label("SEC 13F 存取身分", id="sec-identity-title")
+            yield Label(
+                "SEC 規定自動下載申報資料時需提供識別名稱與聯絡信箱。"
+                "資料只會作為 User-Agent 傳送給 SEC，並依目前 AssetTrack "
+                "帳號存入作業系統 Keychain；不寫入投資快取、紀錄檔或 .env。"
+                "你可以取消而繼續使用其他功能，也能稍後修改或刪除；刪除後 "
+                "13F 自動更新會停止。",
+                id="sec-identity-privacy",
+            )
+            yield Input(
+                value=str(existing.get("display_name") or ""),
+                placeholder="個人姓名或組織名稱",
+                id="sec-identity-name",
+                classes="sec-identity-field",
+            )
+            yield Input(
+                value=str(existing.get("email") or ""),
+                placeholder="SEC 可聯絡的電子信箱",
+                id="sec-identity-email",
+                classes="sec-identity-field",
+            )
+            yield Checkbox(
+                "我同意上述資料為取得 13F 公開申報而傳送給 SEC",
+                value=bool(existing),
+                id="sec-identity-consent",
+            )
+            yield Label("", id="sec-identity-error")
+            with Horizontal(id="sec-identity-buttons"):
+                if existing:
+                    yield Button(
+                        "刪除 SEC 身分",
+                        variant="error",
+                        id="sec-identity-delete",
+                    )
+                yield Button("儲存", variant="primary", id="sec-identity-save")
+                yield Button("取消", id="sec-identity-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#sec-identity-name", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "sec-identity-save":
+            self._save()
+        elif event.button.id == "sec-identity-delete":
+            self.app.push_screen(
+                SECIdentityDeleteConfirmModal(),
+                self._delete_if_confirmed,
+            )
+        elif event.button.id == "sec-identity-cancel":
+            self.dismiss(False)
+
+    def _delete_if_confirmed(self, confirmed: bool) -> None:
+        if not confirmed:
+            return
+        try:
+            delete_sec_identity(self.user)
+        except Exception:
+            self.query_one("#sec-identity-error", Label).update(
+                "❌ 無法存取系統 Keychain，SEC 身分尚未刪除"
+            )
+            return
+        self.dismiss(True)
+
+    def _save(self) -> None:
+        name = self.query_one("#sec-identity-name", Input).value
+        email = self.query_one("#sec-identity-email", Input).value
+        consent = self.query_one(
+            "#sec-identity-consent", Checkbox
+        ).value
+        try:
+            save_sec_identity(
+                self.user,
+                display_name=name,
+                email=email,
+                consent=consent,
+            )
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                message = str(exc)
+            else:
+                message = "無法存取系統 Keychain，SEC 身分尚未儲存"
+            self.query_one("#sec-identity-error", Label).update(
+                f"❌ {message}"
+            )
+            return
         self.dismiss(True)
 
 
@@ -965,7 +1431,10 @@ class OnboardingModal(ModalScreen[str]):
             self.dismiss("empty")
 
 
-class AddPositionModal(ModalScreen[Optional[list[Position]]]):
+Holding = Position | CashPosition
+
+
+class AddPositionModal(ModalScreen[Optional[list[Holding]]]):
     """手動新增/修改持股對話框。
 
     新增模式支援「批次累積」：每筆填完按「儲存並繼續」加入待存清單，
@@ -976,7 +1445,8 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
 
     # Ordered list of all focusable field IDs (Inputs + Selects + adv toggle)
     _FIELD_IDS: list[str] = [
-        "add-broker", "add-symbol", "add-type",
+        "add-broker", "add-symbol", "add-type", "add-leverage-factor",
+        "add-cash-account", "add-cash-currency", "add-cash-amount", "add-cash-notes",
         "add-underlying", "add-strike", "add-expiry", "add-option-type", "add-multiplier",
         "add-side", "add-qty", "add-cost", "add-market", "adv-toggle",
         "add-account", "add-exch", "add-curr", "add-notes", "add-sector",
@@ -1074,17 +1544,22 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
     }
     """
 
-    def __init__(self, position: Optional[Position] = None) -> None:
+    def __init__(self, position: Optional[Holding] = None) -> None:
         super().__init__()
         self.position = position
-        self._pending: list[Position] = []   # 批次新增的待存清單（僅新增模式）
+        self._pending: list[Holding] = []   # 批次新增的待存清單（僅新增模式）
         self._adv_visible: bool = False      # 進階欄位是否展開
         # 目前由 Symbol 推斷出的 (market, currency)；僅在使用者未手動改過時才覆寫
         self._inferred: tuple[str, str] = ("US", "USD")
 
     def compose(self) -> ComposeResult:
         brokers = [("manual", "manual"), ("FT", "FT"), ("IBKR", "IBKR")]
-        types   = [("stock", "stock"), ("etf", "etf"), ("option", "option")]
+        types   = [
+            ("stock", "stock"),
+            ("etf", "etf"),
+            ("option", "option"),
+            ("cash", "cash"),
+        ]
         markets = [("US", "US"), ("TW", "TW"), ("HK", "HK"), ("other", "other")]
         opt_types = [("Call 買權", "call"), ("Put 賣權", "put")]
 
@@ -1101,45 +1576,53 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
             elif "manual" in b_lower:
                 b_val = "manual"
 
-        acct_val = p.account if p else ""
-        sym_val = p.symbol if p else ""
+        acct_val = (p.account or "") if p else ""
+        sym_val = p.symbol if isinstance(p, Position) else ""
         
         t_val = "stock"
-        if p and p.instrument_type:
+        if isinstance(p, CashPosition):
+            t_val = "cash"
+        elif p and p.instrument_type:
             t_lower = p.instrument_type.lower()
             if t_lower in ("stock", "etf", "option"):
                 t_val = t_lower
 
         # Option-specific values
-        udl_val = p.underlying if (p and p.underlying) else ""
-        strike_val = f"{p.strike}" if (p and p.strike is not None) else ""
-        exp_val = p.expiry if (p and p.expiry) else ""
-        opt_type_val = p.option_type if (p and p.option_type) else "call"
-        mult_val = f"{p.multiplier}" if (p and p.multiplier is not None) else "100"
+        udl_val = p.underlying if (isinstance(p, Position) and p.underlying) else ""
+        strike_val = f"{p.strike}" if (isinstance(p, Position) and p.strike is not None) else ""
+        exp_val = p.expiry if (isinstance(p, Position) and p.expiry) else ""
+        opt_type_val = p.option_type if (isinstance(p, Position) and p.option_type) else "call"
+        mult_val = f"{p.multiplier}" if (isinstance(p, Position) and p.multiplier is not None) else "100"
+        leverage_val = (
+            f"{p.leverage_factor:g}"
+            if isinstance(p, Position) and p.leverage_factor is not None
+            else ""
+        )
         
         qty_val = ""
         side_val = "long"
-        if p and p.quantity is not None:
+        if isinstance(p, Position) and p.quantity is not None:
             side_val = "short" if p.quantity < 0 else "long"
             abs_qty = abs(p.quantity)
             qty_val = f"{abs_qty:,.2f}" if abs_qty % 1 != 0 else f"{int(abs_qty)}"
 
         cost_val = ""
-        if p and p.avg_cost is not None:
+        if isinstance(p, Position) and p.avg_cost is not None:
             cost_val = f"{p.avg_cost}"
 
         m_val = "US"
-        if p and p.market:
+        if isinstance(p, Position) and p.market:
             m_upper = p.market.upper()
             if m_upper in ("US", "TW", "HK", "OTHER"):
                 m_val = m_upper
             else:
                 m_val = "other"
 
-        exch_val = p.exchange if p else ""
+        exch_val = p.exchange if isinstance(p, Position) else ""
         curr_val = p.currency if p else "USD"
         notes_val = p.notes if p else ""
-        sect_val = p.sector if p else ""
+        sect_val = p.sector if isinstance(p, Position) else ""
+        cash_amount_val = f"{p.amount:g}" if isinstance(p, CashPosition) else ""
 
         title = "✏️ [bold]修改持倉部位[/bold]" if p else "➕ [bold]新增持倉部位（可連續多筆）[/bold]"
         btn_label = "確認修改" if p else "完成儲存"
@@ -1164,6 +1647,48 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
             with Horizontal(classes="form-row"):
                 yield Label("商品類型 [dim](Type)[/dim]:", classes="form-label")
                 yield Select(types, value=t_val, id="add-type")
+
+            with Horizontal(classes="form-row", id="leverage-factor-row"):
+                yield Label("ETF 曝險倍數 [dim](x)[/dim]:", classes="form-label")
+                yield Input(
+                    value=leverage_val,
+                    placeholder="留白自動辨識；正2=2、反1=-1",
+                    id="add-leverage-factor",
+                    classes="form-input",
+                )
+
+            with Vertical(id="cash-fields-container"):
+                with Horizontal(classes="form-row"):
+                    yield Label("帳戶 [dim](Account)[/dim]:", classes="form-label")
+                    yield Input(
+                        value=acct_val or "",
+                        placeholder="例如 default 或子帳戶",
+                        id="add-cash-account",
+                        classes="form-input",
+                    )
+                with Horizontal(classes="form-row"):
+                    yield Label("[red]★[/red] 幣別 [dim](Currency)[/dim]:", classes="form-label")
+                    yield Select(
+                        [("USD 美金", "USD"), ("TWD 新台幣", "TWD")],
+                        value=curr_val if curr_val in ("USD", "TWD") else "USD",
+                        id="add-cash-currency",
+                    )
+                with Horizontal(classes="form-row"):
+                    yield Label("[red]★[/red] 金額 [dim](Amount)[/dim]:", classes="form-label")
+                    yield Input(
+                        value=cash_amount_val,
+                        placeholder="正數，例如 10000",
+                        id="add-cash-amount",
+                        classes="form-input",
+                    )
+                with Horizontal(classes="form-row"):
+                    yield Label("備註 [dim](Notes)[/dim]:", classes="form-label")
+                    yield Input(
+                        value=notes_val or "",
+                        placeholder="自訂備註（選填）",
+                        id="add-cash-notes",
+                        classes="form-input",
+                    )
 
             # Option specific container
             with Vertical(id="option-fields-container"):
@@ -1191,28 +1716,28 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
                     yield Input(value=mult_val, placeholder="預設為 100", id="add-multiplier",
                                 classes="form-input")
 
-            with Horizontal(classes="form-row"):
+            with Horizontal(classes="form-row", id="side-field-row"):
                 yield Label("持倉方向 [dim](Side)[/dim]:", classes="form-label")
                 yield Select(
                     [("Long 多/做多", "long"), ("Short 空/放空", "short")],
                     value=side_val, id="add-side"
                 )
 
-            with Horizontal(classes="form-row"):
+            with Horizontal(classes="form-row", id="quantity-field-row"):
                 yield Label("[red]★[/red] 數量 [dim](Qty)[/dim]:", classes="form-label")
                 yield Input(value=qty_val, placeholder="正數，例如 100", id="add-qty",
                             classes="form-input")
 
-            with Horizontal(classes="form-row"):
+            with Horizontal(classes="form-row", id="cost-field-row"):
                 yield Label("[yellow]✦[/yellow] 成本 [dim](Cost)[/dim]:", classes="form-label")
                 yield Input(value=cost_val, placeholder="正數，例如 150.5（建議填寫）", id="add-cost",
                             classes="form-input")
 
-            with Horizontal(classes="form-row"):
+            with Horizontal(classes="form-row", id="market-field-row"):
                 yield Label("市場 [dim](Market)[/dim]:", classes="form-label")
                 yield Select(markets, value=m_val, id="add-market")
 
-            with Horizontal(classes="form-row"):
+            with Horizontal(classes="form-row", id="adv-toggle-row"):
                 yield Label("", classes="form-label")
                 yield Button("▸ 進階欄位（帳戶/交易所/幣別/備註/板塊）", id="adv-toggle")
 
@@ -1252,23 +1777,40 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
 
     def on_mount(self) -> None:
         t_val = self.query_one("#add-type", Select).value
-        is_opt = (t_val == "option")
-        self.query_one("#option-fields-container").display = is_opt
-        # bug#00047: option symbols are fully derived from underlying/strike/expiry/type,
-        # so the top-level Symbol field is redundant (and was never actually required) —
-        # hide it for option type to avoid asking the user to enter the ticker twice.
-        self.query_one("#symbol-field-row").display = not is_opt
+        self._set_type_visibility(str(t_val))
         self.query_one("#adv-fields-container").display = False
         self.query_one("#batch-list", Label).display = False
-        if self.position:
+        if isinstance(self.position, Position):
             # 修改模式：以既有值為推斷基準，避免游標經過 Symbol 時覆寫使用者資料
             m_val = self.query_one("#add-market", Select).value
             c_val = self.query_one("#add-curr", Input).value.strip().upper()
             self._inferred = (str(m_val), c_val)
-        if is_opt:
+        if t_val == "cash":
+            self.query_one("#add-cash-account", Input).focus()
+        elif t_val == "option":
             self.query_one("#add-underlying", Input).focus()
         else:
             self.query_one("#add-symbol", Input).focus()
+
+    def _set_type_visibility(self, instrument_type: str) -> None:
+        is_cash = instrument_type == "cash"
+        is_opt = instrument_type == "option"
+        is_etf = instrument_type == "etf"
+        self.query_one("#cash-fields-container").display = is_cash
+        self.query_one("#option-fields-container").display = is_opt
+        self.query_one("#leverage-factor-row").display = is_etf
+        self.query_one("#symbol-field-row").display = not is_cash and not is_opt
+        for selector in (
+            "#side-field-row",
+            "#quantity-field-row",
+            "#cost-field-row",
+            "#market-field-row",
+            "#adv-toggle-row",
+        ):
+            self.query_one(selector).display = not is_cash
+        self.query_one("#adv-fields-container").display = (
+            not is_cash and self._adv_visible
+        )
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Symbol 輸入時自動推斷市場/幣別（純數字或 .TW/.TWO 結尾 → TW/TWD）。
@@ -1305,9 +1847,7 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "add-type":
-            is_opt = (event.value == "option")
-            self.query_one("#option-fields-container").display = is_opt
-            self.query_one("#symbol-field-row").display = not is_opt
+            self._set_type_visibility(str(event.value))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "confirm":
@@ -1331,14 +1871,24 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
             if focused is None:
                 return
 
-            # Skip option-specific fields if the container is hidden
-            opt_container = self.query_one("#option-fields-container")
-            is_opt = opt_container.display
+            inst_type = str(self.query_one("#add-type", Select).value)
+            is_cash = inst_type == "cash"
+            is_opt = inst_type == "option"
+            is_etf = inst_type == "etf"
 
             visible_fids = []
             for fid in self._FIELD_IDS:
-                if fid in ("add-underlying", "add-strike", "add-expiry", "add-option-type", "add-multiplier"):
+                if fid.startswith("add-cash-"):
+                    if is_cash:
+                        visible_fids.append(fid)
+                elif is_cash:
+                    if fid in ("add-broker", "add-type"):
+                        visible_fids.append(fid)
+                elif fid in ("add-underlying", "add-strike", "add-expiry", "add-option-type", "add-multiplier"):
                     if is_opt:
+                        visible_fids.append(fid)
+                elif fid == "add-leverage-factor":
+                    if is_etf:
                         visible_fids.append(fid)
                 elif fid == "add-symbol":
                     # Hidden for option type (bug#00047) — symbol is auto-derived.
@@ -1379,8 +1929,8 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
             except Exception:
                 pass
 
-    def _collect(self) -> Optional[Position]:
-        """驗證目前表單內容並組成 Position；失敗時顯示錯誤並回傳 None。"""
+    def _collect(self) -> Optional[Holding]:
+        """Validate the visible form and build a security or cash holding."""
         broker   = self.query_one("#add-broker", Select).value
         account  = self.query_one("#add-account", Input).value.strip()
         symbol   = self.query_one("#add-symbol", Input).value.strip().upper()
@@ -1393,8 +1943,39 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
         curr     = self.query_one("#add-curr", Input).value.strip().upper()
         notes    = self.query_one("#add-notes", Input).value.strip()
         sector   = self.query_one("#add-sector", Input).value.strip()
+        leverage_text = self.query_one("#add-leverage-factor", Input).value.strip()
 
         error_lbl = self.query_one("#add-error", Label)
+
+        if inst_type == "cash":
+            cash_account = self.query_one("#add-cash-account", Input).value.strip()
+            cash_currency = self.query_one("#add-cash-currency", Select).value
+            cash_amount_text = self.query_one("#add-cash-amount", Input).value.strip()
+            cash_notes = self.query_one("#add-cash-notes", Input).value.strip()
+            if not cash_amount_text:
+                error_lbl.update("❌ [red]★ 現金金額[/red] 為必填")
+                self.query_one("#add-cash-amount", Input).focus()
+                return None
+            try:
+                cash_amount = float(cash_amount_text.replace(",", ""))
+                if cash_amount <= 0:
+                    raise ValueError
+            except ValueError:
+                error_lbl.update("❌ 現金金額必須是大於 0 的數字")
+                self.query_one("#add-cash-amount", Input).focus()
+                return None
+            try:
+                return CashPosition(
+                    broker=str(broker),
+                    account=cash_account or "default",
+                    currency=str(cash_currency),
+                    amount=cash_amount,
+                    notes=cash_notes or None,
+                    last_updated=datetime.utcnow(),
+                )
+            except Exception as exc:
+                error_lbl.update(f"❌ 資料驗證失敗: {exc}")
+                return None
 
         # For option type, symbol may be left blank (auto-generated from underlying/expiry/strike)
         if not symbol and inst_type != "option":
@@ -1408,6 +1989,17 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
         expiry = None
         opt_type = None
         multiplier = None
+        leverage_factor = None
+
+        if inst_type == "etf" and leverage_text:
+            try:
+                leverage_factor = float(leverage_text)
+                if leverage_factor == 0 or abs(leverage_factor) > 10:
+                    raise ValueError
+            except ValueError:
+                error_lbl.update("❌ ETF 曝險倍數須介於 -10 至 10，且不可為 0")
+                self.query_one("#add-leverage-factor", Input).focus()
+                return None
 
         if inst_type == "option":
             underlying = self.query_one("#add-underlying", Input).value.strip().upper()
@@ -1545,6 +2137,7 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
                     pos.expiry = None
                     pos.option_type = None
                     pos.multiplier = None
+                pos.leverage_factor = leverage_factor if inst_type == "etf" else None
             else:
                 pos = Position(
                     broker=broker,
@@ -1558,6 +2151,7 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
                     currency=curr or "USD",
                     notes=notes or None,
                     sector=sector or None,
+                    leverage_factor=leverage_factor if inst_type == "etf" else None,
                     source="interactive",
                     last_updated=datetime.utcnow()
                 )
@@ -1581,7 +2175,10 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
 
     def _form_is_empty(self) -> bool:
         """主要輸入欄位（代碼/標的與數量）皆為空 → 視為沒有待送出的表單。"""
-        is_opt = (self.query_one("#add-type", Select).value == "option")
+        inst_type = self.query_one("#add-type", Select).value
+        if inst_type == "cash":
+            return not self.query_one("#add-cash-amount", Input).value.strip()
+        is_opt = inst_type == "option"
         lead_id = "add-underlying" if is_opt else "add-symbol"
         lead = self.query_one(f"#{lead_id}", Input).value.strip()
         qty = self.query_one("#add-qty", Input).value.strip()
@@ -1593,13 +2190,25 @@ class AddPositionModal(ModalScreen[Optional[list[Position]]]):
             lbl.display = False
             return
         shown = self._pending[-5:]
-        items = "、".join(f"{p.symbol}×{abs(p.quantity):g}" for p in shown)
+        items = "、".join(
+            (
+                f"CASH {p.currency} {p.amount:g}"
+                if isinstance(p, CashPosition)
+                else f"{p.symbol}×{abs(p.quantity):g}"
+            )
+            for p in shown
+        )
         prefix = "…" if len(self._pending) > 5 else ""
         lbl.update(f"📋 待存清單 ({len(self._pending)})：{prefix}{items}")
         lbl.display = True
 
     def _reset_entry_fields(self) -> None:
         """加入待存清單後清空「本筆專屬」欄位，保留券商/類型/市場等共通設定。"""
+        if self.query_one("#add-type", Select).value == "cash":
+            self.query_one("#add-cash-amount", Input).value = ""
+            self.query_one("#add-cash-notes", Input).value = ""
+            self.query_one("#add-cash-amount", Input).focus()
+            return
         for fid in ("add-symbol", "add-qty", "add-cost", "add-notes", "add-strike"):
             self.query_one(f"#{fid}", Input).value = ""
         is_opt = (self.query_one("#add-type", Select).value == "option")
@@ -1840,30 +2449,57 @@ class DeleteConfirmModal(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, position: Position | list[Position]) -> None:
+    def __init__(
+        self,
+        position: Holding | list[Holding],
+        *,
+        sell_to_cash: bool = False,
+    ) -> None:
         super().__init__()
         plist = position if isinstance(position, list) else [position]
-        self.positions: list[Position] = plist
+        self.positions: list[Holding] = plist
         self.position = plist[0]  # 向後相容：單筆呼叫端仍可讀取 .position
+        self.sell_to_cash = sell_to_cash
 
     def compose(self) -> ComposeResult:
-        descs = [
-            f"{p.broker.upper()} - {p.account or 'default'} - {p.symbol} ({p.instrument_type})"
-            for p in self.positions
-        ]
+        descs = []
+        for holding in self.positions:
+            label = (
+                f"CASH {holding.currency}"
+                if isinstance(holding, CashPosition)
+                else f"{holding.symbol} ({holding.instrument_type})"
+            )
+            descs.append(
+                f"{holding.broker.upper()} - "
+                f"{holding.account or 'default'} - {label}"
+            )
         shown = descs[:6]
         if len(descs) > 6:
             shown.append(f"…及其他 {len(descs) - 6} 筆")
         desc = "\n".join(f"[cyan]{d}[/]" for d in shown)
         n_note = f"以下 [bold]{len(descs)}[/bold] 筆部位" if len(descs) > 1 else "以下部位"
         with Vertical(id="delete-confirm-dialog"):
-            yield Label("⚠️ 刪除確認 (Confirm Deletion)", id="delete-confirm-title")
+            title = (
+                "💵 賣出並轉為現金"
+                if self.sell_to_cash
+                else "⚠️ 刪除確認 (Confirm Deletion)"
+            )
+            yield Label(title, id="delete-confirm-title")
             yield Label(
-                f"您確定要[bold red]完整刪除[/bold red]{n_note}嗎？此操作無法復原：\n\n{desc}",
+                (
+                    f"您確定要完整賣出{n_note}，並將目前市值轉入同帳戶現金嗎？\n\n{desc}"
+                    if self.sell_to_cash
+                    else f"您確定要[bold red]完整刪除[/bold red]{n_note}嗎？"
+                    f"此操作無法復原：\n\n{desc}"
+                ),
                 id="delete-confirm-msg"
             )
             with Horizontal(id="delete-confirm-buttons"):
-                yield Button("確認刪除", variant="error", id="confirm")
+                yield Button(
+                    "確認賣出" if self.sell_to_cash else "確認刪除",
+                    variant="error",
+                    id="confirm",
+                )
                 yield Button("取消", variant="default", id="cancel")
 
     def on_mount(self) -> None:
@@ -2573,9 +3209,6 @@ class UpcomingEventsScreen(_FormulaDrillMixin, Screen):
         self.app.call_from_thread(self._on_fetch_complete, events, today)
 
     def _on_fetch_complete(self, events: list[tuple], today) -> None:
-        from rich.console import Group
-        from rich.panel import Panel
-
         self._update_header("[green]✅ 行事曆資料更新成功！[/green]")
         
         if not events:
@@ -2608,118 +3241,52 @@ def _pos_key(p: Position) -> tuple[str, str, str, str]:
     return (p.broker.lower(), (p.account or "").lower(), p.symbol.upper(), p.instrument_type)
 
 
-def _run_calibration_cycle(user: str, force: bool = False):
-    """bug#00095: 用「目前生效參數」重跑 ETF/類股回測，並在到期（或 force）時產生
-    「需確認」的校準提案（run_recalibration 只存 pending、絕不自動套用）。純本機。"""
-    from .storage import load_sector_groups, load_sector_daily_snapshots, taiwan_now
-    from . import calibration_schedule as cs, sector_analysis
-    today = taiwan_now().date()
-    state = cs.ensure_state(user)
-    if not force and not cs.due_for_recalibration(state, today):
-        return state
-    ap = state.get("active_params", {})
-    ect = ap.get("etf", {}).get("consensus_threshold", 0.5)
-    eme = ap.get("etf", {}).get("min_etfs_evaluated", 4)
-    etf_snaps = {sym: load_etf_daily_snapshots(sym) for sym in US_ACTIVE_TICKERS}
-    etf_bt = backtest_etf_consensus(etf_snaps, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS,
-                                    consensus_threshold=ect, min_etfs_evaluated=eme)
-    sbth = ap.get("sector", {}).get("breadth_threshold", 0.5)
-    smd = ap.get("sector", {}).get("min_days", 3)
-    groups = load_sector_groups(user)
-    sec_snaps = {name: load_sector_daily_snapshots(name) for name in groups}
-    sec_bt = (sector_analysis.backtest_sector_flow(sec_snaps, breadth_threshold=sbth, min_days=smd)
-              if groups else None)
-    return cs.run_recalibration(user, {"etf": etf_bt, "sector": sec_bt}, today, force=force)
+def _cash_key(cash: CashPosition) -> tuple[str, str, str, str]:
+    return (
+        cash.broker.lower(),
+        (cash.account or "").lower(),
+        f"CASH {cash.currency}",
+        "cash",
+    )
 
 
-class CalibrationModal(ModalScreen):
-    """bug#00095: 校準狀態與提案確認對話框。系統只提案，套用一律需在此按確認。"""
+def _holding_key(holding: Holding) -> tuple[str, str, str, str]:
+    return (
+        _cash_key(holding)
+        if isinstance(holding, CashPosition)
+        else _pos_key(holding)
+    )
 
-    DEFAULT_CSS = """
-    CalibrationModal { align: center middle; }
-    #cal-dialog { width: 84; height: auto; max-height: 90%; border: thick $accent;
-                  background: $panel; padding: 1 2; }
-    #cal-body { height: auto; margin-bottom: 1; }
-    #cal-buttons { height: auto; align: center middle; }
-    #cal-buttons Button { margin: 0 1; }
-    """
 
-    def __init__(self, user: str) -> None:
-        super().__init__()
-        self.user = user
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="cal-dialog"):
-            yield Static("", id="cal-body")
-            with Horizontal(id="cal-buttons"):
-                yield Button("套用調整", variant="success", id="apply")
-                yield Button("略過建議", variant="warning", id="dismiss")
-                yield Button("立即重算", variant="primary", id="recompute")
-                yield Button("切換週期", variant="default", id="cadence")
-                yield Button("關閉", variant="default", id="close")
-
-    def on_mount(self) -> None:
-        self._refresh_body()
-        self.query_one("#close").focus()
-
-    def _refresh_body(self) -> None:
-        from .storage import taiwan_now
-        from . import calibration_schedule as cs
-        state = cs.ensure_state(self.user)
-        today = taiwan_now().date()
-        lines = ["[bold cyan]⚙️ 投資建議校準[/bold cyan]", "", cs.format_status(state, today), ""]
-        prop = cs.format_proposal(state)
-        if prop:
-            lines += prop
-        else:
-            lines.append("[dim]目前沒有待確認的校準建議。系統到期時只在有統計顯著證據時才提出調整。[/dim]")
-        ap = state.get("active_params", {})
-        lines += ["", "[dim]目前生效門檻：[/dim]",
-                  f"[dim]  ETF 一致門檻 {ap.get('etf',{}).get('consensus_threshold','—')}、"
-                  f"最少檔數 {ap.get('etf',{}).get('min_etfs_evaluated','—')}[/dim]",
-                  f"[dim]  類股廣度門檻 {ap.get('sector',{}).get('breadth_threshold','—')}、"
-                  f"持續天數 {ap.get('sector',{}).get('min_days','—')}[/dim]"]
-        self.query_one("#cal-body", Static).update("\n".join(lines))
-        has_pending = bool((state.get("pending") or {}).get("changes"))
-        self.query_one("#apply").disabled = not has_pending
-        self.query_one("#dismiss").disabled = not has_pending
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        from .storage import taiwan_now
-        from . import calibration_schedule as cs
-        bid = event.button.id
-        if bid == "close":
-            self.dismiss(None)
-        elif bid == "apply":
-            cs.apply_pending(self.user, today=taiwan_now().date())
-            self.app.notify("✅ 已套用校準調整，主頁建議將以新門檻計算。")
-            self.dismiss("applied")
-        elif bid == "dismiss":
-            cs.dismiss_pending(self.user, today=taiwan_now().date())
-            self.app.notify("已略過本次校準建議。")
-            self.dismiss("dismissed")
-        elif bid == "cadence":
-            state = cs.ensure_state(self.user)
-            cur = state.get("cadence_days", cs.DEFAULT_CADENCE_DAYS)
-            cs.set_cadence(self.user, cs.CADENCE_WEEKLY if cur != cs.CADENCE_WEEKLY else cs.CADENCE_BIWEEKLY)
-            self._refresh_body()
-        elif bid == "recompute":
-            try:
-                _run_calibration_cycle(self.user, force=True)
-                self.app.notify("已用最新快照重算校準。")
-            except Exception:
-                self.app.notify("重算時發生問題，維持原狀。")
-            self._refresh_body()
-
-    def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.dismiss(None)
+def _drop_overlay_for_positions(user: str, positions: list[Position]) -> None:
+    drop_quote_overlay_keys(user, [_pos_key(p) for p in positions])
 
 
 def _active_params(user: str) -> dict:
-    """bug#00095 接線：讀取使用者校準狀態的「目前生效參數」——使用者在校準對話框
-    按下確認後的門檻調整，即透過此函式讓所有推薦計算生效。讀檔失敗一律回退預設，
-    永不讓主頁渲染因此崩潰。"""
+    """目前生效的門檻參數——優先取 QuantTrade 匯出的 Champion 參數。
+
+    2026-08-06 策略實驗室分割後，調參權責移到 QuantTrade：它每次 feedback cycle
+    結束會把各 family 現任 Champion 的參數寫成 `{user}_champion_params.json`。
+    主頁讀它，是為了讓**畫面顯示的結論仍然是 ledger 正在評估的那個結論**——分家
+    之後若各讀各的，兩組門檻會各自演化，bug#00089 鎖的「結論＝被回測＝同一函式」
+    當場就破。
+
+    契約檔不存在時（QuantTrade 還沒跑過，或使用者只裝 AssetTrack）回退到 legacy
+    校準狀態，行為與分割前相同。讀檔失敗一律回退預設，永不讓主頁渲染因此崩潰。
+    """
+    try:
+        import json as _json
+
+        from .storage import get_data_dir
+
+        safe = (user or "default").replace("/", "_")
+        contract = get_data_dir() / f"{safe}_champion_params.json"
+        if contract.exists():
+            params = (_json.loads(contract.read_text(encoding="utf-8")) or {}).get("params")
+            if isinstance(params, dict) and params:
+                return params
+    except Exception:
+        pass
     try:
         from .calibration_schedule import ensure_state
         return ensure_state(user).get("active_params", {})
@@ -2729,6 +3296,48 @@ def _active_params(user: str) -> dict:
             return default_params()
         except Exception:
             return {}
+
+
+@dataclass
+class _DashboardAnalysisInputs:
+    active_params: dict
+    etf_snapshots: dict[str, list]
+    options_underlyings: list[str]
+    options_snapshots: dict[str, list]
+    sector_groups: dict
+    sector_snapshots: dict[str, list]
+
+
+def _load_dashboard_analysis_inputs(
+    user: str,
+    positions: list[Position],
+) -> _DashboardAnalysisInputs:
+    """Read each dashboard analysis source once for one render generation."""
+    from .storage import load_sector_daily_snapshots, load_sector_groups
+
+    active_params = _active_params(user)
+    etf_snapshots = {
+        symbol: load_etf_daily_snapshots(symbol)
+        for symbol in active_etf_symbols()
+    }
+    options_underlyings, _, _ = _watchlist_underlyings(user, positions)
+    options_snapshots = {
+        symbol: load_options_daily_snapshots(symbol)
+        for symbol in options_underlyings
+    }
+    sector_groups = load_sector_groups(user)
+    sector_snapshots = {
+        name: load_sector_daily_snapshots(name)
+        for name in sector_groups
+    }
+    return _DashboardAnalysisInputs(
+        active_params=active_params,
+        etf_snapshots=etf_snapshots,
+        options_underlyings=options_underlyings,
+        options_snapshots=options_snapshots,
+        sector_groups=sector_groups,
+        sector_snapshots=sector_snapshots,
+    )
 
 
 class RecommendationDetailScreen(Screen):
@@ -2807,10 +3416,12 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         Binding("3",   "logout",               "安全登出"),
         Binding("4",   "upcoming_events",      "近期重大事件"),
         Binding("5",   "save_snapshot",        "儲存快照"),
-        Binding("6",   "active_etfs",          "主動式 ETF 排行"),
+        Binding("6",   "active_etfs",          "主動式 ETF 動態"),
         Binding("7",   "options_watchlist",    "期權觀察清單"),
         Binding("8",   "sector_analysis",      "類股板塊分析"),
-        Binding("k",   "calibration",          "投資建議校準"),
+        Binding("9",   "performance_tracking", "績效比較"),
+        Binding("i",   "deposit",              "宣告入金"),
+        Binding("o",   "withdrawal",           "宣告出金"),
         Binding("r",   "refresh_now",          "重整",   show=False),
         Binding("q",   "logout",               "登出",   show=False),
         Binding("ctrl+c", "logout",            "強制登出", show=False),
@@ -2823,12 +3434,21 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         self._cash_positions: list[CashPosition] = cash_positions
         self._rate: float            = rate
         self._loading: bool          = False
-        self.row_data: list[Optional[Position]] = []
+        self.row_data: list[Optional[Holding]] = []
         self._marked: set[tuple[str, str, str, str]] = set()  # space 多選標記（批次刪除用）
         self._upcoming_events: list[tuple] = []
         self._events_fetched: bool = False
         self._fetching_events: bool = False
+        self._events_last_fetched_at: float = 0.0
+        self._events_last_attempt_at: float = 0.0
+        self._events_symbols: tuple[str, ...] = ()
+        self._events_last_attempt_symbols: tuple[str, ...] = ()
+        self._analysis_last_rendered_at: float = 0.0
+        self._analysis_signature: Optional[tuple] = None
         self._rf_rate: float         = 0.04  # risk-free rate (^IRX), warmed in background
+        self._underlying_prices: dict[str, float] = {}
+        self._live_quotes_ready: bool = False
+        self._overlay_quotes_active: bool = False
 
     # ── Layout ───────────────────────────────────────────────────────────────
 
@@ -2847,10 +3467,10 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                     with ScrollableContainer(id="holdings-scroll"):
                         yield DataTable(id="holdings-table")
                     yield Static("", id="recent-events-panel")
-                yield Static("", id="cross-model-panel")
-                yield Static("", id="sector-consensus-panel")
-                yield Static("", id="options-flow-panel")
-                yield Static("", id="etf-conclusions-panel")
+                with ScrollableContainer(id="recommendations-scroll"):
+                    yield Static("", id="sector-consensus-panel")
+                    yield Static("", id="options-flow-panel")
+                    yield Static("", id="etf-conclusions-panel")
         yield Static("", id="status-bar")
         yield Footer()
 
@@ -2882,7 +3502,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             event.stop()
             if event.key == "space":
                 if pos is not None:
-                    self._marked.symmetric_difference_update({_pos_key(pos)})
+                    self._marked.symmetric_difference_update({_holding_key(pos)})
                     self._render_all()
             elif event.key == "e":
                 if pos is not None:
@@ -2892,14 +3512,26 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                     )
             elif event.key == "x":
                 if self._marked:
-                    targets = [p for p in self.row_data if p is not None and _pos_key(p) in self._marked]
+                    targets = [
+                        p for p in self.row_data
+                        if p is not None and _holding_key(p) in self._marked
+                    ]
                 elif pos is not None:
                     targets = [pos]
                 else:
                     targets = []
                 if targets:
                     self.app.push_screen(
-                        DeleteConfirmModal(targets),
+                        DeleteConfirmModal(
+                            targets,
+                            sell_to_cash=(
+                                _tracking_state(self._user).enabled
+                                and all(
+                                    isinstance(item, Position)
+                                    for item in targets
+                                )
+                            ),
+                        ),
                         lambda ok: self._handle_batch_delete_confirm(targets, ok)
                     )
 
@@ -2912,6 +3544,18 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
 
         pos = self.row_data[row_idx]
         if pos is None:
+            return
+        if isinstance(pos, CashPosition):
+            if _tracking_state(self._user).enabled:
+                self.app.notify(
+                    "追蹤期間不能直接修改現金；請用 i／o 宣告出入金。",
+                    severity="warning",
+                )
+                return
+            self.app.push_screen(
+                AddPositionModal(pos),
+                lambda result: self._handle_edit_position_result(pos, result),
+            )
             return
 
         # Map column index to field
@@ -2943,6 +3587,18 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
 
     def _handle_field_edit(self, pos: Position, field_name: str, new_val: Optional[str]) -> None:
         if new_val is None:
+            return
+        if _tracking_state(self._user).enabled and field_name in {
+            "symbol",
+            "instrument_type",
+            "quantity",
+            "avg_cost",
+            "market",
+        }:
+            self.app.notify(
+                "追蹤期間不能直接改寫部位價值；加碼請按 1，出售請按 x。",
+                severity="warning",
+            )
             return
 
         positions, cash_positions = load_manual_positions(user=self._user)
@@ -3022,6 +3678,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             positions.remove(target)
 
         save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
+        _drop_overlay_for_positions(self._user, [target] + ([dup] if dup else []))
         self._do_refresh_worker()
 
     def _handle_position_action(self, pos: Position, action: Optional[str]) -> None:
@@ -3048,11 +3705,23 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             modal = FieldEditModal("選擇新券商 (Broker)", "broker", pos.broker, choices=brokers)
             self.app.push_screen(modal, lambda b: self._handle_broker_edit(pos, b))
         elif action == "delete":
-            modal = DeleteConfirmModal(pos)
+            modal = DeleteConfirmModal(
+                pos,
+                sell_to_cash=_tracking_state(self._user).enabled,
+            )
             self.app.push_screen(modal, lambda confirmed: self._handle_delete_confirm(pos, confirmed))
 
     def _apply_metadata_edit(self, pos: Position, field_name: str, new_val: Optional[str]) -> None:
         if new_val is None:
+            return
+        if _tracking_state(self._user).enabled and field_name in {
+            "currency",
+            "cost_currency",
+        }:
+            self.app.notify(
+                "追蹤期間不能直接改寫部位幣別或成本幣別。",
+                severity="warning",
+            )
             return
 
         positions, cash_positions = load_manual_positions(user=self._user)
@@ -3081,6 +3750,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             return
 
         save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
+        _drop_overlay_for_positions(self._user, [validated])
         self._do_refresh_worker()
 
     def _handle_broker_edit(self, pos: Position, broker: Optional[str]) -> None:
@@ -3149,16 +3819,21 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             positions.remove(target)
 
         save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
+        _drop_overlay_for_positions(self._user, [target] + ([dup] if dup else []))
         self._do_refresh_worker()
 
     def _handle_delete_confirm(self, pos: Position, confirmed: Optional[bool]) -> None:
         if not confirmed:
+            return
+        if _tracking_state(self._user).enabled:
+            self._handle_batch_delete_confirm([pos], confirmed)
             return
         positions, cash_positions = load_manual_positions(user=self._user)
         target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
         if target:
             positions.remove(target)
             save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
+            _drop_overlay_for_positions(self._user, [target])
             self._do_refresh_worker()
 
     # ── Header tick (every 1s, lightweight) ──────────────────────────────────
@@ -3168,7 +3843,11 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         status  = (
             "[yellow]⏳ 更新中...[/yellow]"
             if self._loading
-            else "[dim]⏱️ 每 60 秒自動刷新[/dim]"
+            else (
+                "[yellow]上次價格[/yellow]"
+                if getattr(self, "_overlay_quotes_active", False)
+                else "[dim]⏱️ 每 60 秒自動刷新[/dim]"
+            )
         )
         self.query_one("#tui-header", Static).update(
             Panel(
@@ -3199,6 +3878,15 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
 
     # ── Full render ───────────────────────────────────────────────────────────
 
+    def _positions_for_display(self) -> list[Position]:
+        """First paint may overlay last live quotes; the worker still fetches fresh."""
+        if getattr(self, "_live_quotes_ready", False):
+            self._overlay_quotes_active = False
+            return self._positions
+        display, as_of = apply_quote_overlay(self._user, self._positions)
+        self._overlay_quotes_active = as_of is not None
+        return display
+
     def _render_all(self) -> None:
         """Render all dashboard widgets from current in-memory data."""
         table = self.query_one("#holdings-table", DataTable)
@@ -3207,7 +3895,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         old_coordinate = table.cursor_coordinate
         had_focus = (self.focused == table)
 
-        if not self._positions:
+        if not self._positions and not self._cash_positions:
             self.query_one("#metrics-row",     Static).update(
                 Panel("[dim]尚無持倉部位[/dim]", border_style="dim")
             )
@@ -3221,36 +3909,71 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             self.query_one("#recent-events-panel", Static).update(
                 self._build_recent_events_panel()
             )
-            self.query_one("#etf-conclusions-panel", Static).update(
-                self._build_etf_conclusions_panel()
-            )
-            self.query_one("#options-flow-panel", Static).update(
-                self._build_options_flow_panel()
-            )
-            self.query_one("#sector-consensus-panel", Static).update(
-                self._build_sector_consensus_panel()
-            )
-            self._refresh_cross_model_panel()
+            self._refresh_analysis_panels()
 
             if had_focus:
                 table.focus()
             return
 
-        weights = _calc_weights(self._positions, self._rate)
-        has_quotes = any(p.market_price is not None or p.market_value is not None for p in self._positions)
+        positions = self._positions_for_display()
+        weights = _calc_weights(
+            positions,
+            self._rate,
+            self._cash_positions,
+        )
+        has_quotes = all(
+            p.market_price is not None or p.market_value is not None
+            for p in positions
+        )
 
         self.query_one("#metrics-row", Static).update(
-            _build_metrics_panel(self._positions, self._rate)
+            _build_metrics_panel(
+                positions,
+                self._rate,
+                self._cash_positions,
+                stale_quotes=self._overlay_quotes_active,
+            )
         )
 
         table.clear(columns=False)
         self.row_data = []
 
-        sorted_brokers = group_positions_by_broker(self._positions, self._rate)
+        grouped: dict[str, dict[str, list]] = {}
+        for bk, broker_positions in group_positions_by_broker(
+            positions, self._rate
+        ):
+            grouped.setdefault(bk, {"positions": [], "cash": []})[
+                "positions"
+            ].extend(broker_positions)
+        for cash in self._cash_positions:
+            bk = (
+                f"{cash.broker} ({cash.account})"
+                if cash.account
+                else cash.broker
+            )
+            grouped.setdefault(bk, {"positions": [], "cash": []})[
+                "cash"
+            ].append(cash)
+        sorted_brokers = sorted(
+            grouped.items(),
+            key=lambda item: sum(
+                p.value if p.currency == "USD" else p.value / self._rate
+                for p in item[1]["positions"]
+            ) + sum(
+                c.amount if c.currency == "USD" else c.amount / self._rate
+                for c in item[1]["cash"]
+            ),
+            reverse=True,
+        )
 
-        for i, (bk, bk_pos) in enumerate(sorted_brokers):
+        for bk, broker_holdings in sorted_brokers:
+            bk_pos = broker_holdings["positions"]
+            bk_cash = broker_holdings["cash"]
             bk_total = sum(
                 p.value if p.currency == "USD" else p.value / self._rate for p in bk_pos
+            ) + sum(
+                c.amount if c.currency == "USD" else c.amount / self._rate
+                for c in bk_cash
             )
             
             bk_total_s = f"[bold white]${bk_total:,.0f}[/bold white] [dim]USD[/dim]" if has_quotes else "—"
@@ -3265,6 +3988,8 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                 qty_s   = f"{p.quantity:,.2f}" if p.quantity % 1 != 0 else f"{int(p.quantity):,}"
                 cost_s  = f"${p.avg_cost:,.2f}" if p.avg_cost is not None else "—"
                 price_s = f"${p.market_price:,.2f}" if p.market_price is not None else "—"
+                if self._overlay_quotes_active and p.market_price is not None:
+                    price_s = f"[dim]{price_s}[/dim]"
                 val_s   = f"${p.value:,.2f}" if (p.market_price is not None or p.market_value is not None) else "—"
                 mkt_s   = "開市" if is_market_open(p) else "休市"
 
@@ -3291,7 +4016,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                 else:
                     pnl_s = "—"
 
-                mark_s = "[bold green]✔ [/bold green]" if _pos_key(p) in self._marked else ""
+                mark_s = "[bold green]✔ [/bold green]" if _holding_key(p) in self._marked else ""
                 table.add_row(
                     f"{mark_s}[bold white]{p.symbol}[/bold white]",
                     f"[dim]{p.instrument_type}[/dim]",
@@ -3307,22 +4032,54 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                 )
                 self.row_data.append(p)
 
+            for cash in bk_cash:
+                amount_s = f"{cash.amount:,.2f}"
+                usd_value = (
+                    cash.amount
+                    if cash.currency == "USD"
+                    else cash.amount / self._rate
+                )
+                value_s = f"${usd_value:,.2f}"
+                weight_key = (
+                    cash.broker,
+                    cash.account or "",
+                    f"CASH {cash.currency}",
+                )
+                wt_s = f"{weights.get(weight_key, 0.0):.1f}%"
+                mark_s = (
+                    "[bold green]✔ [/bold green]"
+                    if _holding_key(cash) in self._marked
+                    else ""
+                )
+                table.add_row(
+                    f"{mark_s}[bold white]CASH {cash.currency}[/bold white]",
+                    "[dim]cash[/dim]",
+                    amount_s,
+                    "—",
+                    "—",
+                    f"[bold]{value_s}[/bold]",
+                    f"[dim]{wt_s}[/dim]",
+                    "0.00%",
+                    "0",
+                    "[cyan]現金[/cyan]",
+                    "[green]$0.00 (0.00%)[/green]",
+                )
+                self.row_data.append(cash)
+
         self.query_one("#broker-dist", Static).update(
-            _build_broker_panel(self._positions, self._rate)
+            _build_broker_panel(
+                positions,
+                self._rate,
+                self._cash_positions,
+                loading=self._loading,
+                underlying_prices=self._underlying_prices,
+                risk_free_rate=self._rf_rate,
+            )
         )
         self.query_one("#recent-events-panel", Static).update(
             self._build_recent_events_panel()
         )
-        self.query_one("#etf-conclusions-panel", Static).update(
-            self._build_etf_conclusions_panel()
-        )
-        self.query_one("#options-flow-panel", Static).update(
-            self._build_options_flow_panel()
-        )
-        self.query_one("#sector-consensus-panel", Static).update(
-            self._build_sector_consensus_panel()
-        )
-        self._refresh_cross_model_panel()
+        self._refresh_analysis_panels()
 
         # Restore coordinate and focus state
         if len(self.row_data) > 0:
@@ -3343,36 +4100,118 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         self._loading = True
         self.app._set_fetch_active('quotes', '即時報價與匯率')
         try:
-            self._rate      = _get_cached_usdtwd_rate()
-            # Warm the ^IRX risk-free cache off the UI thread so the options card's
-            # divergence math uses the same real rate as the 期權觀察清單 page (bug#00067).
+            self._rate      = fetch_usdtwd_rate()
+            # Warm the ^IRX risk-free cache off the UI thread so watchlist Greeks
+            # use the same real rate as the 期權觀察清單 page.
             from .quotes import fetch_risk_free_rate
             self._rf_rate = fetch_risk_free_rate(default=self._rf_rate)
             if load_from_disk:
                 self._positions, self._cash_positions = load_manual_positions(user=self._user)
             if self._positions:
                 self._positions = enrich_positions_with_quotes(self._positions)
+                from .quotes import _normalize_symbol_for_yf
+                normalized = {
+                    p.underlying.upper(): _normalize_symbol_for_yf(
+                        p.underlying, "stock", p.currency
+                    )
+                    for p in self._positions
+                    if p.instrument_type == "option" and p.underlying
+                }
+                prices = fetch_prices_batch(sorted(set(normalized.values())))
+                self._underlying_prices = {
+                    underlying: prices[quote_symbol]
+                    for underlying, quote_symbol in normalized.items()
+                    if prices.get(quote_symbol) is not None
+                }
+                seen_beta: set[str] = set()
+                for p in self._positions:
+                    beta_key = (p.underlying or p.symbol).upper()
+                    if beta_key in seen_beta:
+                        continue
+                    seen_beta.add(beta_key)
+                    fetch_beta(p.symbol, p.instrument_type, p.underlying, p.currency)
+                if any(p.market_price is not None for p in self._positions):
+                    save_quote_overlay(self._user, self._positions)
+            else:
+                self._underlying_prices = {}
+            if not self._positions or any(
+                p.market_price is not None for p in self._positions
+            ):
+                self._live_quotes_ready = True
+                self._overlay_quotes_active = False
+            self._maybe_record_performance_valuation()
         except Exception:
             pass
         finally:
             self._loading = False
             self.app._clear_fetch_active('quotes')
+            kickoff = getattr(self.app, "_kickoff_research_ingest_once", None)
+            if callable(kickoff):
+                try:
+                    self.app.call_from_thread(kickoff)
+                except Exception:
+                    pass
         # Schedule UI update back on the event loop
         self.app.call_from_thread(self._render_all)
-        if load_from_disk:
-            self._events_fetched = False
+        if load_from_disk and self._events_refresh_due():
             self._fetch_upcoming_events_worker()
+
+    def _event_symbols(self) -> tuple[str, ...]:
+        """Return the position signature that determines earnings-calendar data."""
+        return tuple(sorted({
+            (p.underlying if p.instrument_type == "option" else p.symbol).upper()
+            for p in self._positions
+        }))
+
+    def _events_refresh_due(self) -> bool:
+        """Refresh slowly-changing calendar data without retrying every minute."""
+        if self._fetching_events:
+            return False
+        now = time.monotonic()
+        symbols = self._event_symbols()
+        if symbols != self._events_last_attempt_symbols:
+            return True
+        if not self._events_fetched:
+            return now - self._events_last_attempt_at >= _EVENTS_RETRY_INTERVAL_SECONDS
+        return (
+            symbols != self._events_symbols
+            or now - self._events_last_fetched_at >= _EVENTS_REFRESH_INTERVAL_SECONDS
+        )
+
+    def _maybe_record_performance_valuation(self) -> None:
+        """Create the opt-in baseline immediately and one valuation each Sunday."""
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("Asia/Taipei"))
+        tracker = PortfolioPerformanceTracker(
+            user=self._user,
+            data_dir=get_data_dir(),
+            benchmark_prices=YFinanceBenchmarkPrices(),
+        )
+        if not tracker.valuation_due(now):
+            return
+        total_value = total_asset_value_usd(
+            self._positions,
+            self._cash_positions,
+            self._rate,
+        )
+        if total_value is None or total_value <= 0:
+            return
+        tracker.record_valuation(
+            total_value_usd=total_value,
+            recorded_at=now,
+        )
 
     @work(thread=True)
     def _fetch_upcoming_events_worker(self) -> None:
         if self._fetching_events:
             return
         self._fetching_events = True
+        self._events_last_attempt_at = time.monotonic()
+        self._events_last_attempt_symbols = self._event_symbols()
         self.app._set_fetch_active('events', '財報行事曆與總經數據')
         
         from datetime import datetime as dt_cls, timedelta
-        import concurrent.futures
-        import yfinance as yf
         from .quotes import _normalize_symbol_for_yf
         from .shared import get_upcoming_macro_events
 
@@ -3387,7 +4226,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
 
             ticker_to_data = fetch_earnings_calendar(unique_tickers)
 
-            today = datetime.utcnow().date()
+            today = datetime.now(timezone.utc).date()
             start_date = today  # 只顯示今天(含)以後的事件，過去事件不再列出
             cutoff = today + timedelta(days=90)
 
@@ -3434,18 +4273,62 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             self._fetching_events = False
             self.app._clear_fetch_active('events')
 
-        self.app.call_from_thread(self._render_all)
-
     def _on_events_fetched(self, events: list[tuple]) -> None:
         self._upcoming_events = events
         self._events_fetched = True
-        self._render_all()
+        self._events_last_fetched_at = time.monotonic()
+        self._events_symbols = self._events_last_attempt_symbols
+        self._refresh_events_panel()
+
+    def _refresh_events_panel(self) -> None:
+        self.query_one("#recent-events-panel", Static).update(
+            self._build_recent_events_panel()
+        )
+
+    def _analysis_input_signature(self) -> tuple:
+        positions = tuple(sorted(
+            (
+                position.broker.casefold(),
+                (position.account or "").casefold(),
+                position.symbol.upper(),
+                position.instrument_type,
+                position.underlying or "",
+                position.quantity,
+            )
+            for position in self._positions
+        ))
+        return positions, round(self._rf_rate, 6)
+
+    def _refresh_analysis_panels(self, *, force: bool = False) -> None:
+        """Refresh slow offline analysis only when its inputs may have changed."""
+        now = time.monotonic()
+        signature = self._analysis_input_signature()
+        if (
+            not force
+            and signature == self._analysis_signature
+            and now - self._analysis_last_rendered_at
+            < _DASHBOARD_ANALYSIS_REFRESH_SECONDS
+        ):
+            return
+
+        inputs = _load_dashboard_analysis_inputs(self._user, self._positions)
+        self.query_one("#etf-conclusions-panel", Static).update(
+            self._build_etf_conclusions_panel(inputs)
+        )
+        self.query_one("#options-flow-panel", Static).update(
+            self._build_options_flow_panel(inputs)
+        )
+        self.query_one("#sector-consensus-panel", Static).update(
+            self._build_sector_consensus_panel(inputs)
+        )
+        self._analysis_signature = signature
+        self._analysis_last_rendered_at = now
 
     def _build_recent_events_panel(self) -> Panel:
         from rich.panel import Panel
-        from datetime import datetime as dt_cls, timedelta
+        from datetime import timedelta
         
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).date()
         
         if not self._events_fetched:
             return Panel("\n [yellow]⏳ 正在背景同步行事曆...[/yellow]", title="📅 近期重大事件", border_style="cyan")
@@ -3477,74 +4360,10 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             
         return Panel("\n".join(lines), title="📅 近期重大事件", border_style="cyan")
 
-    def _refresh_cross_model_panel(self) -> None:
-        """bug#00096 / bug#00119 / bug#00118: 跨模型總結建議卡（主頁）——把三項有回測背書
-        的方向訊號（主動式 ETF／期權／類股）各自的淨方向分數，以「該項回測可信度」加權，
-        合成一個整體傾向；「近期重大事件」不投方向票，改作謹慎度修正。100% 離線，與各分項
-        卡片共用同一份 report/回測；三層寫作格式，附可點選『🔍 查看公式細節』。"""
-        w = self.query_one("#cross-model-panel", Static)
-        w.border_title = "🧭 跨模型總結建議（主頁 · 點『🔍 查看公式細節』看加權公式）"
-        try:
-            from .cross_model import synthesize_cross_model
-            from .storage import (load_sector_groups, load_sector_daily_snapshots,
-                                  taiwan_now)
-            from .shared import get_upcoming_macro_events
-            from .calibration import backtest_verdicts
-            from . import sector_analysis
-
-            # ETF（美股宇集，與 ETF 卡片一致）；bug#00095 接線：套用已確認校準參數。
-            _ap = _active_params(self._user)
-            _ect = _ap.get('etf', {}).get('consensus_threshold', 0.5)
-            _eme = _ap.get('etf', {}).get('min_etfs_evaluated', 4)
-            etf_snaps = {sym: load_etf_daily_snapshots(sym) for sym in US_ACTIVE_TICKERS}
-            etf_report = compute_symbol_trends(etf_snaps, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS, consensus_threshold=_ect)
-            etf_bt = backtest_etf_consensus(etf_snaps, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS, consensus_threshold=_ect, min_etfs_evaluated=_eme)
-
-            # 期權（持倉 ∪ 自訂清單）
-            underlyings, _, _ = _watchlist_underlyings(self._user, self._positions)
-            opt_snaps = {u: load_options_daily_snapshots(u) for u in underlyings}
-            opt_verdicts = (compute_directional_verdicts(
-                opt_snaps, r=self._rf_rate, window_days=OPTIONS_FLOW_WINDOW_DAYS)
-                if underlyings else {})
-            opt_bt = (backtest_verdicts(
-                opt_snaps, window_days=OPTIONS_FLOW_WINDOW_DAYS, r=self._rf_rate)
-                if underlyings else None)
-
-            # 類股；bug#00095 接線：套用已確認校準參數。
-            _sbth = _ap.get('sector', {}).get('breadth_threshold', 0.5)
-            _smd = _ap.get('sector', {}).get('min_days', 3)
-            groups = load_sector_groups(self._user)
-            sec_snaps = {name: load_sector_daily_snapshots(name) for name in groups}
-            sec_flows = {name: sector_analysis.detect_broad_flow(sec_snaps[name], breadth_threshold=_sbth, min_days=_smd) for name in groups}
-            sec_bt = sector_analysis.backtest_sector_flow(sec_snaps, breadth_threshold=_sbth, min_days=_smd) if groups else None
-
-            macro = get_upcoming_macro_events(days=30, start_days_ago=0)
-            result = synthesize_cross_model(
-                etf_report=etf_report, etf_backtest=etf_bt,
-                options_verdict_report=opt_verdicts, options_backtest=opt_bt,
-                sector_flows=sec_flows, sector_backtest=sec_bt,
-                upcoming_macro=macro, today=taiwan_now().date(),
-                etf_min_etfs_evaluated=_eme,
-            )
-            color = {"偏多": "green", "強烈偏多": "green", "偏空": "red",
-                     "強烈偏空": "red"}.get(result["overall_direction"], "yellow")
-            body = "\n".join(result["summary_lines"])
-            rec = result.get("recommendation")
-            if rec is not None:
-                self._recs_by_id = {"xm": rec}
-                body += "\n[@click=screen.show_formula('xm')]🔍 查看公式細節 ›[/]"
-            else:
-                self._recs_by_id = {}
-            try:
-                w.styles.border = ("round", color)
-            except Exception:
-                pass
-            w.update(body)
-        except Exception as exc:
-            self._recs_by_id = {}
-            w.update(f"[dim]跨模型總結計算中… ({type(exc).__name__})[/dim]")
-
-    def _build_etf_conclusions_panel(self) -> Panel:
+    def _build_etf_conclusions_panel(
+        self,
+        inputs: Optional[_DashboardAnalysisInputs] = None,
+    ) -> Panel:
         """bug#00061: 首頁「交易策略建議」卡片之一 —— 主動式ETF跨基金持股趨勢結論。
         100% 離線本機運算（讀取 etf_cache/history/*.jsonl 真實累積快照），無網路請求；
         與「主動式ETF排行」頁面的進階分析畫面共用同一份 generate_etf_conclusions()
@@ -3552,101 +4371,143 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         """
         from rich.panel import Panel
 
-        # 投資建議一律以美股為主（bug#00091）：ETF 趨勢共識只納入美股主動式 ETF。
-        # bug#00095 接線：套用使用者已確認的校準參數（consensus_threshold / min_etfs_evaluated）。
-        _ap = _active_params(self._user).get('etf', {})
+        if not etf_watchlist_is_configured(self._user):
+            return Panel(
+                "[dim]尚未設定觀察清單。按 [bold]6[/bold] 加入你在乎的美股標的，"
+                "之後只顯示這些股票的大型 ETF 買賣與時間。[/dim]",
+                title="📊 ETF趨勢結論", border_style="cyan",
+            )
+        _ap = (
+            inputs.active_params if inputs is not None else _active_params(self._user)
+        ).get('etf', {})
         _ct = _ap.get('consensus_threshold', 0.5)
-        _me = _ap.get('min_etfs_evaluated', 4)
-        all_symbols = US_ACTIVE_TICKERS
-        snapshots_by_etf = {sym: load_etf_daily_snapshots(sym) for sym in all_symbols}
-        report = compute_symbol_trends(snapshots_by_etf, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS, consensus_threshold=_ct)
-        # bug#00092: 與結論卡共用同一套 walk-forward 回測，命中率就地顯示於每則多數性結論。
-        _bt = backtest_etf_consensus(snapshots_by_etf, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS, consensus_threshold=_ct, min_etfs_evaluated=_me)
-        bullets = generate_etf_conclusions(report, top_n=2, positions=self._positions, backtest=_bt, min_etfs_evaluated=_me)
-
-        # bug#00114：此卡片改為「截取」ActiveETFsScreen 下方 detail 分析框的結論——最上面
-        # 一行是每日主動選股多空傾向（etf_stance_phrase，與分析框共用同一 tilt 輸出），
-        # 下面接跨ETF共識 top-N，導引改指向「按 6 → 下方分析框」看完整依據與每日多空。
-        tilt = compute_etf_selection_tilt(report)
-        stance_line = etf_stance_phrase(tilt)
-
-        if not bullets:
+        if inputs is not None:
+            snapshots_by_etf = inputs.etf_snapshots
+        else:
+            all_symbols = active_etf_symbols()
+            snapshots_by_etf = {
+                sym: load_etf_daily_snapshots(sym) for sym in all_symbols
+            }
+        report = compute_symbol_trends(
+            snapshots_by_etf,
+            window_days=ADVANCED_ANALYSIS_WINDOW_DAYS,
+            consensus_threshold=_ct,
+        )
+        watchlist = load_etf_watchlist(self._user)
+        rows = [
+            row for row in watchlist_etf_activity(report, watchlist)
+            if row.get("has_trade")
+        ][:3]
+        if not rows:
             body = (
-                f"{stance_line}\n\n"
-                f"[dim]資料收集中：{report['etfs_ready_count']}/{report['etfs_total_count']} "
-                f"檔 ETF 已有足夠真實快照\n尚無法產生趨勢結論，持續使用系統會逐日累積資料\n"
-                f"按 [bold]6[/bold] 進入「主動式ETF排行」，下方分析框有完整依據[/dim]"
+                f"[dim]觀察清單 {('、'.join(watchlist) if watchlist else '（空）')}："
+                "本視窗尚無確認的主動式 ETF 增減持。\n"
+                f"按 [bold]6[/bold] 看期間與資料新鮮度，[bold]w[/bold] 編輯清單[/dim]"
             )
         else:
+            lines = []
+            for row in rows:
+                first, last = row.get("first_date"), row.get("last_date")
+                period = f"{first}～{last}" if first and last else (first or last or "—")
+                verb = "買入" if row.get("consensus") == "up" else (
+                    "賣出" if row.get("consensus") == "down" else "有買賣"
+                )
+                lines.append(f"{row['symbol']}　主動式 ETF {verb}（{period}）")
             body = (
-                f"{stance_line}\n\n"
-                + "\n".join(bullets)
-                + "\n\n[dim]按 [bold]6[/bold] 進入「主動式ETF排行」，下方分析框有完整依據與每日多空[/dim]"
+                "\n".join(lines)
+                + "\n\n[dim]只顯示觀察清單標的。按 [bold]6[/bold] 看完整期間與依據[/dim]"
             )
 
         return Panel(body, title="📊 ETF趨勢結論", border_style="cyan")
 
-    def _build_options_flow_panel(self) -> Panel:
-        """bug#00061 / bug#00067 / bug#00099: 首頁「交易策略建議」卡片之二 —— 期權觀察結論。
-        100% 離線本機運算，與「期權觀察清單」頁面共用 generate_grouped_analysis_card()，
-        但卡片以 summary_only=True 只顯示「每檔一行總結」（方向＋該檔獨立 walk-forward
-        回測命中率），完整明細（依據/合約事件/IV 位階…）留到頁面呈現，避免首頁被佔滿；
-        卡片只列有方向者（頁面另含觀望）。觀察標的與頁面一致採「持倉 ∪ 自訂清單」。
-        無風險利率取非阻塞的 cached_risk_free_rate()（由背景 worker 以 ^IRX 暖快取）。
-        資料不足時誠實顯示收集進度。
-        """
+    def _build_options_flow_panel(
+        self,
+        inputs: Optional[_DashboardAnalysisInputs] = None,
+    ) -> Panel:
+        """首頁期權卡：只描述已觀察到的市場樣態，不輸出多空投資建議。"""
         from rich.panel import Panel
 
-        underlyings, _, _ = _watchlist_underlyings(self._user, self._positions)
+        underlyings = (
+            inputs.options_underlyings
+            if inputs is not None
+            else _watchlist_underlyings(self._user, self._positions)[0]
+        )
         if not underlyings:
             return Panel(
                 "[dim]尚無持倉或自訂標的，無法建立期權觀察清單[/dim]",
-                title="🎯 期權觀察結論", border_style="magenta",
+                title="🎯 期權觀察", border_style="magenta",
             )
 
-        snapshots_by_underlying = {u: load_options_daily_snapshots(u) for u in underlyings}
-        flow_report = compute_options_flow(snapshots_by_underlying, window_days=OPTIONS_FLOW_WINDOW_DAYS)
-        div_report = compute_iv_divergence(
-            snapshots_by_underlying, r=self._rf_rate, window_days=OPTIONS_FLOW_WINDOW_DAYS
+        snapshots_by_underlying = (
+            inputs.options_snapshots
+            if inputs is not None
+            else {u: load_options_daily_snapshots(u) for u in underlyings}
         )
-        iv_pct = {u: compute_iv_percentile(snapshots_by_underlying[u]) for u in underlyings}
-        # 綜合方向結論（skew＋殘差）。回測改為逐標的獨立進行（見
-        # generate_grouped_analysis_card），backtest_verdicts 對每檔各跑一次、
-        # 有資料簽章快取，60 秒重繪週期直接取快取，不重算。
-        verdict_report = compute_directional_verdicts(
-            snapshots_by_underlying, r=self._rf_rate, window_days=OPTIONS_FLOW_WINDOW_DAYS
+        observed = compute_observed_regime(snapshots_by_underlying)
+        regime_label = {
+            "down": "[bold red]下跌階段[/bold red]",
+            "up": "[bold green]上漲階段[/bold green]",
+            "mixed": "[bold yellow]震盪／分化[/bold yellow]",
+        }.get(observed["state"], "[dim]資料累積中[/dim]")
+        median_ret = observed.get("median_return")
+        ret_text = f"{median_ret * 100:+.1f}%" if median_ret is not None else "—"
+        iv_text = {
+            "rising": "IV 上升",
+            "falling": "IV 下降",
+            "stable": "IV 持平",
+            "unknown": "IV 樣本不足",
+        }[observed["iv_state"]]
+        ready = observed.get("ready_count") or 0
+        total = len(underlyings)
+        expensive = cheap = fair = unknown = 0
+        for snaps in snapshots_by_underlying.values():
+            report = richness_from_history(snaps or [])
+            if not report.get("ready"):
+                unknown += 1
+            elif report["richness"] == "expensive":
+                expensive += 1
+            elif report["richness"] == "cheap":
+                cheap += 1
+            else:
+                fair += 1
+        body = (
+            f"目前市場樣態（已觀察，非預測）：{regime_label}｜"
+            f"{observed['down_count']}/{ready} 檔下跌，"
+            f"中位報酬 {ret_text}，{iv_text}\n\n"
+            f"ATM 權利金相對近20日已實現波動："
+            f"[red]{expensive} 檔偏貴[/red]／[cyan]{cheap} 檔偏便宜[/cyan]／"
+            f"{fair} 檔合理"
+            + (f"／{unknown} 檔樣本不足" if unknown else "")
+            + "\n\n"
+            f"[dim]這是選擇權貴賤，不是股價漲跌預測。"
+            f"按 [bold]7[/bold] 查看各檔 IV、RV、Call/Put 溢價與持倉淨 Greeks。[/dim]"
         )
-        # bug#00099 / bug#00100: 首頁卡片只顯示「每檔一行總結」（方向＋該檔獨立回測
-        # 命中率），完整明細（依據/事件/IV…）留給「期權觀察清單」頁，避免卡片被佔滿。
-        bullets = generate_grouped_analysis_card(
-            verdict_report, flow_report, div_report, snapshots_by_underlying,
-            r=self._rf_rate, window_days=OPTIONS_FLOW_WINDOW_DAYS,
-            positions=self._positions, iv_pct_by_underlying=iv_pct,
-            include_neutral=False, summary_only=True,
-        )
-
-        if not bullets:
+        if ready == 0:
             body = (
-                f"[dim]資料收集中：{div_report['ready_count']}/{div_report['total_count']} "
-                f"檔標的已有 ≥2 天真實快照\n尚無法產生訊號，持續使用系統會逐日累積資料\n"
+                f"[dim]資料收集中：{ready}/{total} 檔標的已有足夠快照\n"
                 f"按 [bold]7[/bold] 查看期權觀察清單[/dim]"
             )
-        else:
-            body = "\n".join(bullets) + "\n\n[dim]按 [bold]7[/bold] 查看完整清單[/dim]"
+        return Panel(body, title="🎯 期權觀察", border_style="cyan")
 
-        return Panel(body, title="🎯 期權觀察結論", border_style="cyan")
-
-    def _build_sector_consensus_panel(self) -> Panel:
-        """item#4 / bug#00078 擴充：首頁「交易策略建議」第三張卡片 —— 類股板塊共識。
-        每日累計追蹤各板塊是否「普遍」上漲/下跌，抓出市場對特定類股族群的共同買進上
-        漲/共同賣出下跌。100% 離線本機運算（讀取 sector_cache/history/*.jsonl 真實累
-        積快照），與「類股板塊分析」頁面共用同一份 generate_sector_conclusions() 輸
-        出，兩處文字保證一致。資料不足時誠實顯示收集進度，不生成假結論。"""
+    def _build_sector_consensus_panel(
+        self,
+        inputs: Optional[_DashboardAnalysisInputs] = None,
+    ) -> Panel:
+        """首頁「交易策略建議」第三張卡片：類股未來 10 個交易日方向預測。
+        與「類股板塊分析」頁面共用 generate_sector_recommendations()／
+        generate_sector_conclusions()，兩處結論文字一致。"""
         from rich.panel import Panel
-        from .storage import load_sector_groups, load_sector_daily_snapshots
+        from .storage import (
+            load_sector_groups, load_sector_daily_snapshots,
+            load_sector_predictive_model,
+        )
         from . import sector_analysis
 
-        groups = load_sector_groups(self._user)
+        groups = (
+            inputs.sector_groups
+            if inputs is not None
+            else load_sector_groups(self._user)
+        )
         if not groups:
             return Panel(
                 "[dim]尚無任何板塊，按 [bold]8[/bold] 進入類股板塊分析新增[/dim]",
@@ -3654,62 +4515,249 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             )
 
         # bug#00095 接線：套用已確認的校準參數（breadth_threshold / min_days）。
-        _sap = _active_params(self._user).get('sector', {})
+        _sap = (
+            inputs.active_params if inputs is not None else _active_params(self._user)
+        ).get('sector', {})
         _bth = _sap.get('breadth_threshold', 0.5)
         _md = _sap.get('min_days', 3)
-        snapshots_by_group = {name: load_sector_daily_snapshots(name) for name in groups}
+        if inputs is not None:
+            snapshots_by_group = inputs.sector_snapshots
+        else:
+            snapshots_by_group = {
+                name: load_sector_daily_snapshots(name) for name in groups
+            }
         flows = {
-            name: sector_analysis.detect_broad_flow(snapshots_by_group[name], breadth_threshold=_bth, min_days=_md)
+            name: sector_analysis.detect_broad_flow(
+                snapshots_by_group[name],
+                breadth_threshold=_bth,
+                min_days=_md,
+            )
             for name in groups
         }
-        # bug#00093: 與類股頁共用同一套 walk-forward 回測，命中率就地顯示於每則類股共識。
-        _sec_bt = sector_analysis.backtest_sector_flow(snapshots_by_group, breadth_threshold=_bth, min_days=_md)
-        bullets = sector_analysis.generate_sector_conclusions(flows, backtest=_sec_bt)
+        # bug#00093: 與結論卡共用同一套 walk-forward 回測，命中率就地顯示於每則類股共識。
+        _sec_bt = sector_analysis.backtest_sector_flow(
+            snapshots_by_group,
+            breadth_threshold=_bth,
+            min_days=_md,
+        )
+        _model = load_sector_predictive_model(self._user, groups) or {}
+        confirmations = (
+            (_model.get("sector_confirmation") or {}).get("groups") or {}
+        )
+        bullets = sector_analysis.generate_sector_conclusions(
+            flows, confirmations=confirmations, backtest=_sec_bt
+        )
 
         if not bullets:
             ready = sum(1 for f in flows.values() if f.get("ready"))
             body = (
                 f"[dim]資料收集中：{ready}/{len(groups)} 個板塊已有足夠真實快照\n"
-                f"尚無「普遍」共識訊號，持續使用系統會逐日累積廣度資料\n"
+                f"尚無未來 10 個交易日的上漲或下跌預測\n"
+                f"上漲：2-of-3 多方且零偏空；下跌：breadth 偏空且 SMA5 < SMA20\n"
                 f"按 [bold]8[/bold] 查看類股板塊分析[/dim]"
             )
         else:
-            body = "\n".join(bullets) + "\n\n[dim]按 [bold]8[/bold] 查看完整分析[/dim]"
+            body = "\n".join(bullets)
+            body += "\n\n[dim]按 [bold]8[/bold] 查看完整分析[/dim]"
 
-        return Panel(body, title="📊 類股共識", border_style="cyan")
+        return Panel(body, title="📊 類股預測（未來 10 個交易日）", border_style="cyan")
 
     # ── Action handlers ───────────────────────────────────────────────────────
+
+    def action_deposit(self) -> None:
+        self._open_cash_flow("deposit")
+
+    def action_withdrawal(self) -> None:
+        self._open_cash_flow("withdrawal")
+
+    def _open_cash_flow(self, direction: str) -> None:
+        if not _tracking_state(self._user).enabled:
+            self.app.notify(
+                "績效追蹤尚未啟用；按 9 進入比較頁啟用。",
+                severity="warning",
+            )
+            return
+        self.app.push_screen(
+            CashFlowModal(direction),
+            self._handle_cash_flow_result,
+        )
+
+    def _handle_cash_flow_result(self, result: Optional[dict]) -> None:
+        if result:
+            self.app.notify("正在記錄出入金並同步 QQQ／VT…")
+            self._save_declared_cash_flow(result)
+
+    @work(thread=True)
+    def _save_declared_cash_flow(self, declaration: dict) -> None:
+        positions, cash_positions = load_manual_positions(self._user)
+        try:
+            positions, cash_positions = _process_declared_cash_flow(
+                user=self._user,
+                positions=positions,
+                cash_positions=cash_positions,
+                rate=self._rate,
+                declaration=declaration,
+            )
+        except Exception as exc:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"出入金記錄失敗：{exc}",
+                severity="error",
+            )
+            return
+        self._positions = positions
+        self._cash_positions = cash_positions
+        label = "入金" if declaration["direction"] == "deposit" else "出金"
+        self.app.call_from_thread(
+            self.app.notify,
+            f"✅ {label}已記錄，benchmark 資金流已同步。",
+        )
+        self.app.call_from_thread(self._render_all)
 
     def action_add_position(self) -> None:
         """[1] 直接開啟批次新增部位對話框（編輯/刪除改由表格 e / x / space 直接操作）。"""
         self.app.push_screen(AddPositionModal(), self._handle_add_position_result)
 
-    def _handle_edit_position_result(self, old_pos: Position, result: Optional[list[Position]]) -> None:
+    def _handle_edit_position_result(
+        self,
+        old_pos: Holding,
+        result: Optional[list[Holding]],
+    ) -> None:
         if result:
             updated_pos = result[0]
+            if _tracking_state(self._user).enabled:
+                if isinstance(old_pos, CashPosition):
+                    self.app.notify(
+                        "追蹤期間不能直接修改現金；請用 i／o 宣告出入金。",
+                        severity="warning",
+                    )
+                    return
+                if isinstance(updated_pos, Position):
+                    economic_fields = (
+                        "broker",
+                        "account",
+                        "symbol",
+                        "instrument_type",
+                        "quantity",
+                        "avg_cost",
+                        "currency",
+                        "market",
+                    )
+                    if any(
+                        getattr(old_pos, field) != getattr(updated_pos, field)
+                        for field in economic_fields
+                    ):
+                        self.app.notify(
+                            "追蹤期間不能直接改寫部位；加碼請按 1，出售請按 x。",
+                            severity="warning",
+                        )
+                        return
             positions, cash_positions = load_manual_positions(self._user)
-            for idx, p in enumerate(positions):
-                if _pos_key(p) == _pos_key(old_pos):
-                    positions[idx] = updated_pos
-                    break
+            if isinstance(old_pos, CashPosition) and isinstance(
+                updated_pos, CashPosition
+            ):
+                for idx, cash in enumerate(cash_positions):
+                    if _cash_key(cash) == _cash_key(old_pos):
+                        cash_positions[idx] = updated_pos
+                        break
+            elif isinstance(old_pos, Position) and isinstance(
+                updated_pos, Position
+            ):
+                for idx, p in enumerate(positions):
+                    if _pos_key(p) == _pos_key(old_pos):
+                        positions[idx] = updated_pos
+                        break
+            else:
+                return
             save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
             # 部位識別 key 可能已變更，移除舊標記避免殘留
-            self._marked.discard(_pos_key(old_pos))
+            self._marked.discard(_holding_key(old_pos))
             self.app.notify("✅ 修改持倉成功！")
             self._positions = positions
+            self._cash_positions = cash_positions
             self._do_refresh_worker()
 
-    def _handle_batch_delete_confirm(self, targets: list[Position], confirmed: bool | None) -> None:
+    def _handle_batch_delete_confirm(
+        self,
+        targets: list[Holding],
+        confirmed: bool | None,
+    ) -> None:
         if not confirmed:
             return
-        keys = {_pos_key(p) for p in targets}
+        if _tracking_state(self._user).enabled:
+            if any(isinstance(item, CashPosition) for item in targets):
+                self.app.notify(
+                    "追蹤期間不能刪除現金；請用 o 宣告出金。",
+                    severity="error",
+                )
+                return
+            positions, cash_positions = load_manual_positions(self._user)
+            tracker = PortfolioPerformanceTracker(
+                user=self._user,
+                data_dir=get_data_dir(),
+            )
+            try:
+                for target in targets:
+                    stored = next(
+                        (
+                            item
+                            for item in positions
+                            if _pos_key(item) == _pos_key(target)
+                        ),
+                        None,
+                    )
+                    if stored is None:
+                        continue
+                    if stored.market_price is None:
+                        stored.market_price = target.market_price
+                    positions, cash_positions = tracker.apply_position_sale(
+                        positions=positions,
+                        cash_positions=cash_positions,
+                        position=stored,
+                        quantity=abs(stored.quantity),
+                    )
+            except ValueError as exc:
+                self.app.notify(str(exc), severity="error")
+                return
+            save_manual_positions(
+                positions,
+                cash_positions=cash_positions,
+                user=self._user,
+            )
+            self._marked.clear()
+            self._positions = positions
+            self._cash_positions = cash_positions
+            self.app.notify(
+                f"✅ 已出售 {len(targets)} 筆部位，價值已轉入帳戶現金。"
+            )
+            self._do_refresh_worker()
+            return
+        keys = {_holding_key(p) for p in targets}
         positions, cash_positions = load_manual_positions(self._user)
-        new_positions = [p for p in positions if _pos_key(p) not in keys]
-        removed = len(positions) - len(new_positions)
-        save_manual_positions(new_positions, cash_positions=cash_positions, user=self._user)
+        new_positions = [
+            p for p in positions if _holding_key(p) not in keys
+        ]
+        new_cash_positions = [
+            cash for cash in cash_positions
+            if _holding_key(cash) not in keys
+        ]
+        removed = (
+            len(positions) + len(cash_positions)
+            - len(new_positions) - len(new_cash_positions)
+        )
+        save_manual_positions(
+            new_positions,
+            cash_positions=new_cash_positions,
+            user=self._user,
+        )
         self._marked -= keys
         self.app.notify(f"🗑️ 已刪除 {removed} 筆部位！")
         self._positions = new_positions
+        self._cash_positions = new_cash_positions
+        drop_quote_overlay_keys(
+            self._user,
+            [key for key in keys if len(key) == 4],
+        )
         self._do_refresh_worker()
 
     @staticmethod
@@ -3741,19 +4789,64 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                 return
         positions.append(pos)
 
-    def _handle_add_position_result(self, result: Optional[list[Position]]) -> None:
+    def _handle_add_position_result(self, result: Optional[list[Holding]]) -> None:
         if result:
             positions, cash_positions = load_manual_positions(self._user)
-            for pos in result:
-                self._merge_position(positions, pos)
+            if _tracking_state(self._user).enabled:
+                if any(isinstance(item, CashPosition) for item in result):
+                    self.app.notify(
+                        "追蹤期間不能直接新增現金；請用 i 宣告入金。",
+                        severity="error",
+                    )
+                    return
+                tracker = PortfolioPerformanceTracker(
+                    user=self._user,
+                    data_dir=get_data_dir(),
+                )
+                try:
+                    for holding in result:
+                        positions, cash_positions = tracker.apply_position_purchase(
+                            positions=positions,
+                            cash_positions=cash_positions,
+                            purchase=holding,
+                        )
+                except ValueError as exc:
+                    self.app.notify(str(exc), severity="error")
+                    return
+                save_manual_positions(
+                    positions,
+                    cash_positions=cash_positions,
+                    user=self._user,
+                )
+                n = len(result)
+                self.app.notify(
+                    f"✅ 已買進 {n} 筆部位並扣除帳戶現金！"
+                    if n > 1
+                    else "✅ 已買進部位並扣除帳戶現金！"
+                )
+                self._positions = positions
+                self._cash_positions = cash_positions
+                self._do_refresh_worker()
+                return
+            for holding in result:
+                if isinstance(holding, CashPosition):
+                    merge_cash_position(cash_positions, holding)
+                else:
+                    self._merge_position(positions, holding)
             save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
             n = len(result)
             self.app.notify(f"✅ 已儲存 {n} 筆持倉！" if n > 1 else "✅ 新增持倉成功！")
             self._positions = positions
+            self._cash_positions = cash_positions
+            _drop_overlay_for_positions(
+                self._user,
+                [item for item in result if isinstance(item, Position)],
+            )
             self._do_refresh_worker()
 
     def action_refresh_now(self) -> None:
         """[2] 立即重整：背景更新報價。"""
+        self._analysis_signature = None
         self._do_refresh_worker()
 
     def action_logout(self) -> None:
@@ -3762,6 +4855,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
 
     def _handle_logout_confirm(self, confirmed: bool | None) -> None:
         if confirmed:
+            lock_vault()
             self.dismiss(True)
 
     def action_save_snapshot(self) -> None:
@@ -3801,7 +4895,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         self.app.push_screen(UpcomingEventsScreen(self._user, self._positions, self._rate))
 
     def action_active_etfs(self) -> None:
-        """[6] 主動式 ETF 排行：推入 ActiveETFsScreen，不 suspend。"""
+        """[6] 主動式 ETF 動態：推入 ActiveETFsScreen（預設建議頁）。"""
         self.app.push_screen(ActiveETFsScreen(self._user, self._rate))
 
     def action_options_watchlist(self) -> None:
@@ -3812,9 +4906,518 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         """[8] 類股板塊分析：推入 SectorAnalysisScreen，不 suspend。"""
         self.app.push_screen(SectorAnalysisScreen(self._user))
 
-    def action_calibration(self) -> None:
-        """[k] 投資建議校準：檢視校準狀態與待確認提案（套用需在對話框確認）。"""
-        self.app.push_screen(CalibrationModal(self._user))
+    def action_performance_tracking(self) -> None:
+        """[9] 開啟使用者投資組合與 QQQ／VT 的績效比較。"""
+        self.app.push_screen(
+            PerformanceTrackingScreen(
+                self._user,
+                self._positions,
+                self._cash_positions,
+                self._rate,
+            )
+        )
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class CashFlowModal(ModalScreen[Optional[dict]]):
+    """Declare money entering or leaving the complete tracked portfolio."""
+
+    DEFAULT_CSS = """
+    CashFlowModal {
+        align: center middle;
+    }
+    #cash-flow-dialog {
+        width: 62;
+        height: auto;
+        max-height: 95%;
+        border: thick #58a6ff;
+        background: #161b22;
+        padding: 1 2;
+    }
+    #cash-flow-title {
+        color: #58a6ff;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    .cash-flow-row {
+        height: auto;
+        margin-bottom: 1;
+    }
+    .cash-flow-label {
+        width: 18;
+        color: #8b949e;
+    }
+    .cash-flow-field {
+        width: 38;
+    }
+    #cash-flow-error {
+        color: #ff7b72;
+        height: auto;
+    }
+    #cash-flow-buttons {
+        height: auto;
+        align: right middle;
+        margin-top: 1;
+    }
+    #cash-flow-buttons Button {
+        margin-left: 1;
+    }
+    """
+
+    def __init__(self, direction: str) -> None:
+        super().__init__()
+        if direction not in ("deposit", "withdrawal"):
+            raise ValueError("direction must be deposit or withdrawal")
+        self.direction = direction
+
+    def compose(self) -> ComposeResult:
+        is_deposit = self.direction == "deposit"
+        categories = (
+            [
+                ("薪資／收入", "salary"),
+                ("儲蓄轉入", "savings"),
+                ("資產出售", "asset_sale"),
+                ("贈與", "gift"),
+                ("其他", "other"),
+            ]
+            if is_deposit
+            else [
+                ("購屋", "home_purchase"),
+                ("購車", "vehicle_purchase"),
+                ("生活支出", "living_expense"),
+                ("稅款", "tax"),
+                ("轉出", "transfer_out"),
+                ("其他", "other"),
+            ]
+        )
+        with Vertical(id="cash-flow-dialog"):
+            yield Label(
+                "⬇️ 宣告入金" if is_deposit else "⬆️ 宣告出金",
+                id="cash-flow-title",
+            )
+            yield Label(
+                "此紀錄會同步調整 QQQ／VT 影子部位，不計入投資績效。",
+            )
+            with Horizontal(classes="cash-flow-row"):
+                yield Label("券商／帳戶 *", classes="cash-flow-label")
+                yield Select(
+                    [("manual", "manual"), ("FT", "FT"), ("IBKR", "IBKR")],
+                    value="manual",
+                    id="cash-flow-broker",
+                    classes="cash-flow-field",
+                )
+            with Horizontal(classes="cash-flow-row"):
+                yield Label("帳戶代號", classes="cash-flow-label")
+                yield Input(id="cash-flow-account", classes="cash-flow-field")
+            with Horizontal(classes="cash-flow-row"):
+                yield Label("金額 *", classes="cash-flow-label")
+                yield Input(
+                    placeholder="正數金額",
+                    id="cash-flow-amount",
+                    classes="cash-flow-field",
+                )
+            with Horizontal(classes="cash-flow-row"):
+                yield Label("幣別 *", classes="cash-flow-label")
+                yield Select(
+                    [("USD", "USD"), ("TWD", "TWD")],
+                    value="USD",
+                    id="cash-flow-currency",
+                    classes="cash-flow-field",
+                )
+            with Horizontal(classes="cash-flow-row"):
+                yield Label("用途／來源 *", classes="cash-flow-label")
+                yield Select(
+                    categories,
+                    value=categories[0][1],
+                    id="cash-flow-category",
+                    classes="cash-flow-field",
+                )
+            with Horizontal(classes="cash-flow-row"):
+                yield Label("管道 *", classes="cash-flow-label")
+                yield Select(
+                    [
+                        ("銀行轉帳", "bank_transfer"),
+                        ("券商轉帳", "broker_transfer"),
+                        ("現金", "cash"),
+                        ("其他", "other"),
+                    ],
+                    value="bank_transfer",
+                    id="cash-flow-channel",
+                    classes="cash-flow-field",
+                )
+            with Horizontal(classes="cash-flow-row"):
+                yield Label("備註", classes="cash-flow-label")
+                yield Input(id="cash-flow-notes", classes="cash-flow-field")
+            yield Label("", id="cash-flow-error")
+            with Horizontal(id="cash-flow-buttons"):
+                yield Button(
+                    "記錄入金" if is_deposit else "記錄出金",
+                    variant="primary",
+                    id="cash-flow-confirm",
+                )
+                yield Button("取消", id="cash-flow-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cash-flow-cancel":
+            self.dismiss(None)
+        elif event.button.id == "cash-flow-confirm":
+            self._submit()
+
+    def _submit(self) -> None:
+        try:
+            amount = float(self.query_one("#cash-flow-amount", Input).value)
+        except ValueError:
+            amount = 0
+        if amount <= 0:
+            self.query_one("#cash-flow-error", Label).update(
+                "金額必須是大於零的數字。"
+            )
+            return
+        broker = str(self.query_one("#cash-flow-broker", Select).value)
+        currency = str(self.query_one("#cash-flow-currency", Select).value)
+        category = str(self.query_one("#cash-flow-category", Select).value)
+        channel = str(self.query_one("#cash-flow-channel", Select).value)
+        account = self.query_one("#cash-flow-account", Input).value.strip()
+        notes = self.query_one("#cash-flow-notes", Input).value.strip()
+        self.dismiss(
+            {
+                "direction": self.direction,
+                "broker": broker,
+                "account": account or None,
+                "amount": amount,
+                "currency": currency,
+                "category": category,
+                "channel": channel,
+                "notes": notes or None,
+            }
+        )
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class PerformanceTrackingCancelConfirmModal(ModalScreen[bool]):
+    """Confirm that the current performance-tracking interval should stop."""
+
+    DEFAULT_CSS = """
+    PerformanceTrackingCancelConfirmModal {
+        align: center middle;
+    }
+    #performance-cancel-dialog {
+        width: 64;
+        height: auto;
+        border: thick $warning;
+        background: $panel;
+        padding: 1 2;
+    }
+    #performance-cancel-title {
+        text-style: bold;
+        color: $warning;
+        margin-bottom: 1;
+    }
+    #performance-cancel-message {
+        height: auto;
+        margin-bottom: 1;
+    }
+    #performance-cancel-buttons {
+        height: auto;
+        align: right middle;
+    }
+    #performance-cancel-buttons Button {
+        margin-left: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="performance-cancel-dialog"):
+            yield Label(
+                "⚠️ 取消績效追蹤",
+                id="performance-cancel-title",
+            )
+            yield Label(
+                "取消後會停止建立績效快照，並解除持股與現金的追蹤期間限制。\n\n"
+                "既有估值及出入金紀錄會完整保留；日後重新啟用時，"
+                "系統會建立新的追蹤區間並標示追蹤斷層。",
+                id="performance-cancel-message",
+            )
+            with Horizontal(id="performance-cancel-buttons"):
+                yield Button(
+                    "確認取消追蹤",
+                    variant="warning",
+                    id="performance-cancel-confirm",
+                )
+                yield Button(
+                    "繼續追蹤",
+                    variant="primary",
+                    id="performance-cancel-back",
+                )
+
+    def on_mount(self) -> None:
+        self.query_one("#performance-cancel-back").focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "performance-cancel-confirm")
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(False)
+        elif event.key in ("left", "right"):
+            confirm_btn = self.query_one("#performance-cancel-confirm")
+            back_btn = self.query_one("#performance-cancel-back")
+            if self.focused == confirm_btn:
+                back_btn.focus()
+            else:
+                confirm_btn.focus()
+
+
+class PerformanceTrackingScreen(Screen):
+    """Cash-flow-adjusted comparison of the full portfolio with QQQ and VT."""
+
+    BINDINGS = [
+        Binding("t", "enable_tracking", "啟用追蹤"),
+        Binding("d", "disable_tracking", "取消追蹤"),
+        Binding("i", "deposit", "入金"),
+        Binding("o", "withdrawal", "出金"),
+        Binding("r", "refresh_report", "更新比較"),
+        Binding("escape", "go_back", "返回看板"),
+        Binding("q", "go_back", "返回看板", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    PerformanceTrackingScreen {
+        background: #0d1117;
+        layout: vertical;
+    }
+    #performance-copy {
+        height: auto;
+        margin: 1 2;
+        padding: 1 2;
+        border: round #58a6ff;
+        color: #f0f6fc;
+    }
+    #performance-status {
+        height: auto;
+        margin: 0 2 1 2;
+        color: #8b949e;
+    }
+    #performance-table {
+        height: 1fr;
+        margin: 0 2;
+        border: solid #21262d;
+    }
+    """
+
+    def __init__(
+        self,
+        user: str,
+        positions: list[Position],
+        cash_positions: list[CashPosition],
+        rate: float,
+    ) -> None:
+        super().__init__()
+        self.user = user
+        self.positions = positions
+        self.cash_positions = cash_positions
+        self.rate = rate
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "[bold cyan]別只看帳面損益，確認每一塊資本是否真正跑贏市場。[/bold cyan]\n"
+            "[dim]績效追蹤會把完整持倉與現金，和同步出入金後的 QQQ／VT 影子部位比較。[/dim]",
+            id="performance-copy",
+        )
+        yield Static("", id="performance-status")
+        yield DataTable(id="performance-table")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#performance-table", DataTable)
+        table.add_columns(
+            "比較標的",
+            "目前等值",
+            "累積報酬",
+            "與使用者差額",
+            "使用者領先／落後",
+            "資料日",
+        )
+        self._render_report()
+
+    def _tracker(self, with_prices: bool = False) -> PortfolioPerformanceTracker:
+        return PortfolioPerformanceTracker(
+            user=self.user,
+            data_dir=get_data_dir(),
+            benchmark_prices=YFinanceBenchmarkPrices() if with_prices else None,
+        )
+
+    def _render_report(self) -> None:
+        tracker = self._tracker()
+        state = tracker.state()
+        status = self.query_one("#performance-status", Static)
+        table = self.query_one("#performance-table", DataTable)
+        table.clear(columns=False)
+        if not state.enabled:
+            if state.enabled_at is not None:
+                status.update(
+                    "[yellow]績效追蹤已取消；既有紀錄仍保留，持股與現金可直接管理。"
+                    "按 [bold]t[/bold] 可重新啟用，新的追蹤區間會標示追蹤斷層。[/yellow]"
+                )
+            else:
+                status.update(
+                    "[yellow]績效追蹤尚未啟用。按 [bold]t[/bold] 從目前完整資產建立基準；"
+                    "中途啟用會如實標示追蹤斷層。[/yellow]"
+                )
+            return
+        try:
+            report = tracker.report()
+        except ValueError:
+            gap = "｜含追蹤斷層" if state.has_tracking_gap else ""
+            status.update(
+                f"[green]追蹤已啟用{gap}[/green]｜尚未建立第一筆估值基準，"
+                "按 [bold]r[/bold] 更新比較。"
+            )
+            return
+
+        gap = "｜含追蹤斷層" if state.has_tracking_gap else ""
+        status.update(
+            f"[green]追蹤中{gap}[/green]｜起始 {report.baseline_at.date()}｜"
+            f"使用者現金流調整報酬 {report.portfolio_return_pct:+.2f}%"
+        )
+        table.add_row(
+            "使用者完整資產",
+            f"${report.portfolio_value_usd:,.2f}",
+            f"{report.portfolio_return_pct:+.2f}%",
+            "—",
+            "—",
+            report.current_at.date().isoformat(),
+        )
+        for comparison in report.comparisons:
+            color = "green" if comparison.performance_gap_pct >= 0 else "red"
+            verdict = (
+                "擊敗" if comparison.performance_gap_pct >= 0 else "落後"
+            )
+            table.add_row(
+                comparison.symbol,
+                f"${comparison.benchmark_value_usd:,.2f}",
+                f"{comparison.benchmark_return_pct:+.2f}%",
+                f"${comparison.value_gap_usd:+,.2f}",
+                f"[{color}]{verdict} {abs(comparison.performance_gap_pct):.2f}%"
+                f"[/{color}]",
+                comparison.market_date.isoformat(),
+            )
+
+    def action_enable_tracking(self) -> None:
+        tracker = self._tracker()
+        if tracker.state().enabled:
+            self.app.notify("績效追蹤已啟用。")
+            return
+        tracker.enable(new_account=False)
+        self.app.notify("已從現在開始追蹤；先前期間會標示為追蹤斷層。")
+        self._render_report()
+        self._record_current_valuation()
+
+    def action_disable_tracking(self) -> None:
+        if not self._tracker().state().enabled:
+            self.app.notify("績效追蹤目前未啟用。", severity="warning")
+            return
+        self.app.push_screen(
+            PerformanceTrackingCancelConfirmModal(),
+            self._handle_disable_tracking_confirm,
+        )
+
+    def _handle_disable_tracking_confirm(self, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
+        self._tracker().disable()
+        self.app.notify("績效追蹤已取消；持股與現金管理限制已解除。")
+        self._render_report()
+
+    def action_refresh_report(self) -> None:
+        self.app.notify("正在取得 QQQ／VT 收盤價並更新比較…")
+        self._record_current_valuation()
+
+    @work(thread=True)
+    def _record_current_valuation(self) -> None:
+        value = total_asset_value_usd(
+            self.positions,
+            self.cash_positions,
+            self.rate,
+        )
+        if value is None or value <= 0:
+            self.app.call_from_thread(
+                self.app.notify,
+                "完整資產尚未都有有效報價，無法建立績效快照。",
+                severity="warning",
+            )
+            return
+        try:
+            self._tracker(with_prices=True).record_valuation(
+                total_value_usd=value,
+            )
+        except Exception as exc:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"更新績效失敗：{exc}",
+                severity="error",
+            )
+            return
+        self.app.call_from_thread(self._render_report)
+
+    def action_deposit(self) -> None:
+        self._open_cash_flow("deposit")
+
+    def action_withdrawal(self) -> None:
+        self._open_cash_flow("withdrawal")
+
+    def _open_cash_flow(self, direction: str) -> None:
+        if not self._tracker().state().enabled:
+            self.app.notify(
+                "請先按 t 啟用績效追蹤。",
+                severity="warning",
+            )
+            return
+        self.app.push_screen(
+            CashFlowModal(direction),
+            self._handle_cash_flow_result,
+        )
+
+    def _handle_cash_flow_result(self, result: Optional[dict]) -> None:
+        if result:
+            self.app.notify("正在記錄出入金並同步 QQQ／VT…")
+            self._save_declared_cash_flow(result)
+
+    @work(thread=True)
+    def _save_declared_cash_flow(self, declaration: dict) -> None:
+        positions, cash_positions = load_manual_positions(self.user)
+        try:
+            positions, cash_positions = _process_declared_cash_flow(
+                user=self.user,
+                positions=positions,
+                cash_positions=cash_positions,
+                rate=self.rate,
+                declaration=declaration,
+            )
+        except Exception as exc:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"出入金記錄失敗：{exc}",
+                severity="error",
+            )
+            return
+        self.positions = positions
+        self.cash_positions = cash_positions
+        self.app.call_from_thread(
+            self.app.notify,
+            "✅ 出入金已記錄，benchmark 資金流已同步。",
+        )
+        self.app.call_from_thread(self._render_report)
+
+    def action_go_back(self) -> None:
+        self.dismiss()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3822,34 +5425,9 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
 # ─────────────────────────────────────────────────────────────────────────────
 # Active ETFs Screen
 # ─────────────────────────────────────────────────────────────────────────────
-# Ticker universe — single source of truth.
-# All AUM, performance, and holdings come from live yfinance calls (cached daily
-# per-ETF in data/etf_cache/). Symbols that yfinance has no data for simply show
-# "—" / "暫無資料" in the UI — nothing here is backfilled with fabricated data.
-
-US_ACTIVE_TICKERS: list[str] = [
-    # Top 20 largest actively managed ETFs by AUM
-    "DFAC", "JEPI", "JEPQ", "JPST", "DFUS", "DFIV", "DFAI", "DFUV", "DFAS", "DFAT",
-    "DFIC", "JCPB", "DUHP", "DFAU", "JIRE", "AVUV", "JPIE", "JGRO", "CGDV", "ARKK",
-    "SEQUX",
-    # Other active ETFs under consideration (will be filtered by top 30 size)
-    "AVDV", "AVDE", "ARKW", "AVUS", "AVIV", "CGGR", "CGGO", "AVLV", "AVMV", "ARKG",
-    "ARKQ", "ARKF", "DFGR", "DFHV", "DFSV", "DFVX", "MSTY", "CONY", "TSLY", "NVDY",
-    "AMZY", "FBCG", "FMAG", "FDIG", "JGLO", "JUSA", "AVSC", "AVMC", "AVQC", "AVLC",
-    "AVSF", "CGMU", "CGSD", "CGMS", "CGCP", "JEMA", "JGER", "JPMB", "JPIN", "DFIP",
-    "CGIC", "CVGD", "CVSM",
-]
-
-# bug#00091：投資建議一律以美股為主，台股主動式ETF排行已移除；此清單保留供未來
-# 參考，目前不再用於任何排行/抓取/投資建議路徑。
-TWD_ACTIVE_TICKERS: list[str] = [
-    "0050.TW", "0056.TW", "00878.TW", "00919.TW", "00929.TW",
-    "00713.TW", "00940.TW", "00757.TW", "00850.TW", "00881.TW",
-    "00900.TW", "00905.TW", "00907.TW", "00915.TW", "00918.TW",
-    "00921.TW", "00922.TW", "00927.TW", "00930.TW", "00933.TW",
-]
-
-_ETF_TOP_N = 30  # ETFs shown per tab (AUM top-30)
+# The ETF universe is discovered daily from Yahoo's ETF screener and persisted
+# in data/active_etf_universe.json.  Membership requires AUM > USD 5B and an
+# explicit actively-managed description; no ticker membership is embedded here.
 
 # yfinance FundsData.asset_classes keys -> display label. Used to show a fund's
 # full stock/bond/cash/preferred/convertible/other split in the holdings panel,
@@ -3897,34 +5475,129 @@ def _fetch_and_cache_etf_symbols(stale_symbols: list[str]) -> dict:
         fetch_active_etf_performance, fetch_etf_holdings,
         fetch_prices_batch, estimate_shares,
     )
+    from .ark_holdings import fetch_official_daily_holdings, is_official_daily_source
 
     if not stale_symbols:
         return {"aums": {}, "perf": {}, "etf_cache": {}, "perf_fail_count": 0}
 
-    stale_perf = fetch_active_etf_performance(stale_symbols)
+    # A successful batch can still contain individual symbols with no price.
+    # Retry only those symbols so one transient Yahoo omission does not make an
+    # otherwise-valid cache look complete for the rest of the day.
+    max_attempts = 3
+    stale_perf: dict[str, dict] = {}
+    perf_pending = list(stale_symbols)
+    perf_attempts: dict[str, int] = {sym: 0 for sym in stale_symbols}
+    for attempt in range(1, max_attempts + 1):
+        if not perf_pending:
+            break
+        attempt_result = fetch_active_etf_performance(perf_pending)
+        next_pending: list[str] = []
+        for sym in perf_pending:
+            perf_attempts[sym] = attempt
+            item = attempt_result.get(sym) or {}
+            prior = stale_perf.get(sym) or {}
+            stale_perf[sym] = {
+                key: value if value is not None else prior.get(key)
+                for key, value in {
+                    **prior,
+                    **item,
+                }.items()
+            }
+            if stale_perf[sym].get("price") is None:
+                next_pending.append(sym)
+        perf_pending = next_pending
+        if perf_pending and attempt < max_attempts:
+            time.sleep(0.5 * attempt)
 
     aums: dict[str, float] = {}
     perf: dict[str, dict] = {}
     etf_cache: dict[str, dict] = {}
 
-    def _fetch_one_etf_details(sym: str) -> tuple[str, float | None, str | None, dict | None]:
+    def _fetch_one_etf_details(
+        sym: str,
+    ) -> tuple[str, float | None, str | None, dict | None, int, list[str]]:
         import time as _time
-        # Add a small delay between requests to prevent Yahoo rate limiting
-        _time.sleep(0.35)
-        try:
-            t = _yf.Ticker(sym)
-            aum_val = t.info.get("totalAssets") or t.info.get("marketCap")
-            aum = float(aum_val) if aum_val else None
-            name = t.info.get("longName") or t.info.get("shortName") or sym
-            holdings_res = fetch_etf_holdings(sym, aum=aum)
-            return sym, aum, name, holdings_res
-        except Exception:
+        aum: float | None = None
+        name: str | None = None
+        holdings_res: dict | None = None
+        problems: list[str] = []
+        for attempt in range(1, max_attempts + 1):
+            # Add a small delay between requests to prevent Yahoo rate limiting.
+            _time.sleep(0.35 if attempt == 1 else 0.5 * (attempt - 1))
             try:
-                holdings_res = fetch_etf_holdings(sym, aum=None)
-                name = holdings_res.get("name", sym) if holdings_res else sym
-                return sym, None, name, holdings_res
-            except Exception:
-                return sym, None, sym, None
+                info = _yf.Ticker(sym).info or {}
+                aum_val = info.get("totalAssets") or info.get("marketCap")
+                if aum_val:
+                    aum = float(aum_val)
+                name = (
+                    info.get("longName")
+                    or info.get("shortName")
+                    or name
+                    or sym
+                )
+            except Exception as exc:
+                problems.append(f"AUM attempt {attempt}: {type(exc).__name__}")
+
+            # bug#00123: prefer the publisher's own **daily** full-holdings file
+            # when one exists (currently ARK). Yahoo's top-10 feed refreshes on
+            # each fund's disclosure cadence and never discloses share counts,
+            # so it cannot produce a day-over-day trading signal at all. A
+            # failed official fetch returns None and we fall through to Yahoo —
+            # never to a fabricated portfolio.
+            try:
+                if is_official_daily_source(sym):
+                    official = fetch_official_daily_holdings(sym)
+                    if official:
+                        holdings_res = official
+                        if official.get("aum"):
+                            aum = official["aum"]
+            except Exception as exc:
+                problems.append(
+                    f"official holdings attempt {attempt}: {type(exc).__name__}"
+                )
+
+            try:
+                if not (holdings_res or {}).get("holdings"):
+                    candidate = fetch_etf_holdings(sym, aum=aum)
+                    if candidate:
+                        holdings_res = candidate
+                        name = candidate.get("name") or name or sym
+            except Exception as exc:
+                problems.append(
+                    f"holdings attempt {attempt}: {type(exc).__name__}"
+                )
+
+            has_portfolio = bool(
+                holdings_res
+                and (
+                    holdings_res.get("holdings")
+                    or holdings_res.get("asset_classes")
+                )
+            )
+            has_as_of = bool(
+                holdings_res and holdings_res.get("as_of_date")
+            )
+            missing = []
+            if aum is None:
+                missing.append("AUM")
+            if not has_portfolio:
+                missing.append("holdings")
+            if not has_as_of:
+                missing.append("as_of_date")
+            if not missing:
+                return sym, aum, name, holdings_res, attempt, problems
+            problems.append(
+                f"attempt {attempt} missing {', '.join(missing)}"
+            )
+
+        return (
+            sym,
+            aum,
+            name or sym,
+            holdings_res,
+            max_attempts,
+            problems,
+        )
 
     # Fetch in parallel with small concurrency to prevent rate limiting
     perf_fail_count = 0
@@ -3941,15 +5614,18 @@ def _fetch_and_cache_etf_symbols(stale_symbols: list[str]) -> dict:
     # instead of relying on weight% alone (which can't tell a real purchase
     # from a stock simply rallying in price with zero trading).
     holding_symbols: set[str] = set()
-    for _, _, _, holdings_res in fetched:
+    for _, _, _, holdings_res, _, _ in fetched:
         if holdings_res:
             for h in holdings_res.get("holdings", []):
                 if h.get("symbol"):
                     holding_symbols.add(h["symbol"])
     price_map = fetch_prices_batch(list(holding_symbols)) if holding_symbols else {}
 
-    for sym, aum, name, holdings_res in fetched:
+    for sym, aum, name, holdings_res, detail_attempts, detail_problems in fetched:
         cached = load_etf_symbol_cache(sym)
+        prior_holdings = list(cached.get("holdings") or [])
+        prior_asset_classes = dict(cached.get("asset_classes") or {})
+        prior_holdings_date = cached.get("holdings_as_of_date")
         cached["name"] = name or cached.get("name") or sym
         if aum is not None:
             cached["aum"] = aum
@@ -3962,7 +5638,7 @@ def _fetch_and_cache_etf_symbols(stale_symbols: list[str]) -> dict:
         if p_item.get("price") is None:
             perf_fail_count += 1
         for k in ("price", "change_pct", "return_ytd", "return_1y"):
-            if k in p_item:
+            if p_item.get(k) is not None:
                 cached[k] = p_item[k]
 
         p_constructed = {k: cached[k] for k in ("price", "change_pct", "return_ytd", "return_1y") if k in cached}
@@ -3970,21 +5646,89 @@ def _fetch_and_cache_etf_symbols(stale_symbols: list[str]) -> dict:
             perf[sym] = p_constructed
 
         # Update holdings + full stock/bond/cash/other asset-class breakdown
-        if holdings_res:
+        current_holdings_complete = bool(
+            holdings_res
+            and (
+                holdings_res.get("holdings")
+                or holdings_res.get("asset_classes")
+            )
+            and holdings_res.get("as_of_date")
+        )
+        if current_holdings_complete:
             holdings_list = holdings_res.get("holdings", [])
             for h in holdings_list:
-                real_price = price_map.get(h.get("symbol"))
-                h["price"] = real_price
-                h["shares"] = estimate_shares(h.get("symbol", ""), h.get("weight", 0.0), aum, real_price)
+                # bug#00123: only ever *fill in* estimates — never overwrite a
+                # real disclosed price/share count with an estimate, and never
+                # overwrite a good value with None when the batch quote fetch
+                # was throttled (that is how a whole day's snapshot ended up
+                # with 0/10 prices). Officially disclosed shares/values are the
+                # strongest input the trend engine has; they must survive here.
+                if h.get("price") is None:
+                    real_price = price_map.get(h.get("symbol"))
+                    if real_price is not None:
+                        h["price"] = real_price
+                if h.get("shares") is None:
+                    h["shares"] = estimate_shares(
+                        h.get("symbol", ""), h.get("weight", 0.0), aum, h.get("price"),
+                    )
+                if h.get("value") is None and h.get("shares") and h.get("price"):
+                    h["value"] = float(h["shares"]) * float(h["price"])
             cached["holdings"] = holdings_list
             cached["asset_classes"] = holdings_res.get("asset_classes", {})
+            cached["category"] = classify_holdings(
+                cached["asset_classes"], holdings_list)
             cached["holdings_as_of_date"] = holdings_res.get("as_of_date", "")
+            cached["source_type"] = "etf"
+            cached["data_status"] = "ok"
+            cached["status_message"] = "Yahoo 基金持股與資產配置"
 
             # 進階分析 (bug#00060): record today's *real* holdings as one
             # dated line in this symbol's history log. This is the only
             # source the trend/consensus report reads from — nothing here
             # is backfilled or estimated for days we didn't actually fetch.
-            append_etf_daily_snapshot(sym, cached["holdings"], cached.get("aum"), asset_classes=cached.get("asset_classes"))
+            append_etf_daily_snapshot(
+                sym,
+                cached["holdings"],
+                cached.get("aum"),
+                asset_classes=cached.get("asset_classes"),
+            )
+        else:
+            # Never replace a previously valid portfolio with an empty
+            # transient response. Mark it retryable so freshness checks cause
+            # the next background cycle to try again.
+            cached["holdings"] = prior_holdings
+            cached["asset_classes"] = prior_asset_classes
+            cached["holdings_as_of_date"] = prior_holdings_date
+            cached["source_type"] = "etf"
+            cached["data_status"] = "retryable"
+            cached["status_message"] = (
+                "Yahoo 持股更新不完整；保留前次有效資料，稍後自動重試"
+                if prior_holdings or prior_asset_classes
+                else "Yahoo 持股更新不完整；稍後自動重試"
+            )
+
+        missing_fields = []
+        if aum is None:
+            missing_fields.append("AUM")
+        if p_item.get("price") is None:
+            missing_fields.append("price")
+        if not current_holdings_complete:
+            missing_fields.append("holdings")
+        cached["fetch_attempts"] = {
+            "performance": perf_attempts.get(sym, 0),
+            "details": detail_attempts,
+        }
+        cached["last_fetch_error"] = (
+            "; ".join(detail_problems[-3:]) if detail_problems else None
+        )
+        cached["missing_fields"] = missing_fields
+        if missing_fields and cached.get("data_status") == "ok":
+            cached["data_status"] = "retryable"
+            cached["status_message"] = (
+                "Yahoo 更新不完整（"
+                + "、".join(missing_fields)
+                + "）；稍後自動重試"
+            )
 
         # Automated ETF trade history pipeline (bug#00101): derive & parse
         # trade history from daily snapshot diffs and official trade sources.
@@ -3999,22 +5743,238 @@ def _fetch_and_cache_etf_symbols(stale_symbols: list[str]) -> dict:
     return {"aums": aums, "perf": perf, "etf_cache": etf_cache, "perf_fail_count": perf_fail_count}
 
 
-class ActiveETFsScreen(_FormulaDrillMixin, Screen):
-    r"""主動式 ETF 績效與持股分析 - 三欄式版面。
+class EtfCacheClearModal(ModalScreen[bool]):
+    """清除 ETF 快取前的確認。"""
 
-    Layout::
-
-        ┌──────────────┬──────────────────────┐
-        │  左欄 50%    │    右欄 50% (上下分割) │
-        │  US / TW 分頁│    持股細節           │
-        │              │    歷史買賣紀錄        │
-        └──────────────┴──────────────────────┘
+    DEFAULT_CSS = """
+    EtfCacheClearModal { align: center middle; }
+    #etf-clear-dialog {
+        width: 56;
+        height: auto;
+        border: thick $warning;
+        background: $panel;
+        padding: 1 2;
+    }
+    #etf-clear-buttons { height: auto; align: center middle; margin-top: 1; }
+    #etf-clear-buttons Button { margin: 0 1; }
     """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="etf-clear-dialog"):
+            yield Static(
+                "[bold]確定清除本機 ETF 快取並重新抓取？[/bold]\n"
+                "[dim]會刪除 etf_cache 下的即時快取檔，歷史快照仍保留。[/dim]",
+            )
+            with Horizontal(id="etf-clear-buttons"):
+                yield Button("確認清除", variant="warning", id="confirm")
+                yield Button("取消", variant="default", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel").focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm")
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(False)
+        elif event.key in ("left", "right"):
+            confirm_btn = self.query_one("#confirm")
+            cancel_btn = self.query_one("#cancel")
+            if self.focused == confirm_btn:
+                cancel_btn.focus()
+            else:
+                confirm_btn.focus()
+
+
+class EtfWatchlistEditor(ModalScreen[Optional[list]]):
+    """第一次進入必須設定；之後按 w 可編輯。完成後才寫檔。"""
+
+    DEFAULT_CSS = """
+    EtfWatchlistEditor { align: center middle; }
+    #ew-dialog {
+        width: 64;
+        height: auto;
+        max-height: 28;
+        border: thick $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+    #ew-list { height: auto; max-height: 10; border: solid #30363d; margin: 1 0; }
+    #ew-input { margin: 0 0 1 0; border: solid #30363d; }
+    #ew-input:focus { border: solid $accent; }
+    #ew-error { color: #ff7b72; height: auto; }
+    #ew-buttons { height: auto; align: center middle; margin-top: 1; }
+    #ew-buttons Button { margin: 0 1; }
+    """
+
+    def __init__(
+        self,
+        current: list[str],
+        suggestions: list[str],
+        required: bool = False,
+    ) -> None:
+        super().__init__()
+        self.required = required
+        self.suggestions = [s for s in suggestions if s]
+        self._draft = list(dict.fromkeys(str(s).upper() for s in current if s))
+
+    def compose(self) -> ComposeResult:
+        title = "設定觀察清單（第一次使用必填）" if self.required else "編輯觀察清單"
+        with Vertical(id="ew-dialog"):
+            yield Static(f"[bold]{title}[/bold]")
+            yield Static(
+                "[dim]之後只顯示這些美股的大型 ETF 買賣與時間。台股代碼無法加入。[/dim]"
+            )
+            if self.suggestions:
+                yield Static(
+                    "[dim]可帶入持倉：[/dim] " + "、".join(self.suggestions)
+                )
+            yield OptionList(id="ew-list")
+            yield Input(placeholder="輸入代碼，可用逗號：NVDA, AAPL", id="ew-input")
+            yield Static("", id="ew-error")
+            with Horizontal(id="ew-buttons"):
+                yield Button("加入", variant="primary", id="add")
+                if self.suggestions:
+                    yield Button("帶入持倉", variant="default", id="seed")
+                yield Button("移除選取", variant="default", id="remove")
+                yield Button("完成", variant="success", id="done")
+                yield Button("取消", variant="default", id="cancel")
+
+    def on_mount(self) -> None:
+        self._refresh_list()
+        self.query_one("#ew-input", Input).focus()
+
+    def _refresh_list(self) -> None:
+        listing = self.query_one("#ew-list", OptionList)
+        listing.clear_options()
+        if self._draft:
+            listing.add_options([Option(symbol, id=symbol) for symbol in self._draft])
+        else:
+            listing.add_option(Option("（尚未加入任何標的）", id="__empty__"))
+
+    def _error(self, text: str) -> None:
+        self.query_one("#ew-error", Static).update(text)
+
+    def _add_tokens(self, raw: str) -> None:
+        added = 0
+        rejected: list[str] = []
+        for part in raw.replace("，", ",").split(","):
+            symbol = normalize_etf_watchlist_symbol(part)
+            if symbol is None:
+                token = part.strip()
+                if token:
+                    rejected.append(token.upper())
+                continue
+            if symbol not in self._draft:
+                self._draft.append(symbol)
+                added += 1
+        self._refresh_list()
+        if rejected:
+            self._error(f"未加入（非美股或格式不符）：{'、'.join(rejected)}")
+        elif added:
+            self._error("")
+        else:
+            self._error("沒有新的標的可加入")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "add":
+            field = self.query_one("#ew-input", Input)
+            self._add_tokens(field.value)
+            field.value = ""
+        elif event.button.id == "seed":
+            self._add_tokens(",".join(self.suggestions))
+        elif event.button.id == "remove":
+            listing = self.query_one("#ew-list", OptionList)
+            highlighted = listing.highlighted
+            if highlighted is None:
+                self._error("請先在清單中選一檔再移除")
+                return
+            option = listing.get_option_at_index(highlighted)
+            option_id = option.id if option is not None else None
+            if option_id and option_id != "__empty__" and option_id in self._draft:
+                self._draft.remove(option_id)
+                self._refresh_list()
+                self._error("")
+        elif event.button.id == "done":
+            if not self._draft:
+                self._error("至少加入一檔美股標的")
+                return
+            self.dismiss(list(self._draft))
+        else:
+            self.dismiss(None)
+
+    def on_input_submitted(self, _event) -> None:
+        field = self.query_one("#ew-input", Input)
+        self._add_tokens(field.value)
+        field.value = ""
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+_ETF_HELP_TEXT = """[bold cyan]主動式 ETF 動態 — 畫面說明[/bold cyan]
+
+這頁只盯你[bold]觀察清單[/bold]上的股票：哪些大型主動式 ETF 在買或賣、以及可比較的日期區間。未列入清單的持股不顯示。
+
+[bold yellow]── 建議頁（預設）──[/bold yellow]
+• 每一列是觀察清單裡的一檔股票，標出買入／賣出與期間。
+• 沒有確認增減持的標的會誠實寫「本視窗無確認增減持」，不會拿別檔股票來填版面。
+• 資料新鮮度：幾檔 ETF 在本視窗真的有新的持股狀態。Yahoo 前十大多為月頻；未更新不是「今日無交易」。
+
+[bold yellow]── 基金瀏覽／13F ──[/bold yellow]
+• 持股與歷史買賣只保留觀察清單上的股票，並保留日期。
+• 13F 是季末申報，滯後約一季，不是盤中成交。
+
+[bold yellow]── 快速鍵 ──[/bold yellow]
+[bold]w[/bold] 編輯觀察清單　[bold]j[/bold] 回到建議　[bold]a[/bold] 全市場研究表　[bold]h[/bold] 本說明　[bold]s[/bold] SEC 身分　[bold]c[/bold] 清除快取（需確認）　[bold]Esc[/bold] 返回
+
+[bold yellow]── 紀律──[/bold yellow]
+結論只讀本機真實快照，不回填、不臆測。買賣必須「真實股數變化」與「權重變化」同向。
+
+[dim]按 Esc 或 q 返回。[/dim]
+"""
+
+
+class EtfHelpScreen(Screen):
+    """主動式 ETF 動態說明。"""
+
+    BINDINGS = [
+        Binding("escape", "go_back", "返回"),
+        Binding("q",      "go_back", "返回", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    EtfHelpScreen { background: #0d1117; layout: vertical; }
+    #etf-help-body { height: 1fr; padding: 1 2; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with ScrollableContainer(id="etf-help-body"):
+            yield Static(_ETF_HELP_TEXT)
+        yield Footer()
+
+    def on_mount(self) -> None:
+        body = self.query_one("#etf-help-body")
+        body.can_focus = True
+        body.focus()
+
+    def action_go_back(self) -> None:
+        self.dismiss()
+
+
+class ActiveETFsScreen(_FormulaDrillMixin, Screen):
+    """主動式 ETF 動態：預設建議頁，基金瀏覽與 13F 為研究分頁。"""
 
     BINDINGS = [
         Binding("escape", "go_back", "返回看板"),
-        Binding("c",      "clear_cache", "清除快取並重新載入"),
-        Binding("a",      "advanced_analysis", "進階分析"),
+        Binding("j",      "show_advice", "建議"),
+        Binding("w",      "edit_watchlist", "觀察清單"),
+        Binding("a",      "advanced_analysis", "研究全表"),
+        Binding("h",      "show_help", "說明"),
+        Binding("c",      "clear_cache", "清除快取"),
+        Binding("s",      "sec_identity", "SEC身分"),
         Binding("q",      "go_back", "返回看板", show=False),
     ]
 
@@ -4028,85 +5988,74 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         padding: 0 1;
         margin: 1 2 0 2;
     }
-    #etf-body {
-        height: 3fr;
-        layout: horizontal;
-        margin: 1 2 0 2;
+    #etf-main-tabs {
+        height: 1fr;
+        margin: 0 2 1 2;
     }
-    /* Left column */
-    #etf-left-col {
+    #etf-advice-box {
+        height: 1fr;
+        border: tall #334155;
+        background: #0d1117;
+    }
+    #etf-advice-box:focus-within { border: tall $accent; }
+    #etf-analysis-content { height: auto; padding: 0 1; }
+
+    #etf-body, #etf-13f-body {
+        height: 1fr;
+        layout: horizontal;
+    }
+    #etf-left-col, #etf-13f-left-col {
         width: 50%;
         height: 1fr;
         layout: vertical;
         margin-right: 1;
     }
-    #etf-left-tabbed {
+    #etf-left-tabbed, #etf-13f-left-panel {
         height: 1fr;
         border: tall #334155;
     }
-    #etf-left-tabbed:focus-within { border: tall $accent; }
-    #etf-us-table {
+    #etf-left-tabbed:focus-within, #etf-13f-left-panel:focus-within { border: tall $accent; }
+    #etf-us-table, #etf-13f-table {
         height: 1fr;
         border: none;
     }
-    /* Right column (vertical split) */
-    #etf-right-col {
+    #etf-right-col, #etf-13f-right-col {
         width: 50%;
         height: 1fr;
         layout: vertical;
     }
-    #etf-holdings-box {
+    #etf-holdings-box, #etf-history-box,
+    #etf-13f-holdings-box, #etf-13f-history-box {
         height: 1fr;
         layout: vertical;
-        margin-bottom: 1;
     }
-    #etf-holdings-title {
+    #etf-holdings-box, #etf-13f-holdings-box { margin-bottom: 1; }
+    #etf-holdings-title, #etf-history-title,
+    #etf-13f-holdings-title, #etf-13f-history-title {
         height: 1;
         padding: 0 1;
         color: $accent;
         text-style: bold;
     }
-    #etf-holdings-status {
+    #etf-holdings-status, #etf-history-status,
+    #etf-13f-holdings-status, #etf-13f-history-status {
         height: 1;
         padding: 0 1;
     }
-    #etf-holdings-panel {
+    #etf-holdings-panel, #etf-history-panel,
+    #etf-13f-holdings-panel, #etf-13f-history-panel {
         height: 1fr;
         border: tall #334155;
     }
-    #etf-holdings-panel:focus-within { border: tall $accent; }
-    #etf-holdings-table { height: 1fr; border: none; }
-
-    #etf-history-box {
+    #etf-holdings-panel:focus-within, #etf-history-panel:focus-within,
+    #etf-13f-holdings-panel:focus-within, #etf-13f-history-panel:focus-within {
+        border: tall $accent;
+    }
+    #etf-holdings-table, #etf-history-table,
+    #etf-13f-holdings-table, #etf-13f-history-table {
         height: 1fr;
-        layout: vertical;
+        border: none;
     }
-    #etf-history-title {
-        height: 1;
-        padding: 0 1;
-        color: $accent;
-        text-style: bold;
-    }
-    #etf-history-status {
-        height: 1;
-        padding: 0 1;
-    }
-    #etf-history-panel {
-        height: 1fr;
-        border: tall #334155;
-    }
-    #etf-history-panel:focus-within { border: tall $accent; }
-    #etf-history-table { height: 1fr; border: none; }
-
-    /* bug#00115：下方全寬 detail 分析框（不分頁，內嵌於本頁）。 */
-    #etf-analysis-box {
-        height: 2fr;
-        margin: 1 2 1 2;
-        border: tall #334155;
-        background: #0d1117;
-    }
-    #etf-analysis-box:focus-within { border: tall $accent; }
-    #etf-analysis-content { height: auto; padding: 0 1; }
     """
 
     def __init__(self, user: str, rate: float) -> None:
@@ -4117,43 +6066,62 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         self.performance_data: dict = {}
         self.realtime_aums: dict[str, float] = {}
         self.us_symbols: list[str] = []
+        self.inst_symbols: list[str] = []
+        self.universe_records: dict[str, dict] = {}
         self.selected_symbol: str | None = None
-        # bug#00115：下方 detail 分析框的離線分析結果（背景 worker 算好後填入）。
+        self.selected_inst: str | None = None
         self._analysis_report: dict | None = None
         self._analysis_tilt: dict | None = None
         self._analysis_bt_consensus: dict | None = None
         self._analysis_bt_tilt: dict | None = None
         self._analysis_min_etfs: int = 4
         self._analysis_loaded: bool = False
+        self._held: set[str] = set()
+        self._tracked: set[str] = set()
+        self._positions: list = []
+        self._watchlist: list[str] = []
+        self._watchlist_required = False
 
     # ── Compose ──────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
         yield Static("", id="etf-header")
-        with Horizontal(id="etf-body"):
-            # Left half: ranking
-            with Vertical(id="etf-left-col"):
-                with TabbedContent(id="etf-left-tabbed"):
-                    # bug#00091：投資建議一律以美股為主，台股主動式ETF排行已移除。
-                    with TabPane("🇺🇸 美股主動型", id="tab-us-active"):
-                        yield DataTable(id="etf-us-table")
-            # Right half: split vertically
-            with Vertical(id="etf-right-col"):
-                # Top half: holdings
-                with Vertical(id="etf-holdings-box"):
-                    yield Static("當下持股細節", id="etf-holdings-title")
-                    yield Static("", id="etf-holdings-status")
-                    with Container(id="etf-holdings-panel"):
-                        yield DataTable(id="etf-holdings-table")
-                # Bottom half: history
-                with Vertical(id="etf-history-box"):
-                    yield Static("歷史買賣紀錄", id="etf-history-title")
-                    yield Static("", id="etf-history-status")
-                    with Container(id="etf-history-panel"):
-                        yield DataTable(id="etf-history-table")
-        # bug#00115：下方空白處內嵌 detail 分析框（全寬、不分頁、可捲動）。
-        with ScrollableContainer(id="etf-analysis-box"):
-            yield Static("", id="etf-analysis-content")
+        with TabbedContent(id="etf-main-tabs", initial="tab-etf-advice"):
+            with TabPane("建議", id="tab-etf-advice"):
+                with ScrollableContainer(id="etf-advice-box"):
+                    yield Static("", id="etf-analysis-content")
+            with TabPane("基金瀏覽", id="tab-etf-browse"):
+                with Horizontal(id="etf-body"):
+                    with Vertical(id="etf-left-col"):
+                        with Container(id="etf-left-tabbed"):
+                            yield DataTable(id="etf-us-table")
+                    with Vertical(id="etf-right-col"):
+                        with Vertical(id="etf-holdings-box"):
+                            yield Static("當下持股細節", id="etf-holdings-title")
+                            yield Static("", id="etf-holdings-status")
+                            with Container(id="etf-holdings-panel"):
+                                yield DataTable(id="etf-holdings-table")
+                        with Vertical(id="etf-history-box"):
+                            yield Static("歷史買賣紀錄", id="etf-history-title")
+                            yield Static("", id="etf-history-status")
+                            with Container(id="etf-history-panel"):
+                                yield DataTable(id="etf-history-table")
+            with TabPane("13F 機構", id="tab-etf-13f"):
+                with Horizontal(id="etf-13f-body"):
+                    with Vertical(id="etf-13f-left-col"):
+                        with Container(id="etf-13f-left-panel"):
+                            yield DataTable(id="etf-13f-table")
+                    with Vertical(id="etf-13f-right-col"):
+                        with Vertical(id="etf-13f-holdings-box"):
+                            yield Static("當下申報持股", id="etf-13f-holdings-title")
+                            yield Static("", id="etf-13f-holdings-status")
+                            with Container(id="etf-13f-holdings-panel"):
+                                yield DataTable(id="etf-13f-holdings-table")
+                        with Vertical(id="etf-13f-history-box"):
+                            yield Static("相鄰申報差分", id="etf-13f-history-title")
+                            yield Static("", id="etf-13f-history-status")
+                            with Container(id="etf-13f-history-panel"):
+                                yield DataTable(id="etf-13f-history-table")
         yield Footer()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -4167,7 +6135,7 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         # Setup tables
         us_t = self.query_one("#etf-us-table", DataTable)
         us_t.cursor_type = "row"
-        us_t.add_columns("Symbol", "AUM", "YTD", "1Y", "最大持股")
+        us_t.add_columns("標的／機構", "分類", "AUM／13F市值", "YTD", "1Y", "最大持股")
 
         h_t = self.query_one("#etf-holdings-table", DataTable)
         h_t.cursor_type = "row"
@@ -4175,27 +6143,58 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
 
         tr_t = self.query_one("#etf-history-table", DataTable)
         tr_t.cursor_type = "row"
-        tr_t.add_columns("日期", "操作", "Symbol", "股數", "價格", "權重△")
+        tr_t.add_columns("申報／日期區間", "操作", "精確部位", "股數", "金額△／價格", "權重△")
+
+        inst_t = self.query_one("#etf-13f-table", DataTable)
+        inst_t.cursor_type = "row"
+        inst_t.add_columns("標的／機構", "分類", "AUM／13F市值", "YTD", "1Y", "最大持股")
+
+        ih_t = self.query_one("#etf-13f-holdings-table", DataTable)
+        ih_t.cursor_type = "row"
+        ih_t.add_columns("Symbol", "名稱", "權重", "股數", "市值")
+
+        itr_t = self.query_one("#etf-13f-history-table", DataTable)
+        itr_t.cursor_type = "row"
+        itr_t.add_columns("申報／日期區間", "操作", "精確部位", "股數", "金額△／價格", "權重△")
+
+        self._held, self._tracked = user_priority_symbols(self.user)
+        try:
+            self._positions, _ = load_manual_positions(user=self.user)
+        except Exception:
+            self._positions = []
+        self._watchlist = load_etf_watchlist(self.user)
+        if not etf_watchlist_is_configured(self.user):
+            self._watchlist_required = True
+            self.call_after_refresh(self._open_watchlist_editor, True)
 
         self._set_header("⏳ 確認快取並載入資料...")
-        self._set_mid_status("[dim]← 選取左欄 ETF 以查看持股[/dim]")
-        self._set_right_status("[dim]← 選取左欄 ETF 以查看歷史[/dim]")
+        self._set_mid_status("[dim]← 選取左欄 ETF 以查看持股[/dim]", pane="etf")
+        self._set_right_status("[dim]← 選取左欄 ETF 以查看歷史[/dim]", pane="etf")
+        self._set_mid_status("[dim]← 選取左欄機構以查看申報持股[/dim]", pane="13f")
+        self._set_right_status("[dim]← 選取左欄機構以查看申報差分[/dim]", pane="13f")
         self.query_one("#etf-analysis-content", Static).update(
             "[dim]⏳ 主動式ETF趨勢分析計算中（離線讀取本機真實快照）…[/dim]"
         )
-        us_t.focus()
+        advice = self.query_one("#etf-advice-box")
+        advice.can_focus = True
+        advice.focus()
 
         # Run per-ETF cache retention cleanup in background (non-blocking).
         # Retention window is the single source of truth in storage
-        # (ANALYSIS_CACHE_RETENTION_DAYS = 365, bug#00090).
+        # (ANALYSIS_CACHE_RETENTION_DAYS = 730, decision D-04).
         cleanup_old_etf_caches()
 
         # Load whatever is already cached for immediate display
-        # bug#00091：僅美股主動式 ETF。
-        all_symbols = US_ACTIVE_TICKERS
+        # Dynamic AUM>5B active-ETF universe plus the four requested 13F filers.
+        etf_records = load_active_etf_universe()
+        institution_records = hedge_fund_records()
+        self.universe_records = {
+            item["id"]: item for item in etf_records + institution_records
+        }
+        all_symbols = [item["symbol"] for item in etf_records]
 
         # Trim each symbol's real daily-snapshot history log to the retention
-        # window (365 days, storage.ANALYSIS_CACHE_RETENTION_DAYS) — a full year
+        # window (two years, storage.ANALYSIS_CACHE_RETENTION_DAYS)
         # of real snapshots for the walk-forward backtest, still bounded.
         for sym in all_symbols:
             prune_etf_history(sym)
@@ -4204,7 +6203,7 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
             cached = load_etf_symbol_cache(sym)
             if cached:
                 self.etf_cache[sym] = cached
-                if "aum" in cached and cached["aum"] is not None:
+                if cached.get("aum") is not None:
                     self.realtime_aums[sym] = cached["aum"]
                 p = {k: cached[k] for k in ("return_ytd", "return_1y", "price", "change_pct") if k in cached}
                 if p:
@@ -4225,17 +6224,26 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
                 cached["history"] = update_etf_trade_history(sym)
                 self.etf_cache[sym] = cached
 
+        for record in institution_records:
+            entity_id = record["id"]
+            cached = load_hedge_fund_cache(entity_id)
+            if cached:
+                self.etf_cache[entity_id] = cached
+                if cached.get("aum") is not None:
+                    self.realtime_aums[entity_id] = cached["aum"]
+
         # Render immediately with whatever cache we have
         self._render_ranking_tables()
 
-        # Automatically select the first symbol to view details
         if self.us_symbols:
-            self._refresh_detail_panels(self.us_symbols[0])
+            self._refresh_detail_panels(self.us_symbols[0], pane="etf")
             try:
                 from textual.coordinate import Coordinate
                 us_t.cursor_coordinate = Coordinate(0, 0)
             except Exception:
                 pass
+        if self.inst_symbols:
+            self._refresh_detail_panels(self.inst_symbols[0], pane="13f")
 
         # Launch background fetch (fetches what's missing or stale)
         self.run_background_fetch()
@@ -4255,7 +6263,7 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         _ap = _active_params(self.user).get('etf', {})
         _ct = _ap.get('consensus_threshold', 0.5)
         _me = _ap.get('min_etfs_evaluated', 4)
-        snaps = {sym: load_etf_daily_snapshots(sym) for sym in US_ACTIVE_TICKERS}
+        snaps = {sym: load_etf_daily_snapshots(sym) for sym in active_etf_symbols()}
         report = compute_symbol_trends(
             snaps, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS, consensus_threshold=_ct)
         bt_consensus = backtest_etf_consensus(
@@ -4264,21 +6272,32 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         tilt = compute_etf_selection_tilt(report)
         bt_tilt = backtest_etf_selection_tilt(
             snaps, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS, consensus_threshold=_ct)
+        try:
+            positions, _ = load_manual_positions(user=self.user)
+        except Exception:
+            positions = []
+        held, tracked = user_priority_symbols(self.user)
         self.app.call_from_thread(
-            self._on_analysis_ready, report, bt_consensus, tilt, bt_tilt, _me)
+            self._on_analysis_ready, report, bt_consensus, tilt, bt_tilt, _me,
+            positions, held, tracked,
+        )
 
-    def _on_analysis_ready(self, report, bt_consensus, tilt, bt_tilt, min_etfs) -> None:
+    def _on_analysis_ready(
+        self, report, bt_consensus, tilt, bt_tilt, min_etfs, positions, held, tracked,
+    ) -> None:
         self._analysis_report = report
         self._analysis_bt_consensus = bt_consensus
         self._analysis_tilt = tilt
         self._analysis_bt_tilt = bt_tilt
         self._analysis_min_etfs = min_etfs
+        self._positions = positions or []
+        self._held = set(held or [])
+        self._tracked = set(tracked or [])
         self._analysis_loaded = True
-        self._render_analysis(self.selected_symbol)
+        self._render_analysis()
 
-    def _render_analysis(self, etf_symbol: "str | None") -> None:
-        """把分析框內容重繪為：整體（每日主動選股多空＋跨ETF共識結論＋覆蓋率，永遠顯示）
-        ＋（若選中某檔 ETF）該檔的主動選股明細與其跨基金共識持股。焦點切換只重繪、不重算。"""
+    def _render_analysis(self, etf_symbol: "str | None" = None) -> None:
+        """建議頁：傾向、新鮮度、與你相關、其他共識。研究分頁的單檔明細不在這裡。"""
         try:
             target = self.query_one("#etf-analysis-content", Static)
         except Exception:
@@ -4286,121 +6305,114 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         if not self._analysis_loaded or self._analysis_report is None:
             target.update("[dim]⏳ 主動式ETF趨勢分析計算中…[/dim]")
             return
-
-        report = self._analysis_report
-        tilt = self._analysis_tilt or {}
-        # bug#00119/00118：整框改為 markup 字串（支援 @click 公式細節連結），三層寫作格式。
-        sections: list[str] = []
-        mapping: dict = {}
-
-        # ── 區塊 A：每日主動選股多空（整體）＋回測命中率（可點選公式細節） ──
-        coverage = (
-            f"[dim]資料收集進度：{report['etfs_ready_count']}/{report['etfs_total_count']} "
-            f"檔 ETF 已有 ≥2 天真實快照（{report['etfs_ready_pct']:.0f}%）　"
-            f"視窗 {report['window_days']} 天　更新於 {report['as_of']}[/dim]"
+        markup, mapping = render_etf_advice_view(
+            self._analysis_report,
+            self._analysis_tilt or {},
+            positions=self._positions,
+            watchlist=self._watchlist,
+            held=self._held,
+            tracked=self._tracked,
+            backtest=self._analysis_bt_consensus,
+            tilt_backtest=self._analysis_bt_tilt,
+            min_etfs_evaluated=self._analysis_min_etfs,
         )
-        stance_recs = etf_stance_recommendation(tilt, backtest=self._analysis_bt_tilt)
-        body_a, map_a = render_detail_recs(
-            stance_recs, header="[bold cyan]🧭 每日主動選股多空（整體）[/bold cyan]", start=0)
-        mapping.update(map_a)
-        sections.append(f"{body_a}\n{coverage}")
-
-        # ── 區塊 B：跨ETF持股趨勢共識結論（依據；與首頁卡片、進階分析頁同一函式，可點選公式細節） ──
-        cons_recs = generate_etf_recommendations(
-            report, positions=None, backtest=self._analysis_bt_consensus,
-            min_etfs_evaluated=self._analysis_min_etfs)
-        if cons_recs:
-            body_b, map_b = render_detail_recs(
-                cons_recs, header="[bold magenta]📝 跨ETF持股趨勢共識（依據）[/bold magenta]",
-                start=len(stance_recs))
-            mapping.update(map_b)
-        else:
-            body_b = ("[bold magenta]📝 跨ETF持股趨勢共識（依據）[/bold magenta]\n"
-                      "[dim]尚無足夠真實資料生成跨ETF共識結論（需更多 ETF 累積 ≥2 天快照）。[/dim]")
-        sections.append(body_b)
-
         self._recs_by_id = mapping
-
-        # ── 區塊 C：選中某檔 ETF 的主動選股明細（純明細，無公式頁） ──
-        etfs = tilt.get("etfs") or {}
-        if etf_symbol and etf_symbol in etfs:
-            d = etfs[etf_symbol]
-            tilt_label = {"long": "🟢 偏多", "short": "🔴 偏空", "neutral": "⚪ 中性"}.get(d["tilt"], "⚪ 中性")
-            buys = "、".join(d["top_buys"]) if d["top_buys"] else "—"
-            sells = "、".join(d["top_sells"]) if d["top_sells"] else "—"
-            sym_consensus = []
-            for c in report.get("raw_contributions", []):
-                if c["etf"] != etf_symbol or c["direction"] == "flat":
-                    continue
-                info = (report.get("symbols") or {}).get(c["symbol"], {})
-                if info.get("consensus") in ("up", "down"):
-                    arrow = "🟢買超" if info["consensus"] == "up" else "🔴賣超"
-                    sym_consensus.append(f"{c['symbol']}（跨基金{arrow} {info['consensus_pct']:.0f}%一致）")
-            consensus_line = ("　達跨基金共識：" + "；".join(dict.fromkeys(sym_consensus))) if sym_consensus else "　（本檔目前無達跨基金共識的持股）"
-            sections.append(
-                f"[bold green]🔍 {etf_symbol} 主動選股明細[/bold green]\n"
-                f"傾向：{tilt_label}（淨分數 {d['net_score']:+.2f}；加碼 {d['up_n']} / 減碼 {d['down_n']} / 持平 {d['flat_n']}）\n"
-                f"主要加碼：{buys}\n主要減碼：{sells}\n{consensus_line}"
-            )
-        else:
-            sections.append("[dim]← 選取左欄某檔 ETF 可在此看它自己的主動選股傾向與共識持股[/dim]")
-
-        target.update("\n\n".join(sections))
+        target.update(markup)
 
     def _set_header(self, status: str) -> None:
         from rich.panel import Panel as _Panel
         self.query_one("#etf-header", Static).update(
             _Panel(
-                f"[bold cyan]📈 主動式 ETF 排行與持股分析[/bold cyan]  [dim]│[/dim]  {status}",
+                f"[bold cyan]📈 主動式 ETF 動態[/bold cyan]  [dim]│[/dim]  {status}",
                 border_style="cyan", padding=(0, 1),
             )
         )
 
-    def _set_mid_title(self, text: str) -> None:
-        self.query_one("#etf-holdings-title", Static).update(text)
+    def _pane_ids(self, pane: str = "etf") -> dict[str, str]:
+        if pane == "13f":
+            return {
+                "holdings_title": "#etf-13f-holdings-title",
+                "holdings_status": "#etf-13f-holdings-status",
+                "holdings_table": "#etf-13f-holdings-table",
+                "history_title": "#etf-13f-history-title",
+                "history_status": "#etf-13f-history-status",
+                "history_table": "#etf-13f-history-table",
+            }
+        return {
+            "holdings_title": "#etf-holdings-title",
+            "holdings_status": "#etf-holdings-status",
+            "holdings_table": "#etf-holdings-table",
+            "history_title": "#etf-history-title",
+            "history_status": "#etf-history-status",
+            "history_table": "#etf-history-table",
+        }
 
-    def _set_right_title(self, text: str) -> None:
-        self.query_one("#etf-history-title", Static).update(text)
+    def _set_mid_title(self, text: str, pane: str = "etf") -> None:
+        self.query_one(self._pane_ids(pane)["holdings_title"], Static).update(text)
 
-    def _set_mid_status(self, text: str) -> None:
-        self.query_one("#etf-holdings-status", Static).update(text)
+    def _set_right_title(self, text: str, pane: str = "etf") -> None:
+        self.query_one(self._pane_ids(pane)["history_title"], Static).update(text)
 
-    def _set_right_status(self, text: str) -> None:
-        self.query_one("#etf-history-status", Static).update(text)
+    def _set_mid_status(self, text: str, pane: str = "etf") -> None:
+        self.query_one(self._pane_ids(pane)["holdings_status"], Static).update(text)
+
+    def _set_right_status(self, text: str, pane: str = "etf") -> None:
+        self.query_one(self._pane_ids(pane)["history_status"], Static).update(text)
+
+    def action_sec_identity(self) -> None:
+        """Open the account-scoped SEC identity/privacy controls."""
+        self.app.push_screen(
+            SECIdentityModal(self.user),
+            self._on_sec_identity_changed,
+        )
+
+    def _on_sec_identity_changed(self, changed: bool) -> None:
+        if not changed:
+            return
+        summary = masked_sec_identity(self.user)
+        self._set_header(
+            (
+                f"[green]✅ SEC 身分已儲存：{summary}；正在重新核對 13F[/green]"
+                if summary
+                else "[yellow]SEC 身分已刪除；13F 自動更新已停止[/yellow]"
+            )
+        )
+        self.run_background_fetch()
 
     # ── Keyboard Navigation ───────────────────────────────────────────────────
 
     def on_key(self, event) -> None:
         from textual.widgets import Tabs
         
-        # Right arrow to move rightwards across columns
         if event.key == "right":
             focused = self.focused
             if isinstance(focused, DataTable):
-                if focused.id == "etf-us-table":
-                    self.query_one("#etf-holdings-table", DataTable).focus()
+                nxt = {
+                    "etf-us-table": "#etf-holdings-table",
+                    "etf-holdings-table": "#etf-history-table",
+                    "etf-13f-table": "#etf-13f-holdings-table",
+                    "etf-13f-holdings-table": "#etf-13f-history-table",
+                }.get(focused.id)
+                if nxt:
+                    self.query_one(nxt, DataTable).focus()
                     event.prevent_default()
                     event.stop()
-                elif focused.id == "etf-holdings-table":
-                    self.query_one("#etf-history-table", DataTable).focus()
-                    event.prevent_default()
-                    event.stop()
-        # Left arrow to move leftwards across columns
         elif event.key == "left":
             focused = self.focused
             if isinstance(focused, DataTable):
-                if focused.id == "etf-holdings-table":
-                    self.query_one("#etf-us-table", DataTable).focus()
+                nxt = {
+                    "etf-holdings-table": "#etf-us-table",
+                    "etf-history-table": "#etf-holdings-table",
+                    "etf-13f-holdings-table": "#etf-13f-table",
+                    "etf-13f-history-table": "#etf-13f-holdings-table",
+                }.get(focused.id)
+                if nxt:
+                    self.query_one(nxt, DataTable).focus()
                     event.prevent_default()
                     event.stop()
-                elif focused.id == "etf-history-table":
-                    self.query_one("#etf-holdings-table", DataTable).focus()
-                    event.prevent_default()
-                    event.stop()
-        # Up arrow at the very top of lists to jump focus to the tab headers
         elif event.key == "up":
             focused = self.focused
-            if isinstance(focused, DataTable) and focused.id == "etf-us-table":
+            if isinstance(focused, DataTable) and focused.id in ("etf-us-table", "etf-13f-table"):
                 if focused.cursor_row == 0:
                     try:
                         self.query_one(Tabs).focus()
@@ -4408,12 +6420,19 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
                         event.stop()
                     except Exception:
                         pass
-        # Down arrow on tab headers to jump focus to the list table
         elif event.key == "down":
             focused = self.focused
             if isinstance(focused, Tabs):
                 try:
-                    self.query_one("#etf-us-table", DataTable).focus()
+                    tabs = self.query_one("#etf-main-tabs", TabbedContent)
+                    target = (
+                        "#etf-13f-table" if tabs.active == "tab-etf-13f"
+                        else "#etf-us-table" if tabs.active == "tab-etf-browse"
+                        else "#etf-advice-box"
+                    )
+                    widget = self.query_one(target)
+                    if hasattr(widget, "focus"):
+                        widget.focus()
                     event.prevent_default()
                     event.stop()
                 except Exception:
@@ -4432,22 +6451,24 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         on a different screen across a day boundary."""
         from .storage import etf_symbol_cache_fresh
 
-        all_symbols = US_ACTIVE_TICKERS  # bug#00091：僅美股主動式 ETF
+        universe_result = ensure_active_etf_universe()
+        all_symbols = [
+            item["symbol"] for item in universe_result.get("records", [])
+        ]
 
         # ── 1. Identify stale symbols ─────────────────────────────────────────
         stale_symbols = [sym for sym in all_symbols if not etf_symbol_cache_fresh(sym)]
 
-        if not stale_symbols:
-            self.app.call_from_thread(
-                self._set_header, "[green]✅ 快取皆為今日最新，已直接載入[/green]"
-            )
-            return
-
         self.app.call_from_thread(
-            self._set_header, f"⏳ 正在背景更新 {len(stale_symbols)} 個 ETF 的即時數據..."
+            self._set_header,
+            (
+                f"⏳ 正在背景更新 {len(stale_symbols)} 個 ETF 與核對 4 家 13F..."
+                if stale_symbols else "⏳ ETF 快取為今日最新，正在核對 4 家 13F..."
+            ),
         )
 
         result = _fetch_and_cache_etf_symbols(stale_symbols)
+        institutions = ensure_hedge_fund_filings(self.user)
 
         aums = dict(self.realtime_aums)
         aums.update(result["aums"])
@@ -4455,9 +6476,15 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         perf.update(result["perf"])
         etf_cache = dict(self.etf_cache)
         etf_cache.update(result["etf_cache"])
+        etf_cache.update(institutions)
+        for entity_id, cached in institutions.items():
+            if cached.get("aum") is not None:
+                aums[entity_id] = cached["aum"]
 
         self.app.call_from_thread(
-            self._on_fetch_complete, aums, perf, etf_cache, result["perf_fail_count"], len(stale_symbols)
+            self._on_fetch_complete, aums, perf, etf_cache,
+            result["perf_fail_count"], len(stale_symbols),
+            universe_result, institutions,
         )
 
     def _on_fetch_complete(
@@ -4467,10 +6494,20 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         etf_cache: dict[str, dict],
         perf_fail_count: int = 0,
         perf_attempted_count: int = 0,
+        universe_result: dict | None = None,
+        institutions: dict | None = None,
     ) -> None:
         self.realtime_aums = aums
         self.performance_data = perf
         self.etf_cache = etf_cache
+        etf_records = (
+            (universe_result or {}).get("records")
+            or load_active_etf_universe()
+        )
+        institution_records = hedge_fund_records()
+        self.universe_records = {
+            item["id"]: item for item in etf_records + institution_records
+        }
         if perf_fail_count > 0:
             # bug#00058: surface partial performance-fetch failures instead of
             # silently showing "—" with no explanation of why.
@@ -4479,18 +6516,46 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
                 f"（將於下次刷新自動重試）[/yellow]"
             )
         else:
-            self._set_header("[green]✅ 即時數據載入完成[/green]")
+            stale_13f = sum(
+                1 for item in (institutions or {}).values()
+                if item.get("data_status") != "ok"
+            )
+            universe_note = (
+                "；ETF universe 更新失敗，使用前次真實快取"
+                if (universe_result or {}).get("status") in ("stale", "error")
+                else ""
+            )
+            institution_note = (
+                f"；{stale_13f} 家 13F 更新失敗，保留前次申報"
+                if stale_13f else "；4 家 13F 已核對"
+            )
+            self._set_header(
+                f"[green]✅ 即時數據載入完成[/green]"
+                f"[dim]{universe_note}{institution_note}[/dim]"
+            )
         self._render_ranking_tables()
         sym = self.selected_symbol or (self.us_symbols[0] if self.us_symbols else None)
         if sym:
-            self._refresh_detail_panels(sym)
+            self._refresh_detail_panels(sym, pane="etf")
+        inst = self.selected_inst or (self.inst_symbols[0] if self.inst_symbols else None)
+        if inst:
+            self._refresh_detail_panels(inst, pane="13f")
 
     # ── Render ranking tables (left col) ──────────────────────────────────────
 
+    def _record_ids(self, source_type: str) -> list[str]:
+        return [
+            item_id for item_id, record in self.universe_records.items()
+            if record.get("source_type", "etf") == source_type
+        ]
+
     def _render_ranking_tables(self) -> None:
         new_us: list[str] = []
-        self._render_one_tab("#etf-us-table", US_ACTIVE_TICKERS, new_us)
+        self._render_one_tab("#etf-us-table", self._record_ids("etf"), new_us)
         self.us_symbols = new_us
+        new_inst: list[str] = []
+        self._render_one_tab("#etf-13f-table", self._record_ids("13f"), new_inst)
+        self.inst_symbols = new_inst
 
     def _render_one_tab(
         self,
@@ -4501,70 +6566,148 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         table = self.query_one(selector, DataTable)
         table.clear(columns=False)
 
-        # Sort purely by AUM descending
-        by_aum = sorted(
-            universe, key=lambda s: self.realtime_aums.get(s, 0.0), reverse=True
-        )[:_ETF_TOP_N]
+        # Group by actual holdings composition, then sort each group by AUM /
+        # reported 13F market value descending.
+        ordered = sorted(
+            universe,
+            key=lambda item_id: (
+                self.etf_cache.get(item_id, {}).get("category")
+                or self.universe_records.get(item_id, {}).get("category", "未分類"),
+                -float(self.realtime_aums.get(item_id) or 0.0),
+                item_id,
+            ),
+        )
 
-        for symbol in by_aum:
+        for symbol in ordered:
+            record = self.universe_records.get(symbol, {})
+            source_type = record.get("source_type", "etf")
             is_tw = symbol.endswith(".TW") or symbol.endswith(".TWO")
             aum_s = self._fmt_aum(self.realtime_aums.get(symbol), is_tw=is_tw)
             p = self.performance_data.get(symbol, {})
             holdings = self.etf_cache.get(symbol, {}).get("holdings", [])
-
-            # Yellow star prefix for the one non-ETF mutual fund in the universe
-            is_special = symbol == "SEQUX"
-            sym_display = f"[bold yellow]★ {symbol}[/bold yellow]" if is_special else f"[bold white]{symbol}[/bold white]"
+            category = (
+                self.etf_cache.get(symbol, {}).get("category")
+                or record.get("category")
+                or classify_holdings(
+                    self.etf_cache.get(symbol, {}).get("asset_classes"), holdings)
+            )
+            if source_type == "13f":
+                name = record.get("name") or self.etf_cache.get(symbol, {}).get("name") or symbol
+                sym_display = f"[bold yellow]◆ {name}[/bold yellow]"
+            else:
+                sym_display = f"[bold white]{symbol}[/bold white]"
 
             if holdings:
                 top_h = max(holdings, key=lambda h: h.get("weight", 0.0))
                 w = top_h.get("weight", 0.0)
-                top_h_s = f"[dim]{top_h.get('symbol', '—')} ({w:.1f}%)[/dim]"
+                top_name = (
+                    top_h.get("issuer") or top_h.get("name")
+                    if source_type == "13f" else top_h.get("symbol")
+                )
+                top_h_s = f"[dim]{top_name or '—'} ({w:.1f}%)[/dim]"
             else:
                 top_h_s = "[dim]—[/dim]"
 
             table.add_row(
                 sym_display,
+                f"[cyan]{category}[/cyan]",
                 f"[dim]{aum_s}[/dim]",
-                self._fmt_pct(p.get("return_ytd")),
-                self._fmt_pct(p.get("return_1y")),
+                "[dim]季報[/dim]" if source_type == "13f" else self._fmt_pct(p.get("return_ytd")),
+                "[dim]季報[/dim]" if source_type == "13f" else self._fmt_pct(p.get("return_1y")),
                 top_h_s,
             )
             out_symbols.append(symbol)
 
     # ── Detail panels (middle + right cols) ───────────────────────────────────
 
-    def _refresh_detail_panels(self, symbol: str) -> None:
-        self.selected_symbol = symbol
+    def _refresh_detail_panels(self, symbol: str, pane: str = "etf") -> None:
+        if pane == "13f":
+            self.selected_inst = symbol
+        else:
+            self.selected_symbol = symbol
         cached = self.etf_cache.get(symbol, {})
         fund_name = cached.get("name") or symbol
-        self._set_mid_title(f"[bold cyan]{symbol}[/bold cyan]  [dim]{fund_name}[/dim]  當下持股細節")
-        self._set_right_title(f"[bold cyan]{symbol}[/bold cyan]  歷史買賣紀錄")
-        self._set_mid_status(f"[yellow]⏳ 載入 {symbol} 持股...[/yellow]")
-        self._set_right_status(f"[yellow]⏳ 載入 {symbol} 歷史...[/yellow]")
-        self._render_holdings(symbol)
-        self._render_history(symbol)
+        source_type = cached.get("source_type", "etf")
+        label = fund_name if source_type == "13f" else symbol
+        holdings_label = "當下申報持股" if pane == "13f" else "當下持股細節"
+        history_label = "相鄰申報差分" if pane == "13f" else "歷史買賣紀錄"
+        self._set_mid_title(
+            f"[bold cyan]{label}[/bold cyan]  [dim]{fund_name}[/dim]  {holdings_label}",
+            pane=pane,
+        )
+        self._set_right_title(f"[bold cyan]{label}[/bold cyan]  {history_label}", pane=pane)
+        self._set_mid_status(f"[yellow]⏳ 載入 {symbol} 持股...[/yellow]", pane=pane)
+        self._set_right_status(f"[yellow]⏳ 載入 {symbol} 歷史...[/yellow]", pane=pane)
+        self._render_holdings(symbol, pane=pane)
+        self._render_history(symbol, pane=pane)
 
-    def _render_holdings(self, symbol: str) -> None:
-        table = self.query_one("#etf-holdings-table", DataTable)
+    def _render_holdings(self, symbol: str, pane: str = "etf") -> None:
+        table = self.query_one(self._pane_ids(pane)["holdings_table"], DataTable)
         table.clear(columns=False)
 
         info = self.etf_cache.get(symbol, {})
         holdings = info.get("holdings", [])
         asset_classes = info.get("asset_classes") or {}
         as_of = info.get("holdings_as_of_date", "")
+        source_type = info.get("source_type", "etf")
+        watch = {item.upper() for item in self._watchlist}
+        name_index = None
+        if watch:
+            name_index = build_ticker_name_index({
+                key: [{"date": "x", "holdings": cached.get("holdings") or []}]
+                for key, cached in self.etf_cache.items()
+                if cached.get("source_type", "etf") != "13f"
+            })
+            holdings = [
+                row for row in holdings
+                if holding_on_watchlist(row, watch, name_index)
+            ]
+            asset_classes = {}
 
         if not holdings and not asset_classes:
+            if watch:
+                self._set_mid_status(
+                    f"[dim]{symbol} 沒有觀察清單上的持股。按 w 編輯清單。[/dim]",
+                    pane=pane,
+                )
+                return
+            diagnostic = info.get("last_fetch_error")
             self._set_mid_status(
-                f"[dim]{symbol} 持股資料更新中，或 yfinance 未提供此 ETF 持股[/dim]"
+                f"[dim]{symbol} 持股資料更新中；狀態："
+                f"{info.get('status_message') or '資料來源尚未回傳'}"
+                f"{f'（{diagnostic}）' if diagnostic else ''}[/dim]",
+                pane=pane,
             )
             return
 
-        date_badge = (
-            f"[green]✅ 資訊更新日: {as_of}[/green]" if as_of
-            else "[dim]資訊更新日: 未知[/dim]"
-        )
-        self._set_mid_status(date_badge)
+        if source_type == "13f":
+            filing_date = info.get("filing_date") or "—"
+            option_count = sum(
+                1 for item in holdings if item.get("instrument_type") == "option")
+            if info.get("data_status") == "ok":
+                source_badge = (
+                    f"[green]✅ SEC 13F 報告期: {as_of or '—'}；"
+                    f"申報日: {filing_date}[/green]"
+                )
+            else:
+                source_badge = (
+                    f"[yellow]⚠ SEC 更新未完成，顯示前次申報 "
+                    f"{as_of or '—'}；{info.get('status_message') or '稍後重試'}"
+                    "[/yellow]"
+                )
+            date_badge = (
+                source_badge
+                + f"  [yellow]季報、非即時；{option_count} 筆 Put/Call 不含履約價與到期日，"
+                "不納入期權時間區間推論[/yellow]"
+            )
+        else:
+            date_badge = (
+                f"[green]✅ Yahoo 持股快照: {as_of}[/green]"
+                if as_of else "[dim]Yahoo 持股快照日期: 未知[/dim]"
+            )
+        if watch:
+            date_badge += f"  [dim]只顯示觀察清單 {len(holdings)} 檔[/dim]"
+        self._set_mid_status(date_badge, pane=pane)
 
         aum = info.get("aum")
         is_tw = symbol.endswith(".TW") or symbol.endswith(".TWO")
@@ -4594,30 +6737,65 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         if holdings:
             if asset_classes:
                 table.add_row("[bold cyan]▾ 前十大持股[/bold cyan]", "[dim]個股持有明細[/dim]", "", "", "")
-            for h in holdings:
+            visible_holdings = holdings[:100] if source_type == "13f" else holdings
+            for h in visible_holdings:
                 w = h.get("weight")
                 s = h.get("shares")
                 mv_s = "—"
-                if aum and w:
+                if h.get("value") is not None:
+                    mv_s = self._fmt_aum(float(h["value"]))
+                elif aum and w:
                     mv_s = self._fmt_aum(aum * (w / 100.0), is_tw=is_tw)
+                position_code = holding_display_symbol(h, name_index)
+                position_name = h.get("name", "—")
+                if h.get("instrument_type") == "option":
+                    position_name = (
+                        f"{h.get('option_type') or 'OPTION'} {h.get('issuer') or position_name} "
+                        "（13F未揭露到期日/履約價）"
+                    )
                 table.add_row(
-                    f"[bold white]{h.get('symbol', '—')}[/bold white]",
-                    f"[dim]{h.get('name', '—')}[/dim]",
+                    f"[bold white]{position_code}[/bold white]",
+                    f"[dim]{position_name}[/dim]",
                     f"{w:.2f}%" if w is not None else "—",
                     f"{int(s):,}" if s is not None else "—",
                     mv_s,
                 )
+            if source_type == "13f" and len(holdings) > len(visible_holdings):
+                self._set_mid_status(
+                    f"{date_badge}  [dim]畫面顯示市值前 {len(visible_holdings)}/{len(holdings)} 筆；"
+                    "完整申報仍保存在快取與分析資料中[/dim]",
+                    pane=pane,
+                )
 
-    def _render_history(self, symbol: str) -> None:
-        table = self.query_one("#etf-history-table", DataTable)
+    def _render_history(self, symbol: str, pane: str = "etf") -> None:
+        table = self.query_one(self._pane_ids(pane)["history_table"], DataTable)
         table.clear(columns=False)
 
         history = self.etf_cache.get(symbol, {}).get("history", [])
+        watch = {item.upper() for item in self._watchlist}
+        name_index = None
+        if watch:
+            name_index = build_ticker_name_index({
+                key: [{"date": "x", "holdings": cached.get("holdings") or []}]
+                for key, cached in self.etf_cache.items()
+                if cached.get("source_type", "etf") != "13f"
+            })
+            history = [
+                row for row in history
+                if holding_on_watchlist(row, watch, name_index)
+            ]
         if history:
+            source_type = self.etf_cache.get(symbol, {}).get("source_type", "etf")
             self._set_right_status(
-                f"[green]✅ {symbol} 歷史交易 ({len(history)} 筆)[/green]"
+                f"[green]✅ {symbol} 歷史部位變化 ({len(history)} 筆)[/green]"
+                + (
+                    " [yellow]由相鄰 13F 報告期差分；不是季內成交紀錄[/yellow]"
+                    if source_type == "13f" else
+                    " [dim]由相鄰真實持股快照差分[/dim]"
+                ),
+                pane=pane,
             )
-            for h in history:
+            for h in history[:250]:
                 action = h.get("action", "—")
                 a_col = "green" if action == "BUY" else "red"
                 wc = h.get("weight_change")
@@ -4627,30 +6805,49 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
                     sign = "+" if wc >= 0 else ""
                     wc_s = f"[{col}]{sign}{wc:.2f}%[/{col}]"
                 price = h.get("price")
+                value_change = h.get("value_change")
                 shares = h.get("shares")
+                period = (
+                    f"{h.get('period_start')}→{h.get('period_end')}"
+                    if h.get("period_start") else h.get("date", "—")
+                )
+                ticker = holding_display_symbol(h, name_index)
+                name = h.get("name") or h.get("issuer") or ""
+                if name and ticker not in (name, "—"):
+                    position_label = f"{ticker} {name}"
+                else:
+                    position_label = ticker if ticker != "—" else (name or "—")
+                value_or_price = (
+                    self._fmt_aum(abs(float(value_change)))
+                    if value_change is not None else
+                    f"${price:,.2f}" if price is not None else "—"
+                )
                 table.add_row(
-                    h.get("date", "—"),
+                    period,
                     f"[{a_col}]{action}[/{a_col}]",
-                    f"[bold white]{h.get('symbol', '—')}[/bold white]",
+                    f"[bold white]{position_label}[/bold white]",
                     f"{int(shares):,}" if shares is not None else "—",
-                    f"${price:,.2f}" if price is not None else "—",
+                    value_or_price,
                     wc_s,
                 )
         else:
             self._set_right_status(
-                f"[dim]{symbol} 無歷史交易紀錄 "
-                f"(ETF 持股調整紀錄需由外部 scraper 寫入)[/dim]"
+                (
+                    f"[dim]{symbol} 沒有觀察清單標的的買賣紀錄。按 w 編輯清單。[/dim]"
+                    if watch else
+                    f"[dim]{symbol} 尚無可比較的歷史部位（至少需要兩個真實快照／兩季 13F）。"
+                    "系統會在背景更新後自動產生差分。[/dim]"
+                ),
+                pane=pane,
             )
 
     # ── Unified row navigation ─────────────────────────────────────────────────
 
     def _handle_row(self, table_id: str, row_idx: int) -> None:
         if table_id == "etf-us-table" and 0 <= row_idx < len(self.us_symbols):
-            sym = self.us_symbols[row_idx]
-            self._refresh_detail_panels(sym)
-            # bug#00115：選中 ETF 時，下方分析框改繪該檔的主動選股明細（若分析已算好）。
-            if self._analysis_loaded:
-                self._render_analysis(sym)
+            self._refresh_detail_panels(self.us_symbols[row_idx], pane="etf")
+        elif table_id == "etf-13f-table" and 0 <= row_idx < len(self.inst_symbols):
+            self._refresh_detail_panels(self.inst_symbols[row_idx], pane="13f")
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         self._handle_row(event.data_table.id, event.cursor_row)
@@ -4691,7 +6888,12 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
         self.dismiss()
 
     def action_clear_cache(self) -> None:
-        """清除快取：刪除快取檔案並在背景發起全新的即時抓取載入流程。"""
+        """清除快取前先確認，避免誤按清空即時快取。"""
+        self.app.push_screen(EtfCacheClearModal(), self._on_clear_cache_confirmed)
+
+    def _on_clear_cache_confirmed(self, confirmed: bool) -> None:
+        if not confirmed:
+            return
         from .storage import get_etf_cache_dir
         cache_dir = get_etf_cache_dir()
         if cache_dir.exists():
@@ -4700,39 +6902,165 @@ class ActiveETFsScreen(_FormulaDrillMixin, Screen):
                     f.unlink()
                 except Exception:
                     pass
-        # Clear memory caches
         self.etf_cache.clear()
         self.realtime_aums.clear()
         self.performance_data.clear()
         self.us_symbols.clear()
+        self.inst_symbols.clear()
         self.selected_symbol = None
-        
-        # Clear UI tables
+        self.selected_inst = None
+
         self.query_one("#etf-us-table", DataTable).clear(columns=False)
         self.query_one("#etf-holdings-table", DataTable).clear(columns=False)
         self.query_one("#etf-history-table", DataTable).clear(columns=False)
-        
-        # Reset headers and statuses
+        self.query_one("#etf-13f-table", DataTable).clear(columns=False)
+        self.query_one("#etf-13f-holdings-table", DataTable).clear(columns=False)
+        self.query_one("#etf-13f-history-table", DataTable).clear(columns=False)
+
         self._set_header("⏳ 快取已清除，正在重新抓取全部新數據...")
-        self._set_mid_status("[dim]← 快取已清除，等待重新載入[/dim]")
-        self._set_right_status("[dim]← 快取已清除，等待重新載入[/dim]")
-        
-        # Kick off background fetch
+        self._set_mid_status("[dim]← 快取已清除，等待重新載入[/dim]", pane="etf")
+        self._set_right_status("[dim]← 快取已清除，等待重新載入[/dim]", pane="etf")
+        self._set_mid_status("[dim]← 快取已清除，等待重新載入[/dim]", pane="13f")
+        self._set_right_status("[dim]← 快取已清除，等待重新載入[/dim]", pane="13f")
         self.run_background_fetch()
 
+    def action_show_advice(self) -> None:
+        """[j] 回到建議頁。"""
+        tabs = self.query_one("#etf-main-tabs", TabbedContent)
+        tabs.active = "tab-etf-advice"
+        box = self.query_one("#etf-advice-box")
+        box.can_focus = True
+        box.focus()
+
+    def action_show_help(self) -> None:
+        self.app.push_screen(EtfHelpScreen())
+
+    def action_edit_watchlist(self) -> None:
+        self._open_watchlist_editor(required=False)
+
+    def _open_watchlist_editor(self, required: bool = False) -> None:
+        self._watchlist_required = required
+        self.app.push_screen(
+            EtfWatchlistEditor(
+                current=self._watchlist,
+                suggestions=suggested_etf_watchlist(self._positions),
+                required=required,
+            ),
+            self._on_watchlist_edited,
+        )
+
+    def _on_watchlist_edited(self, tickers: Optional[list]) -> None:
+        if tickers is None:
+            if self._watchlist_required and not etf_watchlist_is_configured(self.user):
+                self.dismiss()
+            return
+        save_etf_watchlist(self.user, tickers)
+        self._watchlist = list(tickers)
+        self._watchlist_required = False
+        if self._analysis_loaded:
+            self._render_analysis()
+        if self.selected_symbol:
+            self._refresh_detail_panels(self.selected_symbol, pane="etf")
+        if self.selected_inst:
+            self._refresh_detail_panels(self.selected_inst, pane="13f")
+        self._set_header(
+            f"[green]✅ 觀察清單 {len(self._watchlist)} 檔：{'、'.join(self._watchlist)}[/green]"
+        )
+
     def action_advanced_analysis(self) -> None:
-        """[a] 進階分析：離線讀取本機已累積的真實每日快照，計算跨ETF持股趨勢共識。"""
+        """[a] 全市場研究表：持有／追蹤置頂的部位明細，結論在建議頁。"""
         self.app.push_screen(AdvancedAnalysisScreen(self.user))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Advanced Analysis Screen (進階分析)
 # ─────────────────────────────────────────────────────────────────────────────
-# bug#00060 / bug#00104: 100% 離線運算 —— 只讀取 storage.py 已在背景刷新時逐日真實累積下來的
-# per-ETF 快照（etf_cache/history/*.jsonl）。14 天視窗內若某檔 ETF 累積不足 2 筆真實快照，
-# 就不會被納入計算，並誠實在畫面上顯示目前的資料收集進度。
+# bug#00060 / bug#00104 / bug#00122: 100% 離線運算 —— 只讀取 storage.py
+# 背景刷新所保存的真實 per-ETF 快照（etf_cache/history/*.jsonl）。14 天視窗內
+# 必須有至少 2 個內容不同的持股狀態才納入計算；不同日期抓到完全相同的 Yahoo
+# top-holdings 只算一個狀態，避免把資料源未更新誤認為基金有新的交易資訊。
 
 ADVANCED_ANALYSIS_WINDOW_DAYS = 14
+
+# bug#00123: how many non-priority 13F rows to render. Four filers disclose
+# ~16k distinct securities; the table exists to be read, so everything the user
+# actually holds or tracks is always shown and the remainder is capped by scale.
+INSTITUTION_OTHER_ROWS_CAP = 40
+
+
+def user_priority_symbols(user: str) -> tuple[set[str], set[str]]:
+    """(持有部位代碼, 追蹤類股成分代碼) for display prioritisation.
+
+    Tracked symbols exclude ones already held so the two tiers stay disjoint.
+    Options contribute their underlying — the user holding a TSLA call means
+    TSLA is a symbol they care about.
+    """
+    from .storage import load_manual_positions, load_sector_groups
+    held: set[str] = set()
+    try:
+        positions, _ = load_manual_positions(user=user)
+    except Exception:
+        positions = []
+    for position in positions:
+        symbol = (
+            position.underlying
+            if getattr(position, "instrument_type", None) == "option" and position.underlying
+            else position.symbol
+        )
+        if symbol:
+            held.add(str(symbol).upper())
+
+    tracked: set[str] = set()
+    try:
+        groups = load_sector_groups(user)
+    except Exception:
+        groups = {}
+    for members in (groups or {}).values():
+        for member in members or []:
+            if member:
+                tracked.add(str(member).upper())
+    return held, tracked - held
+
+
+def position_display_sort_key(
+    key: str,
+    info: dict,
+    held: set[str],
+    tracked: set[str],
+    name_index: Optional[dict] = None,
+) -> tuple:
+    """Sort key implementing the user's requested ordering (bug#00123).
+
+    Tier 0 = a position the user holds, tier 1 = a member of a sector group they
+    track, tier 2 = everything else. Inside a tier the previous ranking is kept:
+    positions carrying a real directional signal first, then by absolute net
+    exposure change, then alphabetically — so a tier never buries its own most
+    material row.
+    """
+    from .analysis import resolve_position_ticker
+    position = dict(info.get("position") or {})
+    position.setdefault("symbol", key)
+    ticker = resolve_position_ticker({**position, "symbol": key}, name_index or {})
+    if ticker and ticker in held:
+        tier = 0
+    elif ticker and ticker in tracked:
+        tier = 1
+    else:
+        tier = 2
+    has_signal = info.get("consensus") in ("up", "down")
+    # Rank by the same number the row actually displays, so the ordering never
+    # looks arbitrary next to the money column.
+    scale = info.get("confirmed_net_trade_value")
+    if scale is None:
+        scale = info.get("confirmed_net_value_delta")
+    if scale is None:
+        scale = info.get("net_value_delta")
+    return (
+        tier,
+        not has_signal,
+        -abs(scale or 0.0),
+        (ticker or position.get("issuer") or position.get("name") or key or "").upper(),
+    )
 
 
 class AdvancedAnalysisScreen(_FormulaDrillMixin, Screen):
@@ -4784,7 +7112,10 @@ class AdvancedAnalysisScreen(_FormulaDrillMixin, Screen):
     def on_mount(self) -> None:
         table = self.query_one("#aa-table", DataTable)
         table.cursor_type = "row"
-        table.add_columns("股票代碼", "共識方向", "共識比例", "看漲ETF", "看跌ETF", "持平ETF", "估計總股數變化")
+        table.add_columns(
+            "精確部位", "資料來源", "資料期別／交易期間", "配置權重",
+            "增減持方", "買入總額", "賣出總額", "淨部位變化", "多空判斷",
+        )
         table.display = False
         self.query_one("#aa-empty", Static).display = False
 
@@ -4796,61 +7127,130 @@ class AdvancedAnalysisScreen(_FormulaDrillMixin, Screen):
         _ap = _active_params(self.user).get('etf', {})
         _ct = _ap.get('consensus_threshold', 0.5)
         _me = _ap.get('min_etfs_evaluated', 4)
-        all_symbols = US_ACTIVE_TICKERS
+        all_symbols = active_etf_symbols()
         snapshots_by_etf = {sym: load_etf_daily_snapshots(sym) for sym in all_symbols}
 
         report = compute_symbol_trends(snapshots_by_etf, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS, consensus_threshold=_ct)
         # bug#00092: walk-forward 回測（與結論卡共用同一套邏輯）。
         _bt = backtest_etf_consensus(snapshots_by_etf, window_days=ADVANCED_ANALYSIS_WINDOW_DAYS, consensus_threshold=_ct, min_etfs_evaluated=_me)
-        ranked = rank_symbol_trends(report, min_etfs_evaluated=_me)
+        # The recommendation engine uses only qualified directional signals,
+        # while the detail table retains every observed position. A flat row is
+        # valuable period-over-period state, not a recommendation.
+        # bug#00123: 使用者要求的分層排序 —— 持有部位 → 追蹤類股 → 其他（字母）。
+        # 13F 部位以 CUSIP/發行人名稱識別，沒有 ticker，因此用本機 ETF 快照（同時含
+        # ticker 與公司名）離線建立名稱索引來解析；解析不出來就維持發行人名稱、歸第三層，
+        # 不臆造代碼。
+        self._held, self._tracked = user_priority_symbols(self.user)
+        self._name_index = build_ticker_name_index(snapshots_by_etf)
+        position_rows = sorted(
+            (report.get("symbols") or {}).items(),
+            key=lambda item: position_display_sort_key(
+                item[0], item[1], self._held, self._tracked, self._name_index,
+            ),
+        )
+        tilt = compute_etf_selection_tilt(report)
 
+        # bug#00123（A）：SEC 13F 逐季申報是本機唯一含「真實申報股數與市值」的來源，
+        # 因此獨立以季度環比計算，補上 Yahoo 每日 top-10 無法提供的方向訊號。
+        inst_report = self._institution_report()
+
+        freshness = report.get("source_freshness") or {}
         coverage_line = (
             f"[bold cyan]📊 進階分析 — 跨ETF持股趨勢共識[/bold cyan]  [dim]│[/dim]  "
             f"視窗 {report['window_days']} 天　"
-            f"資料收集進度：{report['etfs_ready_count']}/{report['etfs_total_count']} 檔 ETF 已有 ≥2 天真實快照 "
-            f"({report['etfs_ready_pct']:.0f}%)　更新於 {report['as_of']}"
+            f"期間可比較：{report['etfs_comparable_count']}/{report['etfs_total_count']} 檔　"
+            f"方向訊號就緒：{report['etfs_ready_count']}/{report['etfs_total_count']} 檔"
+            f"（≥2 個不同持股狀態）　更新於 {report['as_of']}"
         )
+        # bug#00123（C）：來源停滯是事實，必須說出來，而不是讓整張表印成「持平／$0」。
+        if freshness.get("sources_unchanged"):
+            since = freshness.get("oldest_state_since") or "—"
+            days = freshness.get("max_unchanged_days")
+            span = f"（已 {days} 天）" if days else ""
+            coverage_line += (
+                f"\n[yellow]⚠️ 來源持股揭露停滯："
+                f"{freshness['sources_unchanged']}/{freshness['sources_total']} 檔 ETF "
+                f"自 {since} 起揭露內容完全未變{span}。[/yellow]"
+                f"\n[dim]Yahoo 依各基金揭露頻率更新前十大持股（多為月頻），且不揭露股數；"
+                f"權重沒有變動時無法推論任何買賣。這是資料來源限制，不是「本期沒有交易」。"
+                f"下方 13F 區塊改用逐季真實申報股數，另 ARK 系列已改抓官方每日完整持股。[/dim]"
+            )
+        # bug#00124（使用者要求 1）：13F 的資料年代必須寫清楚 —— 它描述的是哪一季、
+        # 什麼時候才公開、距今多久、下一次會在什麼時候更新。四個都不能互相推導。
+        self._inst_provenance = inst_report.get("provenance") or {}
+        if inst_report.get("report_dates"):
+            prov = self._inst_provenance
+            dates = inst_report["report_dates"]
+            published = [
+                f"{p['report_date']} 公開於 {p['filing_date']}"
+                + ("（法定期限，實際申報日未記錄）" if p.get("filing_date_estimated") else "")
+                for p in prov.get("periods") or []
+            ]
+            coverage_line += (
+                f"\n[cyan]🏛 SEC 13F 季度環比：{dates[0]} → {dates[-1]}　"
+                f"申報機構 {inst_report['etfs_comparable_count']}/{inst_report['etfs_total_count']} 家"
+                f"　（依真實申報股數，變動 ≥ "
+                f"{inst_report.get('rel_share_threshold', 0.05) * 100:.0f}% 才計為增減持）[/cyan]"
+                f"\n[dim]　　資料期別：{'；'.join(published) or '—'}[/dim]"
+                f"\n[yellow]　　⚠ 最新一期為 {prov.get('report_date_to')} 的季末持股，"
+                f"距今 {prov.get('data_age_days')} 天；13F 法定申報期限為季末後 "
+                f"{prov.get('filing_lag_days')} 天，下一期（{prov.get('next_report_date')}）"
+                f"最晚 {prov.get('next_filing_due')} 公開。[/yellow]"
+                f"\n[dim]　　13F 只揭露季末快照、不揭露成交日 —— 表中的買賣發生在 "
+                f"{prov.get('trade_window_from')} 至 {prov.get('trade_window_to')} 之間的"
+                f"某個未知時點，只能作為中期部位訊號，不適合當短天期進出依據。"
+                f"　保留 {inst_report.get('history_quarters')} 期（"
+                f"{'、'.join(inst_report.get('retained_report_dates') or [])}）僅供計算連續同向季數，"
+                f"比較口徑固定為最新兩期。[/dim]"
+            )
         from rich.panel import Panel as _Panel
         self.query_one("#aa-header", Static).update(
             _Panel(coverage_line, border_style="cyan", padding=(0, 1))
         )
 
-        # bug#00061 / bug#00119: 結論區塊 — 多數性 + 規模性，三層寫作格式（結論／判斷依據／
-        # 可點選公式細節），與 Dashboard 首頁卡片共用同一份 generate_etf_recommendations()。
-        recs = generate_etf_recommendations(report, backtest=_bt, min_etfs_evaluated=_me)
         from .calibration import calibration_status_label
         _bt_status = calibration_status_label(_bt)
         w = self.query_one("#aa-conclusions", Static)
-        if recs:
-            header = f"[dim]回測校準狀態：{_bt_status}[/dim]"
-            conclusion_body, mapping = render_detail_recs(recs, header=header)
-            self._recs_by_id = mapping
-        else:
-            conclusion_body = "[dim]目前尚無足夠真實資料可生成結論（需要更多 ETF 累積 ≥2 天快照）。[/dim]"
-            self._recs_by_id = {}
-        w.border_title = "📝 結論（點『🔍 查看公式細節』看公式與計算）"
+        self._recs_by_id = {}
+        conclusion_body = (
+            f"[dim]回測校準狀態：{_bt_status}。方向結論與「與你相關」篩選在按 Esc 返回後的建議頁；"
+            "本頁是全市場研究表。[/dim]"
+            "\n[dim]表格中的「買入／賣出」只計入已確認方向事件；ETF 區塊的"
+            "「淨部位變化」為期末部位市值減期初部位市值，保留期間總體變化，"
+            "但可能包含價格與基金 AUM 影響，不直接等同交易金額；"
+            "13F 區塊則顯示已確認增減持的淨額（依真實申報股數），"
+            "以免與右側方向欄互相矛盾。[/dim]"
+            "\n[dim]「配置權重」＝該部位市值 ÷「實際持有它的基金／申報人」合計資產，"
+            "期初→期末兩個真值與 pp 變化；分母不含沒有持有它的來源。"
+            "金額會隨股價波動，配置權重才是經理人真正做的選擇。[/dim]"
+            "\n[dim]★ 為你的持有部位、◆ 為你追蹤類股的成分股，一律排在最前面。"
+            "13F 期權部位以「增持／減持」表示申報部位變化 —— 13F 不揭露買方或賣方，"
+            "增加 PUT 可能是買進避險也可能是賣出收權利金，因此不推論標的多空。[/dim]"
+        )
+        w.border_title = "研究表說明"
         w.update(conclusion_body)
 
         table = self.query_one("#aa-table", DataTable)
         empty = self.query_one("#aa-empty", Static)
 
-        if not ranked:
+        institution_rows = self._institution_rows(inst_report)
+
+        if not position_rows and not institution_rows:
             table.display = False
             empty.display = True
             if report["etfs_ready_count"] == 0:
                 empty.update(
-                    "[yellow]目前所有主動式 ETF 均尚未累積滿 2 天的真實每日持股快照，"
-                    "無法計算任何趨勢。[/yellow]\n\n"
-                    "[dim]本功能只使用系統背景刷新時真實記錄下來的每日持股快照（不會回填或"
-                    "捏造歷史資料），每次你開啟「主動式ETF排行」畫面且該ETF快取過期時，"
-                    "就會多累積一筆真實紀錄。請持續使用幾天後再回來查看，資料越多、"
-                    "趨勢判讀會越準確。[/dim]"
+                    "[yellow]目前尚未累積滿 2 個不同的真實持股狀態，"
+                    "無法計算增減持趨勢。[/yellow]\n\n"
+                    "[dim]相同持股與權重的重複每日觀測只算一個狀態，"
+                    "不會因日期不同而假裝資料已就緒。系統會持續等待資料來源"
+                    "實際更新持股內容；不回填或捏造交易。[/dim]"
                 )
             else:
                 empty.update(
-                    "[dim]目前已有部分 ETF 累積到足夠資料，但尚未出現任何跨 ETF 一致的"
-                    "買進/賣出共識（或個股僅被單一 ETF 持有，未達最低比較門檻）。"
-                    "隨著資料持續累積，此頁面會自動更新。[/dim]"
+                    "[yellow]目前沒有可比較的精確部位。[/yellow]\n\n"
+                    "[dim]系統已有不同持股狀態，但前後狀態沒有共同或新增／"
+                    "移除的具名部位可供條列。[/dim]"
                 )
             return
 
@@ -4858,27 +7258,273 @@ class AdvancedAnalysisScreen(_FormulaDrillMixin, Screen):
         empty.display = False
         table.clear(columns=False)
 
-        for sym, info in ranked:
-            consensus = info["consensus"]
-            if consensus == "up":
-                dir_s = "[bold green]▲ 買超[/bold green]"
-            elif consensus == "down":
-                dir_s = "[bold red]▼ 賣超[/bold red]"
-            else:
-                dir_s = "[dim]分歧[/dim]"
+        def _money(value) -> str:
+            if value is None:
+                return "—"
+            return ActiveETFsScreen._fmt_aum(float(value))
 
-            delta = info["est_total_share_delta"]
-            delta_s = f"~{delta:,} 股" if delta is not None else "—"
+        def _signed_money(value) -> str:
+            if value is None:
+                return "—"
+            amount = float(value)
+            sign = "+" if amount > 0 else "−" if amount < 0 else ""
+            return f"{sign}{_money(abs(amount))}"
 
+        aggregate = tilt.get("aggregate") or {}
+        flow_totals = report.get("flow_totals") or {}
+        stance_label = {
+            "long": "[bold green]看漲[/bold green]",
+            "short": "[bold red]看跌[/bold red]",
+            "neutral": "[yellow]中性[/yellow]",
+            "insufficient": "[dim]資料不足[/dim]",
+        }.get(aggregate.get("stance"), "[dim]資料不足[/dim]")
+        all_stale = bool(freshness.get("all_sources_unchanged"))
+        table.add_row(
+            "[bold cyan]全部追蹤 ETF（總體統計）[/bold cyan]",
+            "[dim]ETF 共識[/dim]",
+            f"近 {report['window_days']} 天",
+            "—",
+            "—" if all_stale else (
+                f"[green]{aggregate.get('etfs_long', 0)}↑[/green] "
+                f"[red]{aggregate.get('etfs_short', 0)}↓[/red]"
+            ),
+            "—" if all_stale else
+            f"{_money(flow_totals.get('buy_value'))} ({flow_totals.get('positions_bought', 0)} 筆)",
+            "—" if all_stale else
+            f"{_money(flow_totals.get('sell_value'))} ({flow_totals.get('positions_sold', 0)} 筆)",
+            _signed_money(flow_totals.get("net_value_delta")),
+            "[yellow]來源未更新[/yellow]" if all_stale else stance_label,
+        )
+
+        for sym, info in position_rows:
+            self._add_position_row(table, sym, info, "ETF 共識", _money, _signed_money)
+
+        # ── SEC 13F 機構季度增減持（bug#00123 A）────────────────────────────
+        if institution_rows:
+            inst_flow = inst_report.get("flow_totals") or {}
             table.add_row(
-                f"[bold white]{sym}[/bold white]",
-                dir_s,
-                f"{info['consensus_pct']:.0f}%",
-                f"[green]{len(info['etfs_up'])}[/green]",
-                f"[red]{len(info['etfs_down'])}[/red]",
-                f"[dim]{len(info['etfs_flat'])}[/dim]",
-                delta_s,
+                "[bold magenta]SEC 13F 機構（季度環比總計）[/bold magenta]",
+                "[dim]13F 申報[/dim]",
+                (
+                    f"{inst_report['report_dates'][0]}→{inst_report['report_dates'][-1]}"
+                    f"\n[dim]公開於 {(self._inst_provenance.get('periods') or [{}])[-1].get('filing_date', '—')}"
+                    f"　距今 {self._inst_provenance.get('data_age_days')} 天[/dim]"
+                    if inst_report.get("report_dates") else "—"
+                ),
+                "—",
+                f"[green]{inst_flow.get('positions_bought', 0)}↑[/green] "
+                f"[red]{inst_flow.get('positions_sold', 0)}↓[/red]",
+                _money(inst_flow.get("buy_value")),
+                _money(inst_flow.get("sell_value")),
+                _signed_money(
+                    (inst_flow.get("buy_value") or 0.0)
+                    - (inst_flow.get("sell_value") or 0.0)
+                ),
+                "[dim]真實申報股數[/dim]",
             )
+            for sym, info in institution_rows:
+                self._add_position_row(
+                    table, sym, info, "13F 申報", _money, _signed_money,
+                )
+
+    # ── helpers ─────────────────────────────────────────────────────────────
+
+    def _institution_report(self) -> dict:
+        """Quarter-over-quarter 13F consensus, or an empty report on any failure.
+
+        Kept non-fatal on purpose: the ETF section must still render if the 13F
+        history log is missing or unreadable."""
+        from .storage import taiwan_now
+        try:
+            entity_ids = [record["id"] for record in hedge_fund_records()]
+            snapshots = {
+                entity: load_etf_daily_snapshots(entity) for entity in entity_ids
+            }
+            return compute_institution_trends(
+                snapshots, today=taiwan_now().strftime("%Y-%m-%d"),
+            )
+        except Exception:
+            return {}
+
+    def _institution_rows(self, inst_report: dict) -> list[tuple]:
+        """Institutional rows worth rendering, in the user's priority order.
+
+        Four filers disclose ~16k securities, so the table would be unreadable
+        unfiltered. Every position the user holds or tracks is always kept; the
+        rest must carry a *cross-filer* directional consensus (a single manager
+        rebalancing one line is not a signal) and is capped by scale.
+        """
+        symbols = (inst_report or {}).get("symbols") or {}
+        if not symbols:
+            return []
+
+        priority: list[tuple] = []
+        others: list[tuple] = []
+        for sym, info in symbols.items():
+            key = position_display_sort_key(
+                sym, info, self._held, self._tracked, self._name_index,
+            )
+            if key[0] < 2:
+                priority.append((key, sym, info))
+            elif (
+                info.get("consensus") in ("up", "down")
+                and info.get("etfs_evaluated", 0) >= 2
+            ):
+                others.append((key, sym, info))
+
+        priority.sort(key=lambda row: row[0])
+        others.sort(key=lambda row: row[0])
+        return [
+            (sym, info)
+            for _, sym, info in priority + others[:INSTITUTION_OTHER_ROWS_CAP]
+        ]
+
+    def _add_position_row(self, table, sym, info, source_label, _money, _signed_money) -> None:
+        consensus = info.get("consensus")
+        holder_word = "家" if source_label == "13F 申報" else "檔"
+        position = info.get("position") or {}
+        is_option = position.get("instrument_type") == "option"
+        # bug#00123: an option line must NOT be labelled 看漲/看跌. Form 13F
+        # discloses the contract class and size but never whether the manager
+        # bought or wrote it, so "more PUTs" is not evidence of a bearish view
+        # (it is equally consistent with selling puts, a bullish trade) and
+        # "more CALLs" is not evidence of a bullish one. Report the position
+        # change that was actually disclosed — 增持/減持 — and leave the
+        # underlying direction unclaimed.
+        up_label = "增持 ▲" if is_option else "看漲 ▲"
+        down_label = "減持 ▼" if is_option else "看跌 ▼"
+        if consensus == "up":
+            dir_s = f"[bold green]{up_label} {info['consensus_pct']:.0f}%[/bold green]"
+        elif consensus == "down":
+            dir_s = f"[bold red]{down_label} {info['consensus_pct']:.0f}%[/bold red]"
+        elif info.get("status") == "source_unchanged":
+            # bug#00123（C）：這不是「比較後沒有變化」，是來源根本沒有發布新的持股狀態。
+            # 兩者混用同一個「持平」標籤，會讓使用者把資料缺口讀成分析結論。
+            dir_s = "[yellow]來源未更新[/yellow]"
+        elif consensus == "flat":
+            dir_s = f"[dim]持平（{len(info.get('etfs_flat') or [])} {holder_word}）[/dim]"
+        else:
+            dir_s = "[dim]分歧[/dim]"
+
+        # 多數性（家數）與規模性（金額）可以指向相反方向 —— 3 家小額加碼、1 家大額
+        # 減碼時，家數共識是「多數看多」而金額淨額是負的。兩個數字並排卻不說明，
+        # 使用者只會覺得畫面自相矛盾，因此明確標註。
+        net_for_flag = (
+            info.get("confirmed_net_trade_value")
+            if source_label == "13F 申報"
+            else info.get("confirmed_net_value_delta")
+        )
+        if consensus in ("up", "down") and net_for_flag not in (None, 0):
+            if (consensus == "up") != (net_for_flag > 0):
+                dir_s += "[yellow] ⚠ 金額背離[/yellow]"
+
+        # bug#00124：連續同向季數 —— 「連 3 季加碼」與「這季才加碼」是完全不同強度
+        # 的訊號，只有保留的歷史期別分得出來。
+        evaluated_quarters = info.get("transitions_evaluated")
+        if consensus in ("up", "down") and evaluated_quarters:
+            dir_s += (
+                f"[dim]（{info.get('same_direction_quarters', 0)}/"
+                f"{evaluated_quarters} 季同向）[/dim]"
+            )
+
+        position_label = " ".join(
+            str(position.get("name") or position.get("issuer") or sym).split()
+        )
+        ticker = resolve_position_ticker(
+            {**position, "symbol": sym}, getattr(self, "_name_index", {}),
+        )
+        if is_option:
+            option_type = position.get("option_type") or "OPTION"
+            # 13F labels already start with PUT/CALL (see
+            # institutional.parse_13f_information_table); prefixing again
+            # produced "PUT PUT TESLA".
+            if not position_label.upper().startswith(option_type.upper()):
+                position_label = f"{option_type} {position_label}"
+            expiry = position.get("expiration")
+            strike = position.get("strike")
+            if expiry and strike is not None:
+                position_label = f"{position_label} {expiry} ${strike}"
+            else:
+                position_label = (
+                    f"{position_label}（到期日/履約價未揭露，"
+                    "且 13F 不揭露買方或賣方，不推論標的方向）"
+                )
+        if ticker and ticker not in position_label:
+            position_label = f"{ticker} · {position_label}"
+
+        if ticker and ticker in self._held:
+            marker, style = "★ ", "bold yellow"
+        elif ticker and ticker in self._tracked:
+            marker, style = "◆ ", "bold cyan"
+        else:
+            marker, style = "", "bold white"
+
+        # bug#00123（C）：來源沒有發布第二個持股狀態時，「買入 $0／賣出 $0」同樣是把
+        # 資料缺口寫成量測結果。這種列一律以「—」表示無法計算。
+        stale = info.get("status") == "source_unchanged"
+        # 13F rows use transacted amounts and their net, so the money columns
+        # can never contradict the direction column beside them; ETF rows keep
+        # the raw period exposure delta, which is their only remaining signal
+        # when no directional event qualified (bug#00122 user decision).
+        if source_label == "13F 申報":
+            buy_value = info.get("buy_trade_value")
+            sell_value = info.get("sell_trade_value")
+            net_value = info.get("confirmed_net_trade_value")
+        else:
+            buy_value = info.get("buy_value")
+            sell_value = info.get("sell_value")
+            net_value = info.get("net_value_delta")
+        buy_cell = "—" if stale else _money(buy_value)
+        sell_cell = "—" if stale else _money(sell_value)
+
+        # bug#00124（使用者要求 2）：allocation —— 這檔部位佔納入比較的基金／申報人
+        # 合計資產的比重。金額會隨股價波動，配置權重才是經理人真正做的選擇。
+        start_pct = info.get("allocation_start_pct")
+        end_pct = info.get("allocation_end_pct")
+        delta_pp = info.get("allocation_delta_pp")
+        if end_pct is None:
+            alloc_cell = "—"
+        elif stale or start_pct is None or delta_pp is None:
+            # 來源未更新時只印單一權重，不畫箭頭 —— 沒有發生過的變化不該長得像變化。
+            alloc_cell = f"[dim]{end_pct:.2f}%[/dim]"
+        else:
+            tone = "green" if delta_pp > 0 else "red" if delta_pp < 0 else "dim"
+            alloc_cell = (
+                f"{start_pct:.2f}% → {end_pct:.2f}% "
+                f"[{tone}]{delta_pp:+.2f}pp[/{tone}]"
+            )
+
+        # bug#00124（使用者要求 1、2）：13F 只揭露季末快照，從不揭露成交日。因此
+        # 這一欄對 13F 是「交易發生的區間」＋資料公開日，不是交易日。
+        if source_label == "13F 申報":
+            period = (
+                f"{info.get('first_date') or '—'}→{info.get('last_date') or '—'}"
+            )
+            filed = (getattr(self, "_inst_provenance", {}) or {}).get("periods") or []
+            published = filed[-1].get("filing_date") if filed else None
+            estimated = filed[-1].get("filing_date_estimated") if filed else False
+            date_range = (
+                f"{period}\n[dim]期間內交易（未揭露成交日）"
+                + (f"　公開於 {published}{'（法定期限）' if estimated else ''}" if published else "")
+                + "[/dim]"
+            )
+        else:
+            date_range = f"{info.get('first_date') or '—'}→{info.get('last_date') or '—'}"
+
+        table.add_row(
+            f"[{style}]{marker}{position_label}[/{style}]",
+            f"[dim]{source_label}[/dim]",
+            date_range,
+            alloc_cell,
+            "—" if stale else (
+                f"[green]{len(info['etfs_up'])}↑[/green] "
+                f"[red]{len(info['etfs_down'])}↓[/red]"
+            ),
+            buy_cell,
+            sell_cell,
+            _signed_money(net_value),
+            dir_s,
+        )
 
     def action_go_back(self) -> None:
         self.dismiss()
@@ -4889,12 +7535,10 @@ class AdvancedAnalysisScreen(_FormulaDrillMixin, Screen):
 # ─────────────────────────────────────────────────────────────────────────────
 # bug#00061 / bug#00066: 期權觀察清單。標的來源 = 持倉自動帶入 ∪ 使用者自訂新增
 # （storage.load/save_options_watchlist），每日真實累積價內外 ≤60 天到期合約的快照
-# （quotes.fetch_options_snapshot）。右欄顯示每張合約的未平倉量與希臘字母（greeks.py
-# 就地以 Black-Scholes 計算，無風險利率取 ^IRX）與損益兩平點；投資建議則以
-# options_analysis.compute_iv_divergence「排除當日股價變動因素後」偵測期權異常震盪
-# 與背離。100% 離線運算，資料不足時誠實顯示收集進度，絕不回填或捏造。
-
-OPTIONS_FLOW_WINDOW_DAYS = 14
+# （quotes.fetch_options_snapshot）供「各標的期權分析」離線運算。預期波動與持倉淨 Greeks
+# 仍在本頁顯示；方向投資建議已自 TUI 移除。
+# 不顯示逐口合約價表、也不為顯示而逐口計算希臘字母。100% 離線運算，資料不足時
+# 誠實顯示收集進度，絕不回填或捏造。
 
 
 def _underlyings_from_positions(positions: list[Position]) -> list[str]:
@@ -4966,8 +7610,10 @@ def _fetch_and_cache_options_underlyings(stale: list[str]) -> None:
             if res.get("contracts"):
                 append_options_daily_snapshot(
                     u, res["contracts"], res.get("spot_price"),
+                    snapshot_date=res.get("session_date"),
                     earnings_date=earnings.get(u.upper()),
                 )
+                prune_options_history(u, max_age_days=RICHNESS_HISTORY_DAYS)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4984,10 +7630,15 @@ def _fetch_and_cache_sector_groups(user: str) -> dict:
     _fetch_and_cache_etf_symbols. No-op-safe; never fabricates data."""
     from .storage import (
         load_sector_groups, append_sector_daily_snapshot, prune_sector_history,
-        save_sector_summaries_cache,
+        save_sector_summaries_cache, sector_predictive_cache_needs_refresh,
+        save_sector_predictive_cache, mark_sector_predictive_attempt,
+        append_symbol_daily_adjusted_closes, us_session_complete,
+        us_session_date,
     )
-    from . import sector_analysis
-    from .quotes import fetch_sector_members_data
+    from . import sector_analysis, sector_predictive
+    from .quotes import (
+        fetch_sector_members_data, fetch_fx_rates, fetch_sector_prediction_bars,
+    )
 
     groups = load_sector_groups(user)
     if not groups:
@@ -4995,10 +7646,19 @@ def _fetch_and_cache_sector_groups(user: str) -> dict:
     union = sorted({s for members in groups.values() for s in members})
     data = fetch_sector_members_data(union)
 
+    # bug#00085：市值以本地幣別計價，先取真實匯率換算 USD 再加權，否則 KRW 之類的
+    # 高面額幣別會憑數值大小佔走 99% 權重。取不到匯率時 cap_weights() 會自動退回
+    # 等權並標示，不會硬加不同幣別。
+    currencies = {
+        (d.get("currency") or sector_analysis.infer_currency(sym))
+        for sym, d in data.items()
+    }
+    fx = fetch_fx_rates(sorted(c for c in currencies if c))
+
     summaries: dict[str, dict] = {}
     for name, members in groups.items():
         prune_sector_history(name)
-        summary = sector_analysis.summarize_group(data, members)
+        summary = sector_analysis.summarize_group(data, members, fx=fx)
         summaries[name] = summary
         # append_sector_daily_snapshot() takes the full summarize_group() result and
         # archives the complete per-member fields (使用者要求保留180日). Passing the
@@ -5015,6 +7675,47 @@ def _fetch_and_cache_sector_groups(user: str) -> dict:
     )
     if got_real:
         save_sector_summaries_cache(user, summaries)
+
+    # 個股 1–3 日條件機率需要多年日線才有足夠樣本。依美股交易日＋板塊設定簽章
+    # 每日最多重建一次；下載或建模失敗時保留上一版，不用空模型覆蓋真實歷史結果。
+    if sector_predictive_cache_needs_refresh(user, groups):
+        try:
+            mark_sector_predictive_attempt(user, groups)
+            history_symbols = list(dict.fromkeys([*union, "QQQ"]))
+            history = fetch_sector_prediction_bars(history_symbols, years=5)
+            truth_session = us_session_date()
+            truth_session_complete = us_session_complete()
+            completed_history = {
+                symbol: [
+                    bar
+                    for bar in bars
+                    if str(bar.get("date") or "") <= truth_session
+                    and (
+                        truth_session_complete
+                        or str(bar.get("date") or "") < truth_session
+                    )
+                ]
+                for symbol, bars in history.items()
+            }
+            for symbol, bars in completed_history.items():
+                if symbol not in union:
+                    continue
+                append_symbol_daily_adjusted_closes(
+                    symbol,
+                    (
+                        (bar["date"], bar["close"])
+                        for bar in bars
+                        if bar.get("date") and bar.get("close") is not None
+                    ),
+                    source="yfinance-auto-adjust",
+                )
+            model = sector_predictive.build_prediction_model(
+                groups,
+                completed_history,
+            )
+            save_sector_predictive_cache(user, groups, model)
+        except Exception:
+            pass
     return summaries
 
 
@@ -5138,7 +7839,17 @@ class SectorAnalysisScreen(_FormulaDrillMixin, Screen):
     #sec-members-panel { height: 1fr; border: tall #334155; }
     #sec-members-panel:focus-within { border: tall $accent; }
     #sec-members-table { height: 1fr; border: none; }
-    #sec-conclusions { height: auto; max-height: 12; padding: 0 1; margin: 0 2 1 2; border: round #d070d0; }
+    /* bug#00088：上下改為 1fr : 1fr 平均分配（原本 body=1fr、建議區 max-height:12
+       造成頭重腳輕），並改用 ScrollableContainer 讓過長的建議可上下捲動。 */
+    #sec-conclusions-panel {
+        height: 1fr;
+        margin: 0 2 1 2;
+        border: round #d070d0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+    #sec-conclusions-panel:focus-within { border: round $accent; }
+    #sec-conclusions { height: auto; padding: 0 1; }
     """
 
     def __init__(self, user: str) -> None:
@@ -5164,7 +7875,8 @@ class SectorAnalysisScreen(_FormulaDrillMixin, Screen):
                 yield Static("", id="sec-members-status")
                 with Container(id="sec-members-panel"):
                     yield DataTable(id="sec-members-table")
-        yield Static("", id="sec-conclusions")
+        with ScrollableContainer(id="sec-conclusions-panel"):
+            yield Static("", id="sec-conclusions")
         yield Footer()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -5267,7 +7979,10 @@ class SectorAnalysisScreen(_FormulaDrillMixin, Screen):
     # ── Breadth flows (offline) ─────────────────────────────────────────────────
 
     def _recompute_flows(self) -> None:
-        from .storage import load_sector_daily_snapshots
+        from .storage import (
+            load_sector_daily_snapshots, load_sector_groups,
+            load_sector_predictive_model,
+        )
         from . import sector_analysis
         # bug#00095 接線：套用已確認校準參數。
         _sap = _active_params(self.user).get('sector', {})
@@ -5280,6 +7995,14 @@ class SectorAnalysisScreen(_FormulaDrillMixin, Screen):
         }
         # bug#00093: walk-forward 回測（與 Dashboard 卡片共用同一套邏輯）。
         self._sector_backtest = sector_analysis.backtest_sector_flow(snapshots_by_group, breadth_threshold=_bth, min_days=_md)
+        _groups = load_sector_groups(self.user)
+        self._sector_predictive_model = load_sector_predictive_model(
+            self.user, _groups
+        )
+        self._sector_confirmations = (
+            ((self._sector_predictive_model or {}).get("sector_confirmation") or {}).get("groups")
+            or {}
+        )
 
     # ── Render ──────────────────────────────────────────────────────────────────
 
@@ -5325,29 +8048,67 @@ class SectorAnalysisScreen(_FormulaDrillMixin, Screen):
         self._render_conclusions()
 
     def _render_conclusions(self) -> None:
-        """底部「類股投資建議」區塊 (bug#00082 / bug#00119)：三層寫作格式（結論／判斷依據／
-        可點選公式細節），與 Dashboard「類股共識」卡片共用同一份 generate_sector_recommendations()
-        輸出、兩處一致。尚無足夠真實快照時誠實顯示收集進度，不生成假結論。"""
+        """底部類股方向預測（未來 10 個交易日）。與 Dashboard 卡片共用
+        generate_sector_recommendations()，兩處結論一致。"""
         from . import sector_analysis
 
         _sec_bt = getattr(self, "_sector_backtest", None)
-        recs = sector_analysis.generate_sector_recommendations(self.flows, backtest=_sec_bt)
+        confirmations = getattr(self, "_sector_confirmations", {}) or {}
+        recs = sector_analysis.generate_sector_recommendations(
+            self.flows, confirmations=confirmations, backtest=_sec_bt
+        )
+        all_recs = recs
         w = self.query_one("#sec-conclusions", Static)
-        w.border_title = "📝 類股投資建議（每日累計廣度共識 · 點『🔍 查看公式細節』看公式）"
-        if recs:
-            from .calibration import calibration_status_label
-            _status = calibration_status_label(_sec_bt) if _sec_bt else "資料累積中"
-            body, mapping = render_detail_recs(recs, header=f"[dim]回測校準狀態：{_status}[/dim]")
+        # bug#00088：邊框移到可捲動的外層容器，border_title 需掛在有邊框的元件上。
+        self.query_one("#sec-conclusions-panel").border_title = (
+            "📝 類股方向預測（未來 10 個交易日）"
+        )
+
+        if all_recs:
+            _model = getattr(self, "_sector_predictive_model", None) or {}
+            confirmation_as_of = (
+                (_model.get("sector_confirmation") or {}).get("as_of") or "—"
+            )
+            body, mapping = render_detail_recs(
+                all_recs,
+                header=f"[dim]複合訊號歷史資料日：{confirmation_as_of}[/dim]",
+            )
             self._recs_by_id = mapping
         else:
             ready = sum(1 for f in self.flows.values() if f.get("ready"))
             total = len(self.flows)
             body = (
-                f"[dim]資料收集中：{ready}/{total} 個板塊已有足夠真實快照，尚無「普遍」共識訊號。"
-                f"每日累計追蹤各板塊是否普遍上漲/下跌，持續運行系統會逐日累積廣度資料。[/dim]"
+                f"[dim]{ready}/{total} 個板塊已有 breadth 資料；目前沒有未來 10 個交易日"
+                f"的上漲或下跌預測，因此系統棄權。[/dim]"
             )
             self._recs_by_id = {}
         w.update(body)
+
+    def _market_stress_lines(self) -> list[str]:
+        """市場級訊號（bug#00085）：跨板塊廣度 + 單日嚴重度，離線由已累積的真實快照
+        計算。無訊號或資料不足時回空 list（不顯示、不臆測）。"""
+        from . import sector_analysis
+        from .storage import load_sector_daily_snapshots, load_sector_groups
+        try:
+            snaps = {g: load_sector_daily_snapshots(g) for g in load_sector_groups(self.user)}
+            snaps = {g: s for g, s in snaps.items() if s}
+            if not snaps:
+                return []
+            comp = sector_analysis.compute_composite_index(snaps)
+            stress = sector_analysis.detect_market_stress(snaps, benchmark_by_date=comp)
+            sev = {}
+            for g, s in snaps.items():
+                ev = sector_analysis.detect_severity_event(s)
+                if ev.get("direction") in ("up", "down") and ev.get("ready"):
+                    sev[g] = ev
+            # bug#00087：先寫出「目前整體狀態」的初步結論，再列市場/單日訊號。
+            # 先前只逐板塊條列，使用者看不到「類股層面已達持續下跌共識」這個結論。
+            lines = sector_analysis.consensus_lines(
+                self.flows, stress, getattr(self, "_sector_backtest", None)
+            )
+            return lines + sector_analysis.generate_market_conclusions(stress, sev)
+        except Exception:
+            return []
 
     def _render_members(self, group: str) -> None:
         self.selected_group = group
@@ -5398,25 +8159,36 @@ class SectorAnalysisScreen(_FormulaDrillMixin, Screen):
         from .storage import sector_cache_needs_refresh, load_sector_summaries_cache
 
         if not force and not sector_cache_needs_refresh(self.user):
-            cached = load_sector_summaries_cache(self.user).get("summaries") or {}
-            if cached:
-                self.app.call_from_thread(self._on_fetch_complete, cached, True)
+            cached = load_sector_summaries_cache(self.user)
+            summaries = cached.get("summaries") or {}
+            if summaries:
+                self.app.call_from_thread(
+                    self._on_fetch_complete,
+                    summaries,
+                    True,
+                    cached.get("last_refreshed") or "",
+                )
                 return
 
         self.app.call_from_thread(self._set_header, "⏳ 正在更新各板塊成分股即時數據...")
         summaries = _fetch_and_cache_sector_groups(self.user)
         self.app.call_from_thread(self._on_fetch_complete, summaries, False)
 
-    def _on_fetch_complete(self, summaries: dict, from_cache: bool = False) -> None:
+    def _on_fetch_complete(
+        self,
+        summaries: dict,
+        from_cache: bool = False,
+        cached_at: str = "",
+    ) -> None:
         # 載入新價前保留上一筆最後資料：抓取結果為空（無群組/失敗）時不清空畫面。
+        summaries_changed = bool(summaries and summaries != self.summaries)
         if summaries:
             self.summaries = summaries
-        self._recompute_flows()
+        if not from_cache or summaries_changed:
+            self._recompute_flows()
         if from_cache:
-            from .storage import load_sector_summaries_cache
-            ts_raw = load_sector_summaries_cache(self.user).get("last_refreshed") or ""
             try:
-                self._updated_at = datetime.fromisoformat(ts_raw)
+                self._updated_at = datetime.fromisoformat(cached_at)
             except (ValueError, TypeError):
                 self._updated_at = None
             ts = self._updated_at.strftime("%Y-%m-%d %H:%M") if self._updated_at else "—"
@@ -5541,7 +8313,7 @@ class AddTickerModal(ModalScreen[Optional[str]]):
         else:
             self.dismiss(None)
 
-    def on_input_submitted(self, event) -> None:
+    def on_input_submitted(self, _event) -> None:
         self._submit()
 
     def on_key(self, event) -> None:
@@ -5588,13 +8360,14 @@ class RemoveTickerModal(ModalScreen[Optional[str]]):
             self.dismiss(None)
 
 
-class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
-    """期權觀察清單 —— 標的自管理 + 價內外 ≤60 天合約的希臘字母與異常震盪/背離偵測。"""
+class OptionsWatchlistScreen(Screen):
+    """期權觀察清單 —— 標的自管理 + 各標的預期波動與持倉淨 Greeks。"""
+
+    RICHNESS_COLUMN_INDEX = 4  # 波動貴賤：↑↓ 選列、Enter 看 ATM IV−RV 走勢
 
     BINDINGS = [
         Binding("a",      "add_ticker",    "新增標的"),
         Binding("d",      "remove_ticker", "刪除標的"),
-        Binding("k",      "calibration",   "校準狀態"),
         Binding("h",      "help",          "說明"),
         Binding("c",      "clear_cache",   "重抓今日"),
         Binding("escape", "go_back",       "返回看板"),
@@ -5612,142 +8385,95 @@ class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
         margin: 1 2 0 2;
     }
     #ow-top {
-        /* bug#00089 捲動修正：結論卡內容變長時，上方區塊原本會把下方標的清單/
-           合約明細擠出畫面且無捲軸可用。改以可捲動容器包住「期權分析總表＋分析
-           結論卡」：內容短時只占實際高度(height:auto)，過長時封頂並出現捲軸
-           （滑鼠滾輪或點擊後方向鍵皆可捲動），#ow-body 永遠保有其餘空間。
-           bug#00119：上限由 65% 降到 42%，避免上方把下方買/賣權合約表壓到過小；
-           內容超出時在此區塊內捲動即可。 */
-        height: auto;
-        max-height: 42%;
+        /* 畫面只留「各標的期權分析」：可捲動容器吃滿 header 以外空間。 */
+        height: 1fr;
     }
     #ow-top:focus-within { border-left: tall $accent; }
     #ow-portfolio {
         height: auto;
+        min-height: 12;
         padding: 0 1;
         margin: 1 2 0 2;
     }
-    #ow-verdicts {
+    #ow-portfolio-foot {
         height: auto;
-        padding: 0 1;
-        margin: 1 2 0 2;
-        border: round #d070d0;
+        padding: 0 1 1 1;
+        margin: 0 2 0 2;
     }
-    #ow-body {
-        /* bug#00119：買/賣權合約表區——1fr 吃滿 #ow-top 以外的空間，並保底 14 列
-           高度，確保下方合約明細的可視範圍不會被上方壓縮到過小。 */
-        height: 1fr;
-        min-height: 14;
-        layout: horizontal;
-        margin: 1 2;
-    }
-    #ow-left-col {
-        width: 28%;
-        height: 1fr;
-        border: tall #334155;
-        margin-right: 1;
-    }
-    #ow-left-col:focus-within { border: tall $accent; }
-    #ow-list-table { height: 1fr; border: none; }
-    #ow-right-col {
-        width: 72%;
-        height: 1fr;
-        layout: horizontal;
-    }
-    #ow-calls-col {
-        width: 1fr;
-        height: 1fr;
-        border: tall #1c3320;
-        margin-right: 1;
-    }
-    #ow-calls-col:focus-within { border: tall $success; }
-    #ow-puts-col {
-        width: 1fr;
-        height: 1fr;
-        border: tall #331c1c;
-    }
-    #ow-puts-col:focus-within { border: tall $error; }
-    #ow-calls-label { height: 1; padding: 0 1; background: #1c3320; color: #4ade80; }
-    #ow-puts-label  { height: 1; padding: 0 1; background: #331c1c; color: #f87171; }
-    #ow-calls-table { height: 1fr; border: none; }
-    #ow-puts-table  { height: 1fr; border: none; }
     """
 
     def __init__(self, user: str, positions: list[Position]) -> None:
         super().__init__()
         self.user = user
         self.positions = positions
-        self.underlyings, self.pos_set, self.extra_set = _watchlist_underlyings(user, positions)
-        self.report: dict = {}
-        self.iv_pct: dict = {}  # {underlying: compute_iv_percentile(...)}
+        self.underlyings, _, self.extra_set = _watchlist_underlyings(user, positions)
         self.expected_move: dict = {}  # {underlying: compute_expected_move(...)}
+        self.richness: dict = {}  # {underlying: assess_option_richness(...)}
         self.spot_by_underlying: dict = {}  # underlying -> spot, for portfolio Greeks
-        self.selected_underlying: Optional[str] = None
+        self.closes_by_underlying: dict = {}  # underlying -> trailing closes for RV
+        self.dated_closes_by_underlying: dict = {}  # underlying -> [(YYYY-MM-DD, close)]
+        self.earnings_note_by_underlying: dict = {}  # underlying -> "財報剩Nd" | None
+        self._table_underlyings: list[str] = []
         self.r: float = 0.04  # risk-free rate; refreshed from ^IRX in background
 
     def compose(self) -> ComposeResult:
         yield Static("", id="ow-header")
         with ScrollableContainer(id="ow-top"):
-            yield Static("", id="ow-portfolio")
-            yield Static("", id="ow-verdicts")
-        with Horizontal(id="ow-body"):
-            with Container(id="ow-left-col"):
-                yield DataTable(id="ow-list-table")
-            with Horizontal(id="ow-right-col"):
-                with Container(id="ow-calls-col"):
-                    yield Static("[bold green]📗 買權 Call[/bold green]", id="ow-calls-label")
-                    yield DataTable(id="ow-calls-table")
-                with Container(id="ow-puts-col"):
-                    yield Static("[bold red]📕 賣權 Put[/bold red]", id="ow-puts-label")
-                    yield DataTable(id="ow-puts-table")
+            yield DataTable(id="ow-portfolio")
+            yield Static("", id="ow-portfolio-foot")
         yield Footer()
 
     def on_mount(self) -> None:
-        list_t = self.query_one("#ow-list-table", DataTable)
-        list_t.cursor_type = "row"
-        list_t.add_columns("標的", "來源", "異常", "IV位階")
-
-        _g_cols = ("履約價", "價內外", "DTE", "未平倉", "IV", "Δ", "Γ", "Θ", "損益兩平")
-        ct = self.query_one("#ow-calls-table", DataTable)
-        ct.cursor_type = "row"
-        ct.add_columns(*_g_cols)
-        pt = self.query_one("#ow-puts-table", DataTable)
-        pt.cursor_type = "row"
-        pt.add_columns(*_g_cols)
-
+        table = self.query_one("#ow-portfolio", DataTable)
+        table.cursor_type = "cell"
+        table.zebra_stripes = True
+        table.add_columns(
+            "標的",
+            "預期波動 ±1σ",
+            "ATM IV",
+            "RV",
+            "波動貴賤",
+            "Call溢價",
+            "Put溢價",
+            "跨式溢價",
+            "持倉Δ$",
+            "Θ/日",
+            "Vega",
+        )
         for u in self.underlyings:
-            prune_options_history(u)
+            prune_options_history(u, max_age_days=RICHNESS_HISTORY_DAYS)
 
         self._set_header(f"⏳ 載入 {len(self.underlyings)} 檔標的資料...")
-        self._render_list()
         self._run_analysis()
-        list_t.focus()
+        table.focus()
         self.run_background_fetch()
 
     def _set_header(self, status: str) -> None:
         from rich.panel import Panel as _Panel
         self.query_one("#ow-header", Static).update(
             _Panel(
-                f"[bold cyan]🎯 期權觀察清單 — 希臘字母與異常震盪偵測[/bold cyan]  "
-                f"[dim]│[/dim]  [dim]a 新增　d 刪除　k 校準　h 說明　c 重抓今日[/dim]  [dim]│[/dim]  {status}",
+                f"[bold cyan]🎯 期權觀察清單 — 各標的分析[/bold cyan]  "
+                f"[dim]│[/dim]  [dim]↑↓ 波動貴賤　Enter 走勢　a 新增　d 刪除　h 說明　c 重抓今日[/dim]  "
+                f"[dim]│[/dim]  {status}",
                 border_style="cyan", padding=(0, 1),
             )
         )
 
     def _render_portfolio(self) -> None:
         """bug#00073: 各標的期權分析總表 —— **以觀察清單標的為列**（新增標的會即時多一列），
-        每列顯示由價平跨式估算的『預期波動區間』、ATM IV，以及若你持有該標的選擇權時的
-        『淨 Greeks』(僅選擇權、逐標的、bug#00071/72)。現股不納入 Greeks。"""
-        from rich.panel import Panel as _Panel
-        from rich.table import Table as _Table
-        from rich.console import Group as _Group
+        每列顯示由價平跨式估算的『預期波動區間』、ATM IV 相對已實現波動的貴賤，
+        以及若你持有該標的選擇權時的『淨 Greeks』(僅選擇權、逐標的、bug#00071/72)。現股不納入 Greeks。"""
+        from textual.coordinate import Coordinate
         from rich.text import Text as _Text
 
+        table = self.query_one("#ow-portfolio", DataTable)
+        foot = self.query_one("#ow-portfolio-foot", Static)
+        old_row = table.cursor_coordinate.row if table.row_count else 0
+
         if not self.underlyings:
-            self.query_one("#ow-portfolio", Static).update(
-                _Panel("[dim]清單為空，按 a 新增標的[/dim]",
-                       title="[bold]📊 各標的期權分析[/bold]", border_style="green", padding=(0, 1))
-            )
+            table.clear(columns=False)
+            self._table_underlyings = []
+            foot.update("[dim]清單為空，按 a 新增標的[/dim]")
             return
 
         pg = compute_portfolio_greeks(self.positions, self.spot_by_underlying, r=self.r, options_only=True)
@@ -5759,31 +8485,53 @@ class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
             sign = "+" if (signed and v >= 0) else ""
             return f"[{c}]{sign}${v:,.0f}[/{c}]"
 
-        # bug#00119: 每列單行呈現——把「損益兩平」由原本的第二行改成獨立欄位，
-        # 避免預期波動格換行成兩行、壓縮下方買賣權表的可視高度。
-        tbl = _Table(show_header=True, header_style="bold", box=None, expand=True, padding=(0, 1))
-        tbl.add_column("標的")
-        tbl.add_column("預期波動 ±1σ", justify="right")
-        tbl.add_column("損益兩平", justify="right")
-        tbl.add_column("ATM IV", justify="right")
-        tbl.add_column("持倉Δ$", justify="right")
-        tbl.add_column("Θ/日", justify="right")
-        tbl.add_column("Vega", justify="right")
+        def _rich_label(kind: str) -> str:
+            return {
+                "expensive": "[red]偏貴[/red]",
+                "cheap": "[cyan]偏便宜[/cyan]",
+                "fair": "合理",
+            }.get(kind, "—")
 
-        MAX_ROWS = 10
-        shown = self.underlyings[:MAX_ROWS]
-        for u in shown:
+        def _edge_cell(side: Optional[dict]) -> str:
+            if not side or side.get("edge") is None:
+                return "[dim]—[/dim]"
+            edge = side["edge"]
+            warn = " [yellow]⚠[/yellow]" if side.get("low_confidence") else ""
+            return f"{_rich_label(side['label'])} {edge:+.2f}{warn}"
+
+        table.clear(columns=False)
+        self._table_underlyings = []
+        for u in self.underlyings:
             em = self.expected_move.get(u)
             if em and em.get("sigma_abs") is not None:
                 warn = " [yellow]⚠[/yellow]" if em.get("low_confidence") else ""
                 em_s = (f"[white]±${em['sigma_abs']:.2f}[/white] "
                         f"[dim](±{em['sigma_pct']:.1f}%,{em['dte']}d)[/dim]{warn}")
-                be_s = f"[dim]±${em['breakeven_abs']:.2f}[/dim]"
                 iv_s = f"{em['atm_iv'] * 100:.0f}%{warn}" if em.get("atm_iv") else "—"
             else:
                 em_s = "[dim]資料收集中[/dim]"
-                be_s = "[dim]—[/dim]"
                 iv_s = "—"
+
+            rich = self.richness.get(u) or {}
+            if rich.get("ready") and rich.get("realized_vol") is not None:
+                rv_s = f"{rich['realized_vol'] * 100:.0f}%"
+                spread = rich.get("vol_spread")
+                spread_s = f" {spread * 100:+.0f}pp" if spread is not None else ""
+                vol_s = f"{_rich_label(rich['richness'])}{spread_s}"
+                earn_note = self.earnings_note_by_underlying.get(u)
+                if earn_note:
+                    vol_s += f" [yellow]{earn_note}[/yellow]"
+                call_s = _edge_cell(rich.get("call"))
+                put_s = _edge_cell(rich.get("put"))
+                st = rich.get("straddle_edge")
+                st_s = f"{st:+.2f}" if st is not None else "[dim]—[/dim]"
+                if rich.get("low_confidence"):
+                    vol_s += " [yellow]⚠[/yellow]"
+            else:
+                rv_s = vol_s = call_s = put_s = st_s = "[dim]樣本不足[/dim]"
+                earn_note = self.earnings_note_by_underlying.get(u)
+                if earn_note:
+                    vol_s = f"[dim]樣本不足[/dim] [yellow]{earn_note}[/yellow]"
 
             g = by_u.get(u)
             if g and g["priced"] > 0:
@@ -5794,53 +8542,40 @@ class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
             else:
                 d_s = t_s = v_s = "[dim]—[/dim]"
                 held = ""
-            tbl.add_row(f"[bold white]{u}[/bold white]{held}", em_s, be_s, iv_s, d_s, t_s, v_s)
-
-        # 持倉選擇權 Greeks 合計（僅在有持倉時顯示）
-        if total["priced"] > 0:
-            tbl.add_row(
-                "[dim]— 持倉選擇權合計 —[/dim]", "", "", "",
-                _money(total["delta_dollars"], signed=False),
-                _money(total["theta_day"]),
-                f"${total['vega_1pt']:,.0f}",
+            table.add_row(
+                f"[bold white]{u}[/bold white]{held}",
+                em_s, iv_s, rv_s, vol_s, call_s, put_s, st_s, d_s, t_s, v_s,
             )
+            self._table_underlyings.append(u)
 
-        foot = ["[dim]±1σ＝現價×IV×√(DTE/365)；損益兩平＝價平跨式價；[yellow]⚠[/yellow]＝低可信度；"
-                "◆＝持有該標的選擇權（Δ$/Θ/Vega 淨值，現股不計）[/dim]"]
-        if len(self.underlyings) > len(shown):
-            foot.append(f"[dim]… 另有 {len(self.underlyings) - len(shown)} 檔未列出（清單前 {MAX_ROWS} 檔）[/dim]")
+        notes = [
+            "[dim]波動貴賤欄 ↑↓ 選擇、Enter 看近90天每日 ATM IV − RV（RV＝當日往前20個交易日；更早快照會刪除）。"
+            "波動貴賤＝ATM IV 對近20日已實現波動（≥+3pp 偏貴、≤−3pp 偏便宜）。"
+            "財報剩 N 天僅在剩餘 <10 天時顯示。"
+            "Call/Put／跨式溢價＝市價中間價 − 以已實現波動代入 BS 的理論價；正＝權利金偏貴。"
+            "這不是股價漲跌預測。[yellow]⚠[/yellow]＝低可信度；"
+            "◆＝持有該標的選擇權（Δ$/Θ/Vega 淨值，現股不計）[/dim]"
+        ]
+        if total["priced"] > 0:
+            notes.insert(
+                0,
+                f"持倉選擇權合計  Δ$ {_money(total['delta_dollars'], signed=False)}  "
+                f"Θ/日 {_money(total['theta_day'])}  "
+                f"Vega ${total['vega_1pt']:,.0f}",
+            )
         if total["unpriced"]:
-            foot.append(f"[dim][yellow]*[/yellow] {len(total['unpriced'])} 筆選擇權無法定價（缺現價/無法反解 IV），未計入合計[/dim]")
+            notes.append(
+                f"[dim][yellow]*[/yellow] {len(total['unpriced'])} 筆選擇權無法定價（缺現價/無法反解 IV），未計入合計[/dim]"
+            )
+        foot.update(_Text.from_markup("\n".join(notes)))
 
-        self.query_one("#ow-portfolio", Static).update(
-            _Panel(_Group(tbl, _Text.from_markup("\n".join(foot))),
-                   title="[bold]📊 各標的期權分析（預期波動 + 你的選擇權淨 Greeks）[/bold]",
-                   border_style="green", padding=(0, 1))
-        )
-
-    # ── Left list ─────────────────────────────────────────────────────────────
-
-    def _render_list(self) -> None:
-        list_t = self.query_one("#ow-list-table", DataTable)
-        list_t.clear(columns=False)
-        if not self.underlyings:
-            list_t.add_row("[dim]清單為空，按 a 新增標的[/dim]", "", "", "")
-            return
-        div_by_u: dict[str, int] = {}
-        for e in self.report.get("events", []):
-            div_by_u[e["underlying"]] = div_by_u.get(e["underlying"], 0) + 1
-        for u in self.underlyings:
-            src = "[cyan]📌持倉[/cyan]" if u in self.pos_set else "[magenta]➕自訂[/magenta]"
-            n = div_by_u.get(u, 0)
-            nb = f"[yellow]{n}[/yellow]" if n else "[dim]0[/dim]"
-            info = self.iv_pct.get(u)
-            if info and info.get("ready") and info.get("percentile") is not None:
-                p = info["percentile"]
-                col = "red" if p >= 70 else "green" if p <= 30 else "white"
-                iv_s = f"[{col}]{p}%[/{col}]"
-            else:
-                iv_s = "[dim]—[/dim]"
-            list_t.add_row(f"[bold white]{u}[/bold white]", src, nb, iv_s)
+        if table.row_count:
+            table.cursor_coordinate = Coordinate(
+                min(max(old_row, 0), table.row_count - 1),
+                self.RICHNESS_COLUMN_INDEX,
+            )
+            if self.app.screen is self:
+                table.focus()
 
     # ── Background worker ──────────────────────────────────────────────────────
 
@@ -5851,17 +8586,20 @@ class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
         from .storage import options_symbol_fresh
         from .quotes import fetch_risk_free_rate
 
+        previous_rate = self.r
         self.r = fetch_risk_free_rate(default=self.r)
         self._refresh_underlying_spots()
+        self._refresh_underlying_closes()
+        rate_changed = abs(self.r - previous_rate) > 1e-9
 
         stale = [u for u in self.underlyings if not options_symbol_fresh(u)]
         if not stale:
-            self.app.call_from_thread(self._on_fetch_complete, "[green]✅ 快取皆為今日最新[/green]")
+            self.app.call_from_thread(self._on_fetch_complete, rate_changed)
             return
 
         self.app.call_from_thread(self._set_header, f"⏳ 正在背景更新 {len(stale)} 檔標的的期權資料...")
         _fetch_and_cache_options_underlyings(stale)
-        self.app.call_from_thread(self._on_fetch_complete, "[green]✅ 期權資料載入完成[/green]")
+        self.app.call_from_thread(self._on_fetch_complete, True)
 
     def _refresh_underlying_spots(self) -> None:
         """抓取持倉中選擇權標的的現價（供投資組合淨 Greeks 反解 IV 用）。在背景執行緒呼叫。"""
@@ -5881,125 +8619,73 @@ class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
         except Exception:
             pass
 
-    def _on_fetch_complete(self, _msg: str = "") -> None:
-        self._run_analysis()
+    def _refresh_underlying_closes(self) -> None:
+        """Trailing daily closes for realized vol. Runs on the background thread."""
+        from datetime import date, datetime, timedelta
+        from .quotes import fetch_benchmark_history, _normalize_symbol_for_yf
+
+        end = date.today()
+        start = end - timedelta(days=RICHNESS_HISTORY_DAYS + 40)
+        start_dt = datetime(start.year, start.month, start.day)
+        end_dt = datetime(end.year, end.month, end.day)
+        closes: dict = {}
+        dated: dict = {}
+        for underlying in self.underlyings:
+            yf_symbol = _normalize_symbol_for_yf(underlying, "stock", "USD")
+            rows = fetch_benchmark_history(yf_symbol, start_dt, end_dt)
+            if rows:
+                dated[underlying] = [(day.isoformat(), price) for day, price in rows]
+                closes[underlying] = [price for _, price in rows]
+        if closes:
+            self.closes_by_underlying = {**self.closes_by_underlying, **closes}
+            self.dated_closes_by_underlying = {**self.dated_closes_by_underlying, **dated}
+
+    def _on_fetch_complete(self, analysis_changed: bool = True) -> None:
+        if analysis_changed:
+            self._run_analysis()
+        else:
+            # The mount path already rendered the unchanged snapshot analysis.
+            # Spot prices can still have changed, so only refresh the lightweight
+            # portfolio Greeks panel.
+            self._render_portfolio()
 
     # ── Analysis + render ────────────────────────────────────────────────────
 
     def _run_analysis(self) -> None:
         snapshots_by_underlying = {u: load_options_daily_snapshots(u) for u in self.underlyings}
-        # bug#00067: compute both signal sets and render them via the SAME combined
-        # generator the Dashboard card uses, so the two views stay aligned.
-        flow_report = compute_options_flow(snapshots_by_underlying, window_days=OPTIONS_FLOW_WINDOW_DAYS)
-        self.report = compute_iv_divergence(
-            snapshots_by_underlying, r=self.r, window_days=OPTIONS_FLOW_WINDOW_DAYS
-        )
-        report = self.report
-        # bug#00068 #1: IV 位階（每檔標的相對自身歷史的 IV 百分位）
-        self.iv_pct = {u: compute_iv_percentile(snapshots_by_underlying[u]) for u in self.underlyings}
-        # bug#00073: 預期波動區間（由最新快照的價平跨式估算）
         self.expected_move = {
             u: compute_expected_move(snapshots_by_underlying[u][-1] if snapshots_by_underlying[u] else None)
             for u in self.underlyings
         }
-        self._render_portfolio()  # 各標的期權分析（預期波動 + 選擇權淨 Greeks）
+        self.richness = {
+            u: richness_from_history(
+                snapshots_by_underlying[u],
+                r=self.r,
+                closes=self.closes_by_underlying.get(u),
+            )
+            for u in self.underlyings
+        }
+        from .storage import taiwan_now
+        today = taiwan_now().strftime("%Y-%m-%d")
+        notes = {}
+        for u in self.underlyings:
+            snaps = snapshots_by_underlying[u]
+            earn = snaps[-1].get("earnings_date") if snaps else None
+            notes[u] = earnings_remaining_note(days_to_earnings(today, earn))
+        self.earnings_note_by_underlying = notes
+        self._render_portfolio()
 
-        # bug#00099 / bug#00119: 分析結論卡 —— 三層寫作格式（結論／判斷依據／可點選公式細節）。
-        # 每檔用自己的獨立 walk-forward 回測（generate_options_recommendations 內對每檔各跑一次
-        # backtest_verdicts({u: snaps})）。頁面為完整檢視，含觀望標的。與 Dashboard 卡片共用同一
-        # 份生成函式，只差 include_neutral 與每檔事件數。
-        verdict_report = compute_directional_verdicts(
-            snapshots_by_underlying, r=self.r, window_days=OPTIONS_FLOW_WINDOW_DAYS
-        )
-        recs = generate_options_recommendations(
-            verdict_report, flow_report, report, snapshots_by_underlying,
-            r=self.r, window_days=OPTIONS_FLOW_WINDOW_DAYS, positions=self.positions,
-            iv_pct_by_underlying=self.iv_pct, include_neutral=True,
-            top_events_per_underlying=4,
-        )
-        w = self.query_one("#ow-verdicts", Static)
-        w.border_title = "📋 分析結論卡（綜合方向判斷 · 點『🔍 查看公式細節』看公式/回測/事件）"
-        if recs:
-            footer = ("[dim]方向結論＝未平倉建倉 skew＋排除股價變動的殘差偏向，兩訊號矛盾時顯示觀望；"
-                      "每檔命中率來自該標的自己的 walk-forward 回測（按 [bold]k[/bold] 看 1/5/10 日完整校準）。"
-                      "僅供參考，非投資建議。[/dim]")
-            body, mapping = render_detail_recs(recs)
-            body = body + "\n\n" + footer
-            self._recs_by_id = mapping
-        elif report["ready_count"] == 0:
-            body = "[dim]資料收集中：需累積 ≥2 天真實快照才能產生方向結論（下方合約明細於首次抓取後即時顯示）。[/dim]"
-            self._recs_by_id = {}
-        else:
-            body = "[dim]近期無方向訊號，亦無「超出股價變動」的異常震盪/背離或未平倉建倉事件。[/dim]"
-            self._recs_by_id = {}
-        w.update(body)
-
+        ready = sum(1 for snaps in snapshots_by_underlying.values() if snaps)
+        last_dates = [
+            snaps[-1].get("date")
+            for snaps in snapshots_by_underlying.values()
+            if snaps and snaps[-1].get("date")
+        ]
+        as_of = max(last_dates) if last_dates else "—"
         self._set_header(
-            f"清單 {len(self.underlyings)} 檔　資料進度 {report['ready_count']}/{report['total_count']}　"
-            f"視窗 {report['window_days']} 天　無風險利率 {self.r * 100:.2f}%　更新 {report['as_of']}"
+            f"清單 {len(self.underlyings)} 檔　已有快照 {ready}/{len(self.underlyings)}　"
+            f"無風險利率 {self.r * 100:.2f}%　更新 {as_of}"
         )
-
-        self._render_list()
-        if self.underlyings:
-            if self.selected_underlying not in self.underlyings:
-                self.selected_underlying = self.underlyings[0]
-            self._render_greeks(self.selected_underlying)
-        else:
-            self._render_greeks(None)
-
-    def _render_greeks(self, underlying: Optional[str]) -> None:
-        """bug#00077: 買權/賣權拆成左右兩欄分別顯示。"""
-        ct = self.query_one("#ow-calls-table", DataTable)
-        pt = self.query_one("#ow-puts-table", DataTable)
-        ct.clear(columns=False)
-        pt.clear(columns=False)
-        _empty = ("", "", "", "", "", "", "", "")
-
-        if not underlying:
-            ct.add_row("[dim]清單為空，按 a 新增標的[/dim]", *_empty)
-            pt.add_row("[dim]清單為空，按 a 新增標的[/dim]", *_empty)
-            return
-
-        view = build_contract_view(underlying, load_options_daily_snapshots(underlying), r=self.r)
-        rows = view["rows"]
-        if not rows:
-            ct.add_row("[dim]資料收集中，尚無今日真實期權快照[/dim]", *_empty)
-            pt.add_row("[dim]資料收集中，尚無今日真實期權快照[/dim]", *_empty)
-            return
-
-        def _fmt(row: dict) -> tuple:
-            strike_s = f"[bold white]${row['strike']:g}[/bold white] {row['expiry']}"
-            mny = row["moneyness"] or "—"
-            mny_s = f"[green]{mny}[/green]" if mny == "ITM" else f"[dim]{mny}[/dim]"
-            dte_s = str(row["dte"]) if row["dte"] is not None else "—"
-            oi_s = f"{int(row['open_interest']):,}" if row["open_interest"] is not None else "—"
-            iv_s = f"{row['iv'] * 100:.0f}%" if row["iv"] is not None else "—"
-            d_s = f"{row['delta']:.2f}" if row["delta"] is not None else "—"
-            g_s = f"{row['gamma']:.3f}" if row["gamma"] is not None else "—"
-            th_s = f"{row['theta']:.3f}" if row["theta"] is not None else "—"
-            be_s = f"${row['break_even']:g}" if row["break_even"] is not None else "—"
-            return (strike_s, mny_s, dte_s, oi_s, iv_s, d_s, g_s, th_s, be_s)
-
-        calls = [r for r in rows if r["type"] == "call"]
-        puts  = [r for r in rows if r["type"] == "put"]
-
-        for r in calls:
-            ct.add_row(*_fmt(r))
-        if not calls:
-            ct.add_row("[dim]無買權資料[/dim]", *_empty)
-
-        for r in puts:
-            pt.add_row(*_fmt(r))
-        if not puts:
-            pt.add_row("[dim]無賣權資料[/dim]", *_empty)
-
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.data_table.id == "ow-list-table" and 0 <= event.cursor_row < len(self.underlyings):
-            self.selected_underlying = self.underlyings[event.cursor_row]
-            self._render_greeks(self.selected_underlying)
-
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self.on_data_table_row_highlighted(event)
 
     # ── Add / remove tickers ───────────────────────────────────────────────────
 
@@ -6015,9 +8701,8 @@ class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
             return
         from .storage import load_options_watchlist, save_options_watchlist
         save_options_watchlist(self.user, load_options_watchlist(self.user) + [ticker])
-        self.underlyings, self.pos_set, self.extra_set = _watchlist_underlyings(self.user, self.positions)
-        self.selected_underlying = ticker
-        prune_options_history(ticker)
+        self.underlyings, _, self.extra_set = _watchlist_underlyings(self.user, self.positions)
+        prune_options_history(ticker, max_age_days=RICHNESS_HISTORY_DAYS)
         self.app.notify(f"✅ 已加入 {ticker}，背景抓取期權資料中...")
         # 立即重跑分析：上方「各標的期權分析」表會馬上多一列（新標的先顯示「資料收集中」，
         # 待背景抓完再自動補上預期波動/IV/Greeks）(bug#00073)
@@ -6036,28 +8721,96 @@ class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
             return
         from .storage import load_options_watchlist, save_options_watchlist
         save_options_watchlist(self.user, [t for t in load_options_watchlist(self.user) if t != ticker])
-        self.underlyings, self.pos_set, self.extra_set = _watchlist_underlyings(self.user, self.positions)
-        if self.selected_underlying == ticker:
-            self.selected_underlying = self.underlyings[0] if self.underlyings else None
+        self.underlyings, _, self.extra_set = _watchlist_underlyings(self.user, self.positions)
         self.app.notify(f"🗑️ 已移除 {ticker}")
         self._run_analysis()
 
     def action_go_back(self) -> None:
         self.dismiss()
 
-    def action_calibration(self) -> None:
-        """[k] 開啟訊號回測校準狀態畫面（bug#00070）。"""
-        self.app.push_screen(CalibrationScreen(self.user, self.underlyings))
-
     def action_help(self) -> None:
         """[h] 開啟本頁各項數值的詳細說明頁（bug#00076）。"""
         self.app.push_screen(OptionsHelpScreen())
 
+    def _fetch_dated_closes_now(self, underlying: str) -> list[tuple[str, float]]:
+        """Stock daily closes covering the 90-day window plus a 20-session RV lookback."""
+        from datetime import date, datetime, timedelta
+        from .quotes import fetch_benchmark_history, _normalize_symbol_for_yf
+
+        have = list(self.dated_closes_by_underlying.get(underlying) or [])
+        if len(have) >= RV_WINDOW + 40:
+            return have
+        end = date.today()
+        start = end - timedelta(days=RICHNESS_HISTORY_DAYS + 45)
+        rows = fetch_benchmark_history(
+            _normalize_symbol_for_yf(underlying, "stock", "USD"),
+            datetime(start.year, start.month, start.day),
+            datetime(end.year, end.month, end.day),
+        )
+        dated = [(day.isoformat(), price) for day, price in rows]
+        if dated:
+            self.dated_closes_by_underlying[underlying] = dated
+            self.closes_by_underlying[underlying] = [price for _, price in dated]
+        return dated or have
+
+    def _contract_iv_map(self, underlying: str, snaps: list, dated: list) -> dict:
+        latest = snaps[-1] if snaps else None
+        atm = _select_atm_pair(latest)
+        if not atm:
+            return {}
+        from datetime import date, datetime, timedelta
+        from .quotes import fetch_option_daily_closes
+
+        end = date.today()
+        start = end - timedelta(days=RICHNESS_HISTORY_DAYS + 5)
+        start_dt = datetime(start.year, start.month, start.day)
+        end_dt = datetime(end.year, end.month, end.day)
+        call_h = fetch_option_daily_closes(str(atm.get("call_symbol") or ""), start_dt, end_dt)
+        put_h = fetch_option_daily_closes(str(atm.get("put_symbol") or ""), start_dt, end_dt)
+        if not call_h and not put_h:
+            return {}
+        return invert_contract_iv_series(
+            dated,
+            strike=atm["strike"],
+            expiry=atm["expiry"],
+            call_closes=[(day.isoformat(), price) for day, price in call_h],
+            put_closes=[(day.isoformat(), price) for day, price in put_h],
+            r=self.r,
+        )
+
+    def _open_richness_row(self, row: int) -> None:
+        if row < 0 or row >= len(self._table_underlyings):
+            return
+        underlying = self._table_underlyings[row]
+        snaps = load_options_daily_snapshots(underlying)
+        dated = self._fetch_dated_closes_now(underlying)
+        points = richness_series(
+            snaps,
+            r=self.r,
+            dated_closes=dated,
+            contract_iv_by_date=self._contract_iv_map(underlying, snaps, dated),
+        )
+        self.app.push_screen(OptionRichnessHistoryScreen(underlying, points))
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        if event.data_table.id != "ow-portfolio":
+            return
+        if event.coordinate.column == self.RICHNESS_COLUMN_INDEX:
+            return
+        from textual.coordinate import Coordinate
+        event.data_table.cursor_coordinate = Coordinate(
+            event.coordinate.row, self.RICHNESS_COLUMN_INDEX
+        )
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        if event.data_table.id != "ow-portfolio":
+            return
+        self._open_richness_row(event.coordinate.row)
+
     def action_clear_cache(self) -> None:
-        """bug#00116：重抓「今日」快照——只移除目前清單各標的今天那一筆，保留所有
-        歷史累積後重新抓取（不再刪除整個歷史，避免把 flow/背離/IV 位階/回測所依賴的
-        多日累積一次歸零）。移除今天的快照後 options_symbol_fresh() 轉 False，
-        run_background_fetch() 便會重新抓當天最新資料再 append 回去。"""
+        """重抓「今日」快照——只移除目前清單各標的今天那一筆，保留歷史累積後重新抓取。
+        移除今天的快照後 options_symbol_fresh() 轉 False，run_background_fetch()
+        便會重新抓當天最新資料再 append 回去。"""
         from .storage import remove_options_daily_snapshot, taiwan_now
         today = taiwan_now().strftime("%Y-%m-%d")
         for u in self.underlyings:
@@ -6070,175 +8823,68 @@ class OptionsWatchlistScreen(_FormulaDrillMixin, Screen):
 # Calibration Status Screen (訊號回測校準狀態)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class CalibrationScreen(Screen):
-    """訊號回測校準狀態 —— walk-forward、純離線，讓使用者隨時知道訊號可信度(bug#00070)。"""
-
-    BINDINGS = [
-        Binding("escape", "go_back", "返回"),
-        Binding("q",      "go_back", "返回", show=False),
-    ]
-
-    DEFAULT_CSS = """
-    CalibrationScreen { background: #0d1117; layout: vertical; }
-    #cal-body { height: 1fr; padding: 1 2; }
-    #cal-static { height: auto; }
-    """
-
-    def __init__(self, user: str, underlyings: list[str]) -> None:
-        super().__init__()
-        self.user = user
-        self.underlyings = underlyings
-
-    def compose(self) -> ComposeResult:
-        with ScrollableContainer(id="cal-body"):
-            yield Static("", id="cal-static")
-        yield Footer()
-
-    def on_mount(self) -> None:
-        self.query_one("#cal-static", Static).update("[dim]⏳ 正在以累積的真實快照回測訊號...[/dim]")
-        self.run_backtest()
-
-    @work(thread=True)
-    def run_backtest(self) -> None:
-        from .calibration import backtest_verdicts
-        snaps = {u: load_options_daily_snapshots(u) for u in self.underlyings}
-        rep = backtest_verdicts(snaps, window_days=OPTIONS_FLOW_WINDOW_DAYS)
-        self.app.call_from_thread(self._show_report, rep)
-
-    def _show_report(self, rep: dict) -> None:
-        from rich.panel import Panel as _Panel
-        from .calibration import calibration_status_label
-
-        def _pct(x):
-            return f"{x * 100:.0f}%" if x is not None else "—"
-
-        def _ret(x):
-            if x is None:
-                return "—"
-            c = "green" if x >= 0 else "red"
-            return f"[{c}]{'+' if x >= 0 else ''}{x * 100:.2f}%[/{c}]"
-
-        status = calibration_status_label(rep)
-        horizons_s = "/".join(str(h) for h in rep["horizons"])
-        lines = [
-            f"[bold]校準狀態：[/bold] {status}",
-            "",
-            f"資料累積：{rep['underlyings_with_data']} 檔標的、{rep['total_snapshot_days']} 筆快照日"
-            + (f"、範圍 {rep['first_date']} ~ {rep['last_date']}" if rep['first_date'] else ""),
-            f"方法：walk-forward，前瞻 {horizons_s} 日三組、訊號視窗 {rep['window_days']} 日，"
-            f"校準對象＝分析結論卡的綜合方向結論（未平倉skew＋排除股價變動的殘差偏向）"
-            f"——與畫面結論卡同一套邏輯（bug#00089）",
-            "",
-        ]
-
-        any_eval = any(st["evaluated_signals"] for st in rep["by_horizon"].values())
-        if not any_eval:
-            lines.append("[dim]目前尚無可評估訊號 —— 系統剛開始或資料仍在累積。持續每日使用，")
-            lines.append("待累積足夠真實快照(需要同一標的跨越前瞻期)後，這裡會自動出現各前瞻期的命中率與 edge。[/dim]")
-        else:
-            for h in rep["horizons"]:
-                st = rep["by_horizon"][h]
-                base = st["baseline_up_rate"]
-                base_down = (1 - base) if base is not None else None
-                bh, bn = st["bullish_hit_rate"], st["bullish_n"]
-                eh, en = st["bearish_hit_rate"], st["bearish_n"]
-                bull_edge = (bh - base) if (bh is not None and base is not None) else None
-                bear_edge = (eh - base_down) if (eh is not None and base_down is not None) else None
-
-                lines.append(
-                    f"[bold cyan]── 前瞻 {h} 日 ──[/bold cyan]　"
-                    f"基準上漲比例 {_pct(base)}（n={st['baseline_n']}，無條件）　"
-                    f"可評估訊號 [bold]{st['evaluated_signals']}[/bold]（門檻 {rep['min_signals']}）"
-                )
-                lines.append(
-                    f"　📈 看多結論 n={bn}：命中率 [bold]{_pct(bh)}[/bold]"
-                    + (f"（vs 基準 {_pct(base)}，edge {bull_edge * 100:+.0f}pp）" if bull_edge is not None else "")
-                    + f"　平均前瞻報酬 {_ret(st['bullish_mean_fwd'])}"
-                )
-                lines.append(
-                    f"　📉 看空結論 n={en}：命中率 [bold]{_pct(eh)}[/bold]"
-                    + (f"（vs 基準下跌 {_pct(base_down)}，edge {bear_edge * 100:+.0f}pp）" if bear_edge is not None else "")
-                    + f"　平均前瞻報酬 {_ret(st['bearish_mean_fwd'])}"
-                )
-                if not st["ready"]:
-                    lines.append(f"　[yellow]⚠️ 樣本數 {st['evaluated_signals']} < 門檻 {rep['min_signals']}，僅供參考。[/yellow]")
-                lines.append("")
-
-        lines += [
-            "",
-            "[dim]註：連續多日對同一標的的訊號高度自相關，命中率會略樂觀，需夠大樣本才穩健；",
-            "前瞻以日曆日計、系統沒開的日子沒有快照；觀望（無方向）日不計入命中率、只計入基準。",
-            "校準對象即結論卡的綜合方向結論本身。100% 使用真實累積資料，不回填不捏造。[/dim]",
-        ]
-
-        self.query_one("#cal-static", Static).update(
-            _Panel("\n".join(lines), title="[bold cyan]📏 訊號回測校準狀態[/bold cyan]",
-                   border_style="cyan", padding=(1, 2))
-        )
-
-    def action_go_back(self) -> None:
-        self.dismiss()
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Options Watchlist Help Screen (期權觀察清單 — 各項數值說明)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _OPTIONS_HELP_TEXT = """[bold cyan]📖 期權觀察清單 — 各項數值說明[/bold cyan]
 
-這頁把「期權鏈的即時狀態」與「你的選擇權部位風險」整合在一起。以下逐區塊解釋，
-每項都附白話說明與例子。[dim]（本頁為資訊參考，非投資建議。）[/dim]
+這頁顯示各標的已觀察到的預期波動、ATM 權利金相對已實現波動的貴賤，以及你持有選擇權的淨風險，[bold]不預測股價漲跌[/bold]。
 
-[bold yellow]── 一、左欄：觀察標的清單 ──[/bold yellow]
-• [bold]標的[/bold]：你在觀察的股票代碼。來源 [cyan]📌持倉[/cyan]＝由你的持倉自動帶入、不可刪；[magenta]➕自訂[/magenta]＝你按 a 手動加入、可按 d 刪除。
-• [bold]異常[/bold]：該標的近期「異常震盪/背離」訊號的筆數（見第三區）。數字越大代表越多合約出現不尋常變化。
-• [bold]IV位階[/bold]：目前隱含波動率(IV)相對它自己過去的百分位。
-   [dim]例：72% 代表現在 IV 比過去 72% 的日子還高 → 選擇權相對「貴」（紅字）；18% 代表相對「便宜」（綠字）。需累積 ≥8 天資料才顯示。[/dim]
-
-[bold yellow]── 二、上方：各標的期權分析總表（版面第一區）──[/bold yellow]
-• [bold]預期波動 ±1σ (~30 DTE)[/bold]：市場定價「到期之前大約會 ±多少」的 ±1 個標準差。取 DTE 最接近 30 天的到期日（避開只剩幾天、被財報/週選放大的短天期），以 [bold]現價 × ATM IV × √(DTE/365)[/bold] 計算（年化、無方向）。
-   [dim]例：INTC ±$2.55 (±8.5%, 31d) → 市場認為到期前約 68% 機率落在 ±$2.55（約 ±8.5%）內。[/dim]
-   同格下方另列 [bold]損益兩平 ±$[/bold]：價平跨式價（買權+賣權權利金），代表到期損益平衡區間的寬度——與 ±1σ 意義不同，不要混為一談。
-   [dim]價格一律優先用買賣中間價 (bid+ask)/2；若無雙邊報價、價差過寬、或最後成交價過期，會退回並標 [yellow]⚠[/yellow]（低可信度），此時該格數字僅供粗略參考。[/dim]
-• [bold]ATM IV[/bold]：價平合約的隱含波動率（市場對未來波動的年化預期）。40% 比 20% 代表市場預期波動更大、權利金更貴。跟預期波動同一組合約，因此也會帶 [yellow]⚠[/yellow] 低可信度標記。
+[bold yellow]── 一、上方：各標的期權分析總表 ──[/bold yellow]
+• [bold]預期波動 ±1σ (~30 DTE)[/bold]：市場定價「到期之前大約會 ±多少」的 ±1 個標準差。取 DTE 最接近 30 天的到期日，以 [bold]現價 × ATM IV × √(DTE/365)[/bold] 計算（年化、無方向）。
+   [dim]價格一律優先用買賣中間價 (bid+ask)/2；若無雙邊報價、價差過寬、或最後成交價過期，會退回並標 [yellow]⚠[/yellow]（低可信度）。[/dim]
+• [bold]ATM IV / RV[/bold]：價平隱含波動 vs 近 20 個交易日已實現波動（對數報酬年化）。IV 明顯高於 RV 代表權利金相對近期實際波動偏貴。
+• [bold]波動貴賤[/bold]：ATM IV − RV。差距 ≥ +3 個百分點為偏貴，≤ −3 為偏便宜，其間為合理。這是選擇權定價，[bold]不是[/bold]標的漲跌預測。
+   [dim]游標停在此欄：↑↓ 選標的，Enter 開啟近 90 個日曆天的每日走勢。每天的 RV 是「當日往前 20 個交易日」的已實現波動；ATM IV 優先用當日快照，沒有快照則用目前價平合約的歷史價格反解（標 *）。超過 90 天的期權快照會刪除。[/dim]
+   [dim]財報剩 N 天／財報今日：下次財報剩餘日曆天數 < 10 才顯示，避免把財報前的 IV 溢價當成平常的「偏貴」。[/dim]
+• [bold]Call溢價 / Put溢價 / 跨式溢價[/bold]：市價中間價減去「把已實現波動當波動輸入」的 Black–Scholes 理論價。正數＝市場要的權利金高於該模型。若未來已實現波動剛好等於近20日 RV，這段差額是賣方視角的[bold]指示性模型差[/bold]，不是已驗證的超額報酬、也不是股價預測。
 • [bold]持倉Δ$ / Θ/日 / Vega[/bold]：[magenta]◆[/magenta] 代表你持有該標的選擇權，這三欄是你「該標的選擇權部位」的淨風險（只算選擇權、不含現股）：
    [dim]Δ$（Delta 美元）＝標的每動 1%，你這部位大約賺/賠多少；Θ/日＝每過一天因時間價值流失賺/賠多少（買方通常為負）；Vega＝IV 每升 1 個百分點賺/賠多少。末列為你所有持倉選擇權的合計。[/dim]
+• 觀察標的來源：[cyan]持倉自動帶入[/cyan]不可刪；按 [bold]a[/bold] 手動加入的標的可按 [bold]d[/bold] 刪除。
 
-[bold yellow]── 三、其次：📋 分析結論卡（綜合方向判斷＋回測命中率＋重點異常事件，版面第二區）──[/bold yellow]
-單一整合卡片：上半是每檔標的的投資結論，下半是支持判讀的合約層級異常事件（已排除當日股價變動）。
-• [bold]方向結論[/bold]：🟢看多／🔴看空／⚪觀望。由兩條方向性訊號合成：「未平倉建倉 skew」（買權/賣權建倉占比 ≥70%/≤30%；OI 增減無法區分開/平倉，方向僅供參考）＋「排除股價變動後的淨殘差偏向」（買權殘差偏多、賣權殘差偏空）；兩訊號矛盾時誠實顯示觀望、不硬給方向。
-   每則附 [bold]walk-forward 回測命中率[/bold]（與按 [bold]k[/bold] 的校準畫面同一套邏輯，1/5/10 日三組前瞻期取樣本最多的一組），樣本不足時明確標示「僅供參考」或「樣本累積中」——命中率驗證的就是結論卡本身這套判斷。並附與你部位方向[green]一致[/green]／[red]相反[/red]提示與標的 IV 位階，幫你判斷該不該行動。
-• [bold]重點異常事件[/bold]（結論下方，合約層級證據）：
-   [bold]🌀 異常震盪[/bold]：把權利金變動中「股價本身造成的部分」扣掉後，剩下的殘差仍很大 → 多半是波動率/事件驅動。
-   [dim]例：股價只動 +2%（理論上權利金該 +$1.08），實際權利金卻 +$3.00，扣掉後殘差 +$1.92 → 有別的力量（IV 上升）在推動。[/dim]
-   [bold]↔️ 背離[/bold]：股價與權利金方向相反。[dim]例：股價上漲，但買權權利金反而下跌（常見於 IV 壓縮）→ 方向不一致，留意。[/dim]
-   [bold]🎯 建倉/價格波動[/bold]：單一合約的未平倉量大增減或權利金大幅漲跌。
-• [bold]⚠️ 區間含財報[/bold]：若比較區間內有財報，IV/權利金劇變多屬「財報預期反應」（如財報後 IV 崩跌），會標註降權以免誤判。
+[bold yellow]── 二、快速鍵 ──[/bold yellow]
+[bold]↑↓[/bold] 在波動貴賤欄選擇標的　[bold]Enter[/bold] 看該檔 ATM IV − RV 走勢　[bold]a[/bold] 新增標的　[bold]d[/bold] 刪除自訂標的　[bold]h[/bold] 本說明　[bold]c[/bold] 重抓今日快照（只刷新今天、保留歷史累積）　[bold]Esc[/bold] 返回
 
-[bold yellow]── 四、右欄：合約明細（左側買權 Call / 右側賣權 Put）──[/bold yellow]（同側依履約價由低到高排序）
-• [bold]履約價[/bold]：合約的履約價格＋到期日（左欄全為買權、右欄全為賣權，不再混排）。
-• [bold]價內外[/bold]：[green]ITM[/green] 價內（已有內含價值）／OTM 價外（純時間價值）。
-   [dim]例：股價 $30 時，$28 買權為 ITM、$32 買權為 OTM。[/dim]
-• [bold]DTE[/bold]：距到期天數（Days To Expiry）。越少，時間價值流失越快。
-• [bold]未平倉[/bold]：該合約目前未平倉口數(OI)，越大代表越多人持有、流動性通常越好。
-• [bold]IV[/bold]：該合約的隱含波動率。
-• [bold]Δ Delta[/bold]：標的每動 $1，權利金約動多少（買權 0~1、賣權 −1~0）；也約略等於「到期價內的機率」。
-   [dim]例：Delta 0.60 的買權，標的漲 $1，權利金約漲 $0.60，且大約 60% 機率到期價內。[/dim]
-• [bold]Γ Gamma[/bold]：標的每動 $1，Delta 會變多少（Delta 的變化速度）。接近價平、接近到期時最大。
-• [bold]Θ Theta[/bold]：每過一天，權利金因時間價值流失多少（通常為負，買方付、賣方收）。
-   [dim]例：Theta −0.05 代表其他不變下，每天權利金約少 $0.05。[/dim]
-• [bold]損益兩平[/bold]：到期時不賺不賠的標的價位。買權＝履約價+權利金；賣權＝履約價−權利金。
-   [dim]例：$30 買權、權利金 $1.6 → 損益兩平 $31.6，標的到期需站上 $31.6 才開始獲利。[/dim]
-
-[bold yellow]── 五、快速鍵 ──[/bold yellow]
-[bold]a[/bold] 新增標的　[bold]d[/bold] 刪除自訂標的　[bold]k[/bold] 訊號回測校準狀態（看訊號歷史命中率是否可信）　[bold]h[/bold] 本說明　[bold]c[/bold] 重抓今日快照（只刷新今天、保留歷史累積）　[bold]Esc[/bold] 返回
-
-[bold yellow]── 六、資料來源與限制（重要）──[/bold yellow]
+[bold yellow]── 三、資料來源與限制（重要）──[/bold yellow]
 所有數字 100% 來自每日真實抓取並累積的期權鏈快照，[bold]不回填、不捏造[/bold]；資料不足時會誠實顯示「資料收集中」。
-限制：yfinance 的權利金常是過時成交價、OI 一天才更新一次、冷門履約價的 IV 可能不準——因此流動性差的標的，上述訊號可信度較低。這也是為什麼有「[bold]k 校準狀態[/bold]」讓你隨時檢視訊號到底準不準。
+限制：yfinance 的權利金常是過時成交價、已實現波動用近20日現貨（不是對未來波動的保證）。歐洲式 BS 未處理提前履約與股利，模型差只是指示性數字。預期波動與貴賤都不是股價漲跌預測。
 
 [dim]按 Esc 或 q 返回期權觀察清單。[/dim]
 """
+
+
+class OptionRichnessHistoryScreen(Screen):
+    """單檔每日 ATM IV − RV 走勢（波動貴賤明細）。"""
+
+    BINDINGS = [
+        Binding("escape", "go_back", "返回清單"),
+        Binding("q",      "go_back", "返回清單", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    OptionRichnessHistoryScreen { background: #0d1117; layout: vertical; }
+    #orh-body { height: 1fr; padding: 1 2; }
+    #orh-static { height: auto; }
+    """
+
+    def __init__(self, underlying: str, points: list) -> None:
+        super().__init__()
+        self.underlying = underlying
+        self.points = points
+
+    def compose(self) -> ComposeResult:
+        with ScrollableContainer(id="orh-body"):
+            yield Static(format_richness_history(self.underlying, self.points), id="orh-static")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        body = self.query_one("#orh-body")
+        body.can_focus = True
+        body.focus()
+
+    def action_go_back(self) -> None:
+        self.dismiss()
 
 
 class OptionsHelpScreen(Screen):
@@ -6325,7 +8971,9 @@ class AssetTrackApp(App):
     }
 
     #holdings-row {
-        height: 1fr;
+        height: 14;
+        min-height: 14;
+        max-height: 14;
         padding: 0 1;
     }
 
@@ -6336,17 +8984,21 @@ class AssetTrackApp(App):
         border: solid #21262d;
     }
 
+    #holdings-table {
+        height: 100%;
+    }
+
     #recent-events-panel {
         width: 50;
         height: auto;
         margin-left: 1;
     }
 
-    #cross-model-panel {
-        height: auto;
-        margin: 1 0;
-        padding: 0 1;
-        border: round #888888;
+    #recommendations-scroll {
+        height: 1fr;
+        min-height: 1;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     #sector-consensus-panel {
@@ -6440,12 +9092,16 @@ class AssetTrackApp(App):
         else:
             self._start_dashboard(user, [], [])
 
-    def _handle_first_position(self, result: Optional[list[Position]], user: str) -> None:
+    def _handle_first_position(self, result: Optional[list[Holding]], user: str) -> None:
         if result:
-            save_manual_positions(result, [], user=user)
+            positions = [item for item in result if isinstance(item, Position)]
+            cash_positions = [
+                item for item in result if isinstance(item, CashPosition)
+            ]
+            save_manual_positions(positions, cash_positions, user=user)
             n = len(result)
             self.notify(f"✅ 已新增 {n} 筆持倉！" if n > 1 else "✅ 新增持倉成功！")
-            self._start_dashboard(user, result, [])
+            self._start_dashboard(user, positions, cash_positions)
         else:
             self._start_dashboard(user, [], [])
 
@@ -6473,11 +9129,18 @@ class AssetTrackApp(App):
             # same long-lived App instance.
             self.set_interval(1800, self._background_data_refresh)
 
-        # bug#00096: 使用者成功登入後「立即」開始抓取分析資料（ETF/期權/類股快照），
-        # 不必等第一個 30 分鐘週期；狀態列會持續顯示目前正在抓什麼。
-        self._background_data_refresh()
+        # Research snapshots wait until the first live quote refresh finishes so
+        # Yahoo is not stampeded at login. The 30-minute timer still runs.
+        self._research_ingest_kicked = False
 
         self.push_screen(DashboardScreen(user, positions, self._cash_positions, self._rate), self._handle_dashboard_exit)
+
+    def _kickoff_research_ingest_once(self) -> None:
+        """Start ETF/options/sector ingest after the first quote refresh."""
+        if getattr(self, "_research_ingest_kicked", False):
+            return
+        self._research_ingest_kicked = True
+        self._background_data_refresh()
 
     @work(thread=True, exclusive=True)
     def _background_data_refresh(self) -> None:
@@ -6491,7 +9154,10 @@ class AssetTrackApp(App):
         try:
             from .storage import etf_symbol_cache_fresh, options_symbol_fresh, load_manual_positions
 
-            all_symbols = US_ACTIVE_TICKERS  # bug#00091：僅美股主動式 ETF
+            universe_result = ensure_active_etf_universe()
+            all_symbols = [
+                item["symbol"] for item in universe_result.get("records", [])
+            ]
             stale_etf = [sym for sym in all_symbols if not etf_symbol_cache_fresh(sym)]
             if stale_etf:
                 self._set_fetch_active('etf', f'主動式ETF持股（{len(stale_etf)} 檔）')
@@ -6509,15 +9175,20 @@ class AssetTrackApp(App):
             # 類股板塊分析：依市場時段的快取新鮮度決定是否補抓（開盤中 60s、收盤後一次），
             # 讓 Dashboard 類股共識卡片即使未進入板塊頁也保持最新 (bug#00080)。
             from .storage import load_sector_groups, sector_cache_needs_refresh
-            if load_sector_groups(self._user) and sector_cache_needs_refresh(self._user):
-                self._set_fetch_active('sector', '類股板塊成分股')
-                _fetch_and_cache_sector_groups(self._user)
-                self._clear_fetch_active('sector')
+            sector_groups = load_sector_groups(self._user)
+            if sector_groups:
+                if sector_cache_needs_refresh(self._user):
+                    self._set_fetch_active('sector', '類股板塊成分股')
+                    _fetch_and_cache_sector_groups(self._user)
+                    self._clear_fetch_active('sector')
 
-            # bug#00095 接線：抓完最新快照後，到期就產生需確認的校準提案（不自動套用）。
-            self._maybe_recalibrate()
         except Exception:
-            pass
+            # The refresh is best-effort and must never surface a modal, but a
+            # network failure remains logged so missing cache updates are
+            # diagnosable.
+            logging.getLogger(__name__).exception(
+                "background data refresh aborted"
+            )
         finally:
             for _k in ('etf', 'options', 'sector'):
                 self._clear_fetch_active(_k)
@@ -6535,23 +9206,13 @@ class AssetTrackApp(App):
         except Exception:
             pass
 
-    def _maybe_recalibrate(self) -> None:
-        """bug#00095 接線：到期（每雙週/週）就用最新快照重跑回測、產生需確認的校準
-        提案（不自動套用）；非到期近乎零成本（只比日期）。在背景 worker 執行緒呼叫。"""
-        try:
-            state = _run_calibration_cycle(self._user, force=False)
-            _n = len((state.get('pending') or {}).get('changes', []))
-            if _n:
-                self.call_from_thread(
-                    self.notify, f'⚙️ 有 {_n} 項投資建議校準待你確認（按 k 查看）')
-        except Exception:
-            pass
-
     def _handle_dashboard_exit(self, should_logout: bool) -> None:
         if should_logout:
+            lock_vault()
             self.notify("🚪 已安全登出！")
             self.push_screen(LoginScreen(default_user=self.default_user), self._handle_login_complete)
         else:
+            lock_vault()
             self.exit()
 
 

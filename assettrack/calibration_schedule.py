@@ -11,7 +11,10 @@ bug#00095（使用者需求：「具備每雙週/每週修正投資建議設定�
     看到的已結算證據約翻倍，提案才有意義。可改每週（7）。
   • 每個提案一律用 bug#00094 的統計驗證把關：只有在「樣本充足且未顯著優於基準」時才
     建議收緊門檻；「已顯著有效且門檻高於預設」時才建議放寬回預設；證據不足一律不動。
-  • AI/系統只會把調整放進 pending，**永不自行套用**；套用一定要使用者確認（apply_pending）。
+  • AI/系統只會把調整放進 pending，**永不自行套用**。
+  • bug#00129 起本模組為**唯讀**：狀態、歷史與建議照常顯示，但不再寫入
+    active_params。參數變更一律走 Experiment 的 Candidate → Replay → Shadow
+    → Promotion Proposal，避免兩個控制器搶同一個旋鈕（設計文件 §4）。
 
 狀態檔：data/{user}_calibration.json
   { active_params, last_calibrated, cadence_days, pending, history }
@@ -43,10 +46,26 @@ PARAM_SPEC: dict[str, dict[str, dict]] = {
         "min_days": {"default": 3, "min": 3, "max": 5, "step": 1,
                      "tighten": "up", "label": "類股持續天數"},
     },
+    "options": {
+        # 百分比單位：0.03 代表現價的 0.03%。模型失效時只允許提高門檻、先減少
+        # 弱訊號；新模型／放寬仍須樣本外驗證與使用者確認。
+        "bias_min_pct": {
+            "default": 0.03,
+            "min": 0.03,
+            "max": 0.15,
+            "step": 0.02,
+            "tighten": "up",
+            "label": "期權 IV 重定價殘差門檻（現價%）",
+        },
+    },
 }
 
 # 每族群「主要」選擇性參數（收緊時優先動它）。
-_PRIMARY_PARAM = {"etf": "consensus_threshold", "sector": "breadth_threshold"}
+_PRIMARY_PARAM = {
+    "etf": "consensus_threshold",
+    "sector": "breadth_threshold",
+    "options": "bias_min_pct",
+}
 
 _READY_MIN_N = 20  # 樣本充足門檻（與各回測 min_signals 一致），未達不提案
 
@@ -89,6 +108,7 @@ def ensure_state(user: str) -> dict:
                 state.setdefault("pending", None)
                 state.setdefault("history", [])
                 state.setdefault("last_calibrated", None)
+                state.setdefault("last_health_intervention", {})
                 return state
         except Exception:
             pass
@@ -98,6 +118,7 @@ def ensure_state(user: str) -> dict:
         "cadence_days": DEFAULT_CADENCE_DAYS,
         "pending": None,
         "history": [],
+        "last_health_intervention": {},
     }
     save_calibration_state(user, state)
     return state
@@ -168,13 +189,40 @@ def propose_adjustments(active_params: dict, backtests: dict) -> list[dict]:
     proposals: list[dict] = []
     for fam in PARAM_SPEC:
         report = backtests.get(fam)
+        health = (report or {}).get("model_health") or {}
+        primary = _PRIMARY_PARAM[fam]
+        cur = active_params.get(fam, {}).get(primary, PARAM_SPEC[fam][primary]["default"])
+        spec = PARAM_SPEC[fam][primary]
+
+        # 已成熟的近期結果出現連續失配時，立即開始「安全修正」：只建立待確認的收緊
+        # 提案，不自動把候選模型升為正式模型。這條介入不必等雙週顯著性報告，但
+        # degraded 本身已要求達到 health protocol 的最少獨立 sessions 且連續失配。
+        if health.get("status") == "degraded":
+            new = _round_param(fam, primary, _clamp(fam, primary, cur + spec["step"]))
+            if new != cur:
+                proposals.append({
+                    "family": fam,
+                    "param": primary,
+                    "label": spec["label"],
+                    "from": cur,
+                    "to": new,
+                    "action": "tighten",
+                    "rationale": (
+                        f"模型健康度已降為 degraded：{health.get('reason', '近期預測失配')}。"
+                        "先提高門檻抑制弱訊號；需你確認後才套用。"
+                    ),
+                    "evidence": {
+                        "model_health": health,
+                        "recent_n": health.get("recent_n"),
+                        "recent_hit_rate": health.get("recent_hit_rate"),
+                    },
+                })
+            continue
+
         sig = _best_direction_sig(report) if report else None
         if sig is None or sig["n"] < _READY_MIN_N:
             continue  # 樣本不足，維持現行設定（不提案）
 
-        primary = _PRIMARY_PARAM[fam]
-        cur = active_params.get(fam, {}).get(primary, PARAM_SPEC[fam][primary]["default"])
-        spec = PARAM_SPEC[fam][primary]
         evidence = {
             "n": sig["n"], "hit_rate": round(sig["hit_rate"], 3),
             "baseline_rate": round(sig["baseline_rate"], 3),
@@ -232,14 +280,63 @@ def run_recalibration(user: str, backtests: dict, today: date,
     """If due (or forced), recompute a proposal and store it as pending (NOT applied),
     stamping last_calibrated. Returns the updated state. Idempotent within a cycle."""
     state = ensure_state(user)
-    if not force and not due_for_recalibration(state, today):
+    health_fingerprints = {}
+    for family, report in (backtests or {}).items():
+        health = (report or {}).get("model_health") or {}
+        if health.get("status") != "degraded":
+            continue
+        # A new intervention requires new settled evidence, not merely another
+        # 30-minute dashboard refresh with the same failed sample.
+        fingerprint_payload = {
+            "horizon": health.get("horizon"),
+            "recent_n": health.get("recent_n"),
+            "recent_hit_rate": health.get("recent_hit_rate"),
+            "miss_streak": health.get("miss_streak"),
+            "by_direction": health.get("by_direction"),
+        }
+        health_fingerprints[family] = json.dumps(
+            fingerprint_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    prior_health = state.setdefault("last_health_intervention", {})
+    new_degraded_evidence = any(
+        prior_health.get(family) != fingerprint
+        for family, fingerprint in health_fingerprints.items()
+    )
+    scheduled = force or due_for_recalibration(state, today)
+    if not scheduled and not new_degraded_evidence:
         return state
-    proposals = propose_adjustments(state["active_params"], backtests)
+    proposal_backtests = (
+        backtests
+        if scheduled
+        else {
+            family: backtests.get(family)
+            for family, fingerprint in health_fingerprints.items()
+            if prior_health.get(family) != fingerprint
+        }
+    )
+    proposals = propose_adjustments(state["active_params"], proposal_backtests)
+    if not scheduled and (state.get("pending") or {}).get("changes"):
+        # Immediate health intervention must not erase a regular proposal the
+        # user has not reviewed yet. Replace only the same family/parameter.
+        merged = {
+            (change["family"], change["param"]): change
+            for change in state["pending"]["changes"]
+        }
+        merged.update({
+            (change["family"], change["param"]): change
+            for change in proposals
+        })
+        proposals = list(merged.values())
     state["pending"] = {
         "computed_at": today.strftime("%Y-%m-%d"),
         "changes": proposals,
     } if proposals else None
-    state["last_calibrated"] = today.strftime("%Y-%m-%d")
+    if scheduled:
+        state["last_calibrated"] = today.strftime("%Y-%m-%d")
+    for family, fingerprint in health_fingerprints.items():
+        prior_health[family] = fingerprint
     if not proposals:
         state["history"].append({"at": today.strftime("%Y-%m-%d"),
                                  "event": "recalibrated", "result": "no_change"})
@@ -247,8 +344,35 @@ def run_recalibration(user: str, backtests: dict, today: date,
     return state
 
 
+class CalibrationReadOnlyError(RuntimeError):
+    """The legacy calibration track no longer writes active parameters."""
+
+
 def apply_pending(user: str, today: Optional[date] = None) -> dict:
-    """User confirmed: apply the pending changes into active_params, log to history."""
+    """Refuse: parameter changes now belong to the Experiment feedback loop.
+
+    Two independent controllers used to be able to move the same knobs.  This
+    one tuned `consensus_threshold`, `breadth_threshold` and `min_days` from the
+    legacy backtest reports with a significance check but no Replay, Shadow or
+    negative controls; the Experiment track tunes the same three through
+    Candidate -> Replay -> Shadow -> Promotion Gate.  Neither could see the
+    other's cooldown, so they could push a threshold back and forth, and every
+    legacy apply minted a new Policy Version that reset the Forecast Ledger's
+    sample count for that family.
+
+    Per §14.4 the legacy track therefore becomes read-only: its state, history
+    and suggestions stay visible, but only the Experiment track may change what
+    the recommendation policies actually use.  Raising rather than silently
+    doing nothing is deliberate — a caller that still expects to write should
+    fail loudly instead of appearing to succeed.
+    """
+    raise CalibrationReadOnlyError(
+        "legacy calibration is read-only; parameter changes go through the "
+        "Experiment Promotion Proposal flow"
+    )
+
+
+def _apply_pending_disabled(user: str, today: Optional[date] = None) -> dict:
     state = ensure_state(user)
     pending = state.get("pending")
     if not pending or not pending.get("changes"):

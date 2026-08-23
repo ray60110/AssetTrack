@@ -22,6 +22,35 @@ logger = logging.getLogger(__name__)
 ARK_TICKERS = {"ARKK", "ARKQ", "ARKW", "ARKG", "ARKF", "ARKX", "PRNT", "IZRL"}
 
 
+def _reported_shares(holding: dict | None, snapshot: dict) -> int | None:
+    if not holding:
+        return None
+    explicit = holding.get("shares")
+    if explicit is not None:
+        try:
+            return int(float(explicit))
+        except (TypeError, ValueError):
+            return None
+    weight = holding.get("weight") or 0.0
+    price = holding.get("price")
+    aum = snapshot.get("aum")
+    if aum and weight and price:
+        return int((aum * (weight / 100.0)) / price)
+    return None
+
+
+def _position_metadata(holding: dict | None) -> dict:
+    holding = holding or {}
+    return {
+        key: holding.get(key)
+        for key in (
+            "name", "issuer", "cusip", "figi", "instrument_type",
+            "option_type", "expiration", "strike",
+        )
+        if holding.get(key) is not None
+    }
+
+
 def derive_trade_history_from_snapshots(symbol: str) -> list[dict]:
     """Derive day-over-day buy/sell trade records for `symbol` by diffing
     consecutive daily holdings snapshots stored under `etf_cache/history/{symbol}.jsonl`.
@@ -72,17 +101,8 @@ def derive_trade_history_from_snapshots(symbol: str) -> list[dict]:
 
                 p0 = prev_h.get("price")
                 p1 = curr_h.get("price")
-                aum0 = prev_snap.get("aum")
-                aum1 = curr_snap.get("aum")
-
-                # Derive shares if real price & AUM are present
-                s0 = None
-                if aum0 and w0 and p0:
-                    s0 = int((aum0 * (w0 / 100.0)) / p0)
-
-                s1 = None
-                if aum1 and w1 and p1:
-                    s1 = int((aum1 * (w1 / 100.0)) / p1)
+                s0 = _reported_shares(prev_h, prev_snap)
+                s1 = _reported_shares(curr_h, curr_snap)
 
                 ds = (s1 - s0) if (s0 is not None and s1 is not None) else None
 
@@ -90,46 +110,65 @@ def derive_trade_history_from_snapshots(symbol: str) -> list[dict]:
                 if abs(dw) >= 0.10 or (ds is not None and ds != 0):
                     action = "BUY" if (ds > 0 if ds is not None else dw > 0) else "SELL"
                     trade_shares = abs(ds) if ds is not None else None
-                    trades.append({
+                    trade = {
                         "date": curr_date,
+                        "period_start": prev_snap.get("date"),
+                        "period_end": curr_date,
                         "action": action,
                         "symbol": s,
                         "shares": trade_shares,
                         "price": p1 or p0,
                         "weight_change": round(dw, 2),
-                    })
+                        "value_change": (
+                            float(curr_h["value"]) - float(prev_h["value"])
+                            if curr_h.get("value") is not None and prev_h.get("value") is not None
+                            else None
+                        ),
+                    }
+                    trade.update(_position_metadata(curr_h or prev_h))
+                    trades.append(trade)
 
             elif curr_h and not prev_h:
                 # Newly added holding position
                 w1 = curr_h.get("weight", 0.0) or 0.0
                 p1 = curr_h.get("price")
-                aum1 = curr_snap.get("aum")
-                s1 = int((aum1 * (w1 / 100.0)) / p1) if (aum1 and w1 and p1) else None
+                s1 = _reported_shares(curr_h, curr_snap)
 
-                trades.append({
+                trade = {
                     "date": curr_date,
+                    "period_start": prev_snap.get("date"),
+                    "period_end": curr_date,
                     "action": "BUY",
                     "symbol": s,
                     "shares": s1,
                     "price": p1,
                     "weight_change": round(w1, 2),
-                })
+                    "value_change": curr_h.get("value"),
+                }
+                trade.update(_position_metadata(curr_h))
+                trades.append(trade)
 
             elif prev_h and not curr_h:
                 # Closed/exited position
                 w0 = prev_h.get("weight", 0.0) or 0.0
                 p0 = prev_h.get("price")
-                aum0 = prev_snap.get("aum")
-                s0 = int((aum0 * (w0 / 100.0)) / p0) if (aum0 and w0 and p0) else None
+                s0 = _reported_shares(prev_h, prev_snap)
 
-                trades.append({
+                trade = {
                     "date": curr_date,
+                    "period_start": prev_snap.get("date"),
+                    "period_end": curr_date,
                     "action": "SELL",
                     "symbol": s,
                     "shares": s0,
                     "price": p0,
                     "weight_change": round(-w0, 2),
-                })
+                    "value_change": (
+                        -float(prev_h["value"]) if prev_h.get("value") is not None else None
+                    ),
+                }
+                trade.update(_position_metadata(prev_h))
+                trades.append(trade)
 
     # Sort descending by date, then symbol
     trades.sort(key=lambda t: (t.get("date", ""), t.get("symbol", "")), reverse=True)

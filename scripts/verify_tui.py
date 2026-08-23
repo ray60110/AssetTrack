@@ -13,6 +13,7 @@ from assettrack.tui import (
     LogoutConfirmModal,
     LoginScreen,
     OnboardingModal,
+    SECIdentityModal,
     AddPositionModal,
     _build_holdings_table,
     _build_metrics_panel,
@@ -249,8 +250,53 @@ async def verify_dashboard_mounts() -> None:
         assert isinstance(screen, DashboardScreen)
         assert screen.query_one("#metrics-row")
         assert screen.query_one("#holdings-scroll")
-        assert screen.query_one("#cross-model-panel")
+        assert screen.query_one("#recommendations-scroll")
         assert screen.query_one("#status-bar")
+
+
+async def verify_dashboard_scroll_layout() -> None:
+    """Dashboard keeps ten holdings rows visible and scrolls recommendations separately."""
+    template = _sample_positions()[0]
+    positions = [
+        template.model_copy(update={"symbol": f"TEST{index:02d}"})
+        for index in range(12)
+    ]
+    app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        holdings_scroll = screen.query_one("#holdings-scroll")
+        holdings_table = screen.query_one("#holdings-table")
+        recommendations_scroll = screen.query_one("#recommendations-scroll")
+
+        # One header row plus ten holding rows must remain visible at the default size.
+        assert (
+            holdings_table.scrollable_content_region.height
+            == holdings_table.header_height + 10
+        )
+        assert holdings_table.row_count > 10
+        assert holdings_table.max_scroll_y > 0
+        assert holdings_table.show_vertical_scrollbar
+
+        # The recommendation cards stay on-screen below holdings and own their scrollbar.
+        assert recommendations_scroll.content_region.height > 0
+        assert recommendations_scroll.max_scroll_y > 0
+        assert recommendations_scroll.show_vertical_scrollbar
+        assert recommendations_scroll.region.y >= holdings_scroll.region.bottom
+
+        # Moving either scrollbar must not move the other viewport.
+        recommendations_scroll.scroll_to(
+            y=recommendations_scroll.max_scroll_y,
+            animate=False,
+        )
+        await pilot.pause()
+        assert recommendations_scroll.scroll_y == recommendations_scroll.max_scroll_y
+        assert holdings_table.scroll_y == 0
+
+        holdings_table.scroll_to(y=holdings_table.max_scroll_y, animate=False)
+        await pilot.pause()
+        assert holdings_table.scroll_y == holdings_table.max_scroll_y
+        assert recommendations_scroll.scroll_y == recommendations_scroll.max_scroll_y
 
 
 async def verify_bindings() -> None:
@@ -311,11 +357,17 @@ async def verify_empty_positions_onboarding_path() -> None:
 
             pilot.app.screen.query_one("#user-input").value = "testuser"
 
-            with patch("keyring.get_password", return_value="pwd123"), \
+            with patch("assettrack.tui.account_exists", return_value=True), \
+                 patch("assettrack.tui.touchid_enrolled", return_value=True), \
+                 patch("assettrack.tui.unlock_vault_with_touchid"), \
                  patch("subprocess.run") as mock_run:
                 mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
 
                 await pilot.press("enter")
+                await pilot.pause(0.2)
+
+                assert isinstance(pilot.app.screen, SECIdentityModal)
+                pilot.app.screen.query_one("#sec-identity-cancel").press()
                 await pilot.pause(0.2)
 
                 assert isinstance(pilot.app.screen, OnboardingModal)
@@ -504,8 +556,12 @@ async def verify_active_etfs_screen() -> None:
         assert isinstance(pilot.app.screen, ActiveETFsScreen)
         
         screen = pilot.app.screen
+        tabs = screen.query_one("#etf-main-tabs")
+        assert tabs.active == "tab-etf-advice"
+        assert screen.query_one("#etf-analysis-content")
         assert screen.query_one("#etf-left-tabbed")
         assert screen.query_one("#etf-us-table")
+        assert screen.query_one("#etf-13f-table")
         # bug#00091：台股主動式ETF排行已移除，TWD 表格不應存在。
         from textual.css.query import NoMatches
         try:
@@ -541,7 +597,11 @@ def patch_workers() -> None:
     DashboardScreen._do_refresh_worker = MagicMock()
     DashboardScreen._fetch_upcoming_events_worker = MagicMock()
     ActiveETFsScreen.run_background_fetch = MagicMock()
+    ActiveETFsScreen.run_analysis_compute = MagicMock()
     ActiveETFsScreen.run_detail_fetch = MagicMock()
+    from assettrack import tui as _tui
+    _tui.etf_watchlist_is_configured = MagicMock(return_value=True)
+    _tui.load_etf_watchlist = MagicMock(return_value=["NVDA"])
 
 
 def main() -> int:
@@ -552,6 +612,7 @@ def main() -> int:
         ("environment_loading", verify_environment_loading),
         ("event_actuals_and_timezones", verify_event_actuals_and_timezones),
         ("dashboard_mounts", verify_dashboard_mounts),
+        ("dashboard_scroll_layout", verify_dashboard_scroll_layout),
         ("bindings", verify_bindings),
         ("logout_modal", verify_logout_modal),
         ("refresh_action", verify_refresh_action),

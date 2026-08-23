@@ -67,14 +67,83 @@ def silence_output():
                 _real_stderr = None
 
 
-_exchange_rate_cache: dict[str, float] = {}
+_exchange_rate_cache: dict[str, tuple[float, float]] = {}
+_FX_CACHE_TTL = 3600  # 1 hour — UI may still show a staler disk value
+_warmup_lock = threading.Lock()
+
+
+def _warmup_cache_path():
+    from .storage import get_data_dir
+    return get_data_dir() / "quote_warmup_cache.json"
+
+
+def _load_warmup_cache() -> dict:
+    try:
+        import json
+        data = json.loads(_warmup_cache_path().read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_warmup_cache(data: dict) -> None:
+    try:
+        import json
+        path = _warmup_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2))
+    except Exception:
+        pass
+
+
+def _fx_memory_rate(pair: str, *, require_fresh: bool) -> Optional[float]:
+    raw = _exchange_rate_cache.get(pair)
+    if raw is None:
+        return None
+    value, fetched_at = raw
+    if require_fresh and (time.time() - fetched_at) >= _FX_CACHE_TTL:
+        return None
+    return value
+
+
+def cached_usdtwd_rate(default: float = 32.0) -> float:
+    """UI-safe last known USDTWD rate. Never hits the network.
+
+    Prefers in-memory, then disk (even if older than the fetch TTL), then
+    `default`. A background worker calls `fetch_usdtwd_rate()` to refresh.
+    """
+    memory = _fx_memory_rate("USDTWD", require_fresh=False)
+    if memory is not None and memory > 0:
+        return memory
+    with _warmup_lock:
+        disk = _load_warmup_cache().get("usdtwd") or {}
+    rate = disk.get("rate")
+    fetched_at = disk.get("fetched_at")
+    if isinstance(rate, (int, float)) and rate > 0:
+        ts = float(fetched_at) if isinstance(fetched_at, (int, float)) else 0.0
+        _exchange_rate_cache["USDTWD"] = (float(rate), ts)
+        return float(rate)
+    return default
 
 
 def fetch_usdtwd_rate() -> float:
     """Get USD to TWD exchange rate from yfinance. Cached."""
     global _exchange_rate_cache
-    if "USDTWD" in _exchange_rate_cache:
-        return _exchange_rate_cache["USDTWD"]
+    fresh = _fx_memory_rate("USDTWD", require_fresh=True)
+    if fresh is not None:
+        return fresh
+    with _warmup_lock:
+        disk = _load_warmup_cache().get("usdtwd") or {}
+    disk_rate = disk.get("rate")
+    disk_ts = disk.get("fetched_at")
+    if (
+        isinstance(disk_rate, (int, float))
+        and disk_rate > 0
+        and isinstance(disk_ts, (int, float))
+        and (time.time() - float(disk_ts)) < _FX_CACHE_TTL
+    ):
+        _exchange_rate_cache["USDTWD"] = (float(disk_rate), float(disk_ts))
+        return float(disk_rate)
     try:
         with silence_output():
             ticker = yf.Ticker("USDTWD=X")
@@ -92,18 +161,24 @@ def fetch_usdtwd_rate() -> float:
                     price = float(hist["Close"].iloc[-1])
 
             if price is not None:
-                _exchange_rate_cache["USDTWD"] = price
+                now = time.time()
+                _exchange_rate_cache["USDTWD"] = (price, now)
+                with _warmup_lock:
+                    payload = _load_warmup_cache()
+                    payload["usdtwd"] = {"rate": price, "fetched_at": now}
+                    _save_warmup_cache(payload)
                 return price
     except Exception:
         pass
-    return 32.0  # Safe fallback
+    return cached_usdtwd_rate(default=32.0)
 
 
 def fetch_usdjpy_rate() -> float:
     """Get USD to JPY exchange rate from yfinance. Cached (same TTL mechanism as USDTWD)."""
     global _exchange_rate_cache
-    if "USDJPY" in _exchange_rate_cache:
-        return _exchange_rate_cache["USDJPY"]
+    fresh = _fx_memory_rate("USDJPY", require_fresh=True)
+    if fresh is not None:
+        return fresh
     try:
         with silence_output():
             ticker = yf.Ticker("USDJPY=X")
@@ -120,7 +195,7 @@ def fetch_usdjpy_rate() -> float:
                     price = float(hist["Close"].iloc[-1])
 
             if price is not None:
-                _exchange_rate_cache["USDJPY"] = price
+                _exchange_rate_cache["USDJPY"] = (price, time.time())
                 return price
     except Exception:
         pass
@@ -163,6 +238,56 @@ def _normalize_symbol_for_yf(symbol: str, instrument_type: str, currency: str = 
         s = re.sub(r"\s+", "", s)
         return s
     return s
+
+
+def infer_etf_leverage_factor(
+    name: str = "",
+    description: str = "",
+    symbol: str = "",
+) -> float:
+    """Infer a signed ETF daily exposure multiple from provider metadata.
+
+    Fund names normally disclose leveraged/inverse objectives (``2x``, ``3X
+    Bull``, ``UltraShort``, ``正2`` and so on).  Unknown/plain ETFs return 1x;
+    callers can override this through ``Position.leverage_factor``.
+    """
+    text = f"{name} {description}".upper().replace("×", "X")
+    compact_symbol = symbol.upper().replace(".TWO", "").replace(".TW", "")
+
+    # Taiwan exchange naming convention: leveraged tickers end in L (normally
+    # 正2), while inverse tickers end in R (normally 反1).  A provider name such
+    # as 正2/反1 below remains authoritative when present.
+    symbol_hint: Optional[float] = None
+    if re.fullmatch(r"\d{4,6}L", compact_symbol):
+        symbol_hint = 2.0
+    elif re.fullmatch(r"\d{4,6}R", compact_symbol):
+        symbol_hint = -1.0
+
+    chinese = re.search(r"(正|多)(?:向)?\s*([123](?:\.\d+)?)", text)
+    if chinese:
+        return float(chinese.group(2))
+    chinese = re.search(r"(反|空)(?:向)?\s*([123](?:\.\d+)?)", text)
+    if chinese:
+        return -float(chinese.group(2))
+
+    multiple_match = re.search(r"(?<!\d)([123](?:\.\d+)?)\s*X\b", text)
+    multiple = float(multiple_match.group(1)) if multiple_match else None
+    inverse = bool(re.search(r"\b(?:BEAR|INVERSE|SHORT)\b", text))
+
+    if multiple is None:
+        if "ULTRAPRO" in text or re.search(r"\bTRIPLE\b", text):
+            multiple = 3.0
+        elif "ULTRASHORT" in text:
+            multiple = 2.0
+            inverse = True
+        elif re.search(r"\bULTRA\b|\bDOUBLE\b", text):
+            multiple = 2.0
+        elif inverse:
+            multiple = 1.0
+
+    if multiple is not None:
+        return -multiple if inverse else multiple
+    return symbol_hint if symbol_hint is not None else 1.0
 
 
 def fetch_price(symbol: str, instrument_type: str = "stock", currency: str = "USD") -> Optional[float]:
@@ -209,35 +334,49 @@ def enrich_positions_with_quotes(positions: Iterable[Position]) -> list[Position
 
     def _fetch_one(pos: Position) -> Position:
         p = pos.model_copy(deep=True)
-        if p.market_price is None or p.market_value is None or p.prev_close is None:
+        needs_quote = p.market_price is None or p.market_value is None or p.prev_close is None
+        needs_etf_factor = p.instrument_type == "etf" and p.leverage_factor is None
+        if needs_quote or needs_etf_factor:
             yf_symbol = _normalize_symbol_for_yf(p.symbol, p.instrument_type, p.currency)
             try:
                 with silence_output():
                     ticker = yf.Ticker(yf_symbol)
-                    price = None
-                    prev_close = None
-                    try:
-                        fi = ticker.fast_info
-                        price = _clean_float(getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None))
-                        prev_close = _clean_float(getattr(fi, "regular_market_previous_close", None) or getattr(fi, "previous_close", None))
-                    except Exception:
-                        pass
+                    if needs_quote:
+                        price = None
+                        prev_close = None
+                        try:
+                            fi = ticker.fast_info
+                            price = _clean_float(getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None))
+                            prev_close = _clean_float(getattr(fi, "regular_market_previous_close", None) or getattr(fi, "previous_close", None))
+                        except Exception:
+                            pass
 
-                    if price is None or prev_close is None:
-                        # Fallback to history (most recent 2 closes)
-                        hist = ticker.history(period="5d", auto_adjust=False)
-                        if not hist.empty:
-                            if price is None:
-                                price = _clean_float(hist["Close"].iloc[-1])
-                            if prev_close is None and len(hist) >= 2:
-                                prev_close = _clean_float(hist["Close"].iloc[-2])
+                        if price is None or prev_close is None:
+                            # Fallback to history (most recent 2 closes)
+                            hist = ticker.history(period="5d", auto_adjust=False)
+                            if not hist.empty:
+                                if price is None:
+                                    price = _clean_float(hist["Close"].iloc[-1])
+                                if prev_close is None and len(hist) >= 2:
+                                    prev_close = _clean_float(hist["Close"].iloc[-2])
 
-                    if price is not None:
-                        p.market_price = price
-                        mult = p.multiplier if (p.instrument_type == "option" and p.multiplier is not None) else 1.0
-                        p.market_value = price * p.quantity * mult if p.quantity else None
-                    if prev_close is not None:
-                        p.prev_close = prev_close
+                        if price is not None:
+                            p.market_price = price
+                            mult = p.multiplier if (p.instrument_type == "option" and p.multiplier is not None) else 1.0
+                            p.market_value = price * p.quantity * mult if p.quantity else None
+                        if prev_close is not None:
+                            p.prev_close = prev_close
+
+                    if needs_etf_factor:
+                        try:
+                            info = ticker.info or {}
+                        except Exception:
+                            info = {}
+                        p.leverage_factor = infer_etf_leverage_factor(
+                            str(info.get("longName") or info.get("shortName") or ""),
+                            str(info.get("longBusinessSummary") or info.get("description") or ""),
+                            p.symbol,
+                        )
             except Exception:
                 pass
         return p
@@ -265,16 +404,21 @@ def fetch_beta(symbol: str, instrument_type: str = "stock", underlying: Optional
     """
     Fetch the beta of a symbol from yfinance.
     For options, uses the underlying symbol instead.
-    Returns None if unavailable. Cached per symbol (TTL) to avoid repeated blocking
-    network calls on every dashboard render.
+    Returns None if unavailable. Cached per symbol (TTL + disk). The dashboard
+    render path uses `cached_beta()` and must not call this.
     """
     # For options, use the underlying stock's beta
     lookup_symbol = underlying if (instrument_type == "option" and underlying) else symbol
     yf_symbol = _normalize_symbol_for_yf(lookup_symbol, "stock", currency)
 
-    cached = _beta_cache.get(yf_symbol)
-    if cached is not None and (time.time() - cached[1]) < _BETA_CACHE_TTL:
-        return cached[0]
+    cached = cached_beta(symbol, instrument_type, underlying, currency)
+    if cached is not None or (
+        yf_symbol in _beta_cache
+        and (time.time() - _beta_cache[yf_symbol][1]) < _BETA_CACHE_TTL
+    ):
+        if cached is not None:
+            return cached
+        return _beta_cache[yf_symbol][0]
 
     beta_val: Optional[float] = None
     try:
@@ -287,8 +431,42 @@ def fetch_beta(symbol: str, instrument_type: str = "stock", underlying: Optional
     except Exception:
         pass
 
-    _beta_cache[yf_symbol] = (beta_val, time.time())
+    now = time.time()
+    _beta_cache[yf_symbol] = (beta_val, now)
+    with _warmup_lock:
+        payload = _load_warmup_cache()
+        betas = dict(payload.get("betas") or {})
+        betas[yf_symbol] = {"beta": beta_val, "fetched_at": now}
+        payload["betas"] = betas
+        _save_warmup_cache(payload)
     return beta_val
+
+
+def cached_beta(
+    symbol: str,
+    instrument_type: str = "stock",
+    underlying: Optional[str] = None,
+    currency: str = "USD",
+) -> Optional[float]:
+    """UI-safe last known beta. Never hits the network. Expired disk values are ignored."""
+    lookup_symbol = underlying if (instrument_type == "option" and underlying) else symbol
+    yf_symbol = _normalize_symbol_for_yf(lookup_symbol, "stock", currency)
+
+    cached = _beta_cache.get(yf_symbol)
+    if cached is not None and (time.time() - cached[1]) < _BETA_CACHE_TTL:
+        return cached[0]
+
+    with _warmup_lock:
+        item = (_load_warmup_cache().get("betas") or {}).get(yf_symbol) or {}
+    fetched_at = item.get("fetched_at")
+    if not isinstance(fetched_at, (int, float)):
+        return None
+    if (time.time() - float(fetched_at)) >= _BETA_CACHE_TTL:
+        return None
+    beta_val = item.get("beta")
+    parsed = float(beta_val) if isinstance(beta_val, (int, float)) else None
+    _beta_cache[yf_symbol] = (parsed, float(fetched_at))
+    return parsed
 
 
 _rf_cache: dict[str, tuple[float, float]] = {}
@@ -866,6 +1044,17 @@ def fetch_benchmark_history(
         return []
 
 
+def fetch_option_daily_closes(
+    contract_symbol: str,
+    start_date: "datetime",
+    end_date: "datetime",
+) -> list[tuple["date", float]]:
+    """Daily last close for one OCC option symbol. Empty list on failure."""
+    if not contract_symbol:
+        return []
+    return fetch_benchmark_history(contract_symbol, start_date, end_date)
+
+
 def fetch_historical_prices_weekly(
     symbols: list[str],
     start_date: "datetime",
@@ -1054,6 +1243,14 @@ def group_positions_by_broker(
     )
 
 
+EARNINGS_CALENDAR_MAX_WORKERS = 4
+
+
+def earnings_calendar_workers(symbol_count: int) -> int:
+    """Cap Yahoo earnings lookups so a login stampede cannot open one worker per ticker."""
+    return max(1, min(EARNINGS_CALENDAR_MAX_WORKERS, int(symbol_count or 0)))
+
+
 def fetch_earnings_calendar(
     symbols: list[str],
     timezone_name: str = "Asia/Taipei",
@@ -1099,7 +1296,9 @@ def fetch_earnings_calendar(
             return symbol, [], None, None, None
 
     result: dict = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(symbols))) as ex:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=earnings_calendar_workers(len(symbols))
+    ) as ex:
         for sym, d, id_, ts_, ps_ in ex.map(_fetch_one, symbols):
             result[sym] = (d, id_, ts_, ps_)
     return result
@@ -1467,17 +1666,20 @@ def fetch_prices_batch(symbols: list[str], chunk_size: int = 20) -> dict[str, Op
 def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[str, dict]:
     """Batch-fetch real market data for sector-group members (類股板塊分析).
 
-    Prices / returns / volume come from chunked yf.download() (1-month daily bars,
+    Prices / returns / volume come from chunked yf.download() (6-month daily bars,
     same chunking approach as fetch_prices_batch). Market cap comes from per-symbol
     yfinance fast_info — acceptable here because sector groups are small (a few
     dozen names total across all groups), unlike the ~84-ticker ETF universe.
 
     Any field yfinance has no data for is left as None — never fabricated or
     defaulted. day_pct / week_pct / month_pct are real close-to-close % returns
-    over 1 / ~5 / ~21 trading bars.
+    over 1 / ~5 / ~21 trading bars. The longer window also supplies real 30MA /
+    60MA, current OHLC, upper/lower-wick classification and the signed up/down
+    streak used by the 1–3 day conditional-probability model.
 
     Returns {symbol: {"price","prev_close","day_pct","week_pct","month_pct",
-                      "volume","turnover","marketcap"}}.
+                      "volume","turnover","marketcap","open","high","low",
+                      "ma30","ma60","streak","candle_pattern"}}.
     """
     if not symbols:
         return {}
@@ -1486,6 +1688,8 @@ def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[
     empty = lambda: {
         "price": None, "prev_close": None, "day_pct": None, "week_pct": None,
         "month_pct": None, "volume": None, "turnover": None, "marketcap": None,
+        "currency": None, "open": None, "high": None, "low": None,
+        "ma30": None, "ma60": None, "streak": 0, "candle_pattern": "neutral",
     }
     result: dict[str, dict] = {s: empty() for s in uniq}
 
@@ -1494,7 +1698,7 @@ def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[
             with silence_output():
                 data = yf.download(
                     tickers=chunk,
-                    period="1mo",
+                    period="6mo",
                     interval="1d",
                     auto_adjust=True,
                     actions=False,
@@ -1512,6 +1716,7 @@ def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[
                         closes = sub["Close"].dropna()
                         vols = sub["Volume"].dropna() if "Volume" in sub.columns else _pd.Series(dtype=float)
                     else:
+                        sub = data
                         closes = data["Close"].dropna()
                         vols = data["Volume"].dropna() if "Volume" in data.columns else _pd.Series(dtype=float)
                     if isinstance(closes, _pd.DataFrame):
@@ -1522,6 +1727,10 @@ def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[
                     r = result[sym]
                     price = _clean_float(closes.iloc[-1])
                     r["price"] = price
+                    if len(closes) >= 30:
+                        r["ma30"] = _clean_float(closes.iloc[-30:].mean())
+                    if len(closes) >= 60:
+                        r["ma60"] = _clean_float(closes.iloc[-60:].mean())
                     if len(closes) >= 2:
                         prev = _clean_float(closes.iloc[-2])
                         r["prev_close"] = prev
@@ -1531,15 +1740,37 @@ def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[
                         wk = _clean_float(closes.iloc[-6])
                         if price is not None and wk:
                             r["week_pct"] = round((price / wk - 1.0) * 100, 2)
-                    if len(closes) >= 2:
-                        first = _clean_float(closes.iloc[0])
-                        if price is not None and first:
-                            r["month_pct"] = round((price / first - 1.0) * 100, 2)
+                    if len(closes) >= 22:
+                        month = _clean_float(closes.iloc[-22])
+                        if price is not None and month:
+                            r["month_pct"] = round((price / month - 1.0) * 100, 2)
                     if not vols.empty:
                         vol = _clean_float(vols.iloc[-1])
                         r["volume"] = vol
                         if vol is not None and price is not None:
                             r["turnover"] = vol * price
+
+                    # 當日 OHLC／影線與連漲跌只由真實日線計算；缺欄位便保留 None/neutral。
+                    try:
+                        opens = sub["Open"].dropna()
+                        highs = sub["High"].dropna()
+                        lows = sub["Low"].dropna()
+                        if isinstance(opens, _pd.DataFrame):
+                            opens = opens[sym] if sym in opens.columns else opens.squeeze()
+                        if isinstance(highs, _pd.DataFrame):
+                            highs = highs[sym] if sym in highs.columns else highs.squeeze()
+                        if isinstance(lows, _pd.DataFrame):
+                            lows = lows[sym] if sym in lows.columns else lows.squeeze()
+                        r["open"] = _clean_float(opens.iloc[-1]) if not opens.empty else None
+                        r["high"] = _clean_float(highs.iloc[-1]) if not highs.empty else None
+                        r["low"] = _clean_float(lows.iloc[-1]) if not lows.empty else None
+                        from .sector_predictive import candle_pattern, signed_streak
+                        r["streak"] = signed_streak([float(v) for v in closes.tolist()])
+                        r["candle_pattern"] = candle_pattern(
+                            r["open"], r["high"], r["low"], price
+                        )
+                    except Exception:
+                        pass
                 except Exception:
                     continue
         except Exception:
@@ -1565,6 +1796,14 @@ def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[
                 if mc:
                     break
             result[sym]["marketcap"] = _clean_float(mc) if mc else None
+            # bug#00085: marketcap is quoted in the listing's LOCAL currency, so the
+            # currency must travel with it — otherwise a KRW-denominated cap (~1560x
+            # the USD number) silently dominates every cap-weighted calculation.
+            try:
+                cur = getattr(fi, "currency", None)
+            except Exception:
+                cur = None
+            result[sym]["currency"] = str(cur).upper() if cur else None
 
             r = result[sym]
             if r["price"] is None:
@@ -1584,6 +1823,89 @@ def fetch_sector_members_data(symbols: list[str], chunk_size: int = 20) -> dict[
             continue
 
     return result
+
+
+def fetch_sector_prediction_bars(
+    symbols: list[str],
+    years: int = 5,
+    chunk_size: int = 20,
+) -> dict[str, list[dict]]:
+    """下載個股多年日線供類股 1–3 日條件模型使用。
+
+    回傳純 JSON 相容資料 ``{symbol: [{date, open, high, low, close}, ...]}``；
+    無資料的代碼直接略過，不補值、不臆測。呼叫端以每日／板塊設定簽章快取，因此這個
+    較長歷史請求不會跟著盤中 60 秒報價刷新重跑。
+    """
+    if not symbols:
+        return {}
+    uniq = sorted(set(symbols))
+    result: dict[str, list[dict]] = {}
+    for i in range(0, len(uniq), chunk_size):
+        chunk = uniq[i:i + chunk_size]
+        try:
+            with silence_output():
+                data = yf.download(
+                    tickers=chunk,
+                    period=f"{max(1, int(years))}y",
+                    interval="1d",
+                    auto_adjust=True,
+                    actions=False,
+                    progress=False,
+                    group_by="ticker" if len(chunk) > 1 else "column",
+                )
+            for sym in chunk:
+                try:
+                    if len(chunk) > 1:
+                        if sym not in data.columns.get_level_values(0):
+                            continue
+                        sub = data[sym]
+                    else:
+                        sub = data
+                    bars = []
+                    for ts, row in sub.iterrows():
+                        close = _clean_float(row.get("Close"))
+                        if close is None:
+                            continue
+                        date = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
+                        bars.append({
+                            "date": date,
+                            "open": _clean_float(row.get("Open")),
+                            "high": _clean_float(row.get("High")),
+                            "low": _clean_float(row.get("Low")),
+                            "close": close,
+                        })
+                    if bars:
+                        result[sym] = bars
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return result
+
+
+def fetch_fx_rates(currencies: list[str]) -> dict[str, float]:
+    """Fetch real FX rates so foreign market caps can be normalised to USD
+    (bug#00085). Returns {CURRENCY: usd_per_unit}, e.g. {"KRW": 0.00072}.
+
+    yfinance quotes "<CUR>=X" as units-of-CUR per 1 USD, so usd_per_unit = 1/rate.
+    USD is always 1.0. Any currency we cannot get a real rate for is simply absent
+    from the result — the caller (sector_analysis.cap_weights) then falls back to
+    equal weighting rather than fabricating a rate or summing mixed currencies.
+    """
+    out: dict[str, float] = {"USD": 1.0}
+    wanted = sorted({str(c).upper() for c in currencies if c and str(c).upper() != "USD"})
+    for cur in wanted:
+        try:
+            with silence_output():
+                fi = yf.Ticker(f"{cur}=X").fast_info
+                px = _clean_float(
+                    getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
+                )
+            if px and px > 0:
+                out[cur] = 1.0 / px
+        except Exception:
+            continue
+    return out
 
 
 def fetch_etf_holdings(symbol: str, aum: float | None = None) -> dict | None:
@@ -1689,6 +2011,7 @@ def fetch_options_snapshot(
 
     contracts: list[dict] = []
     spot_price: Optional[float] = None
+    session_date: Optional[str] = None
 
     try:
         with silence_output():
@@ -1700,13 +2023,24 @@ def fetch_options_snapshot(
             except Exception:
                 spot_price = None
 
-            if spot_price is None:
-                hist = ticker.history(period="1d", auto_adjust=False)
-                if not hist.empty:
+            # The chain belongs to a US market session, not the Taiwan calendar
+            # day on which the app happened to fetch it. Persist the last real
+            # yfinance trading row as the session key so weekends/pre-open
+            # refreshes cannot become extra backtest observations.
+            try:
+                hist = ticker.history(period="5d", auto_adjust=False)
+            except Exception:
+                hist = None
+            if hist is not None and not hist.empty:
+                try:
+                    session_date = hist.index[-1].date().isoformat()
+                except Exception:
+                    session_date = None
+                if spot_price is None:
                     spot_price = _clean_float(hist["Close"].iloc[-1])
 
             if not spot_price or spot_price <= 0:
-                return {"spot_price": None, "contracts": []}
+                return {"spot_price": None, "contracts": [], "session_date": session_date}
 
             try:
                 expiries = ticker.options
@@ -1758,4 +2092,8 @@ def fetch_options_snapshot(
     except Exception:
         pass
 
-    return {"spot_price": spot_price, "contracts": contracts}
+    return {
+        "spot_price": spot_price,
+        "contracts": contracts,
+        "session_date": session_date,
+    }

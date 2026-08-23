@@ -1,0 +1,147 @@
+{
+  "run_date": "2026-08-17T23:45:23",
+  "universe": [
+    "AMD",
+    "INTC",
+    "MU",
+    "NVDA",
+    "PLTR",
+    "SPCX",
+    "TSLA",
+    "TSM"
+  ],
+  "option_sessions": {
+    "AMD": 15,
+    "INTC": 15,
+    "MU": 15,
+    "NVDA": 15,
+    "PLTR": 15,
+    "SPCX": 12,
+    "TSLA": 15,
+    "TSM": 15
+  },
+  "options_raw_claim_count": 225,
+  "spec": {
+    "horizons": [
+      1,
+      5,
+      10
+    ],
+    "primary_horizon": 5,
+    "benchmarks": [
+      "QQQ",
+      "SPY"
+    ],
+    "cost_bps": 10.0,
+    "min_independent_blocks": 30,
+    "floor": 0.002
+  },
+  "reports": {
+    "options-directional-verdicts-v1": {
+      "protocol_version": "direction-forecast-validation-v1",
+      "policy_version_id": "options-directional-verdicts-v1",
+      "scoring_mode": "direction_only",
+      "verdict": "UNDERPOWERED",
+      "reason": "purged n=15<30",
+      "data_hash": "c45c742c53c56391fb079a935d38980abb7817295bc958e03ee899c552da1907",
+      "gate": {
+        "passed": false,
+        "profile": "promotion-minimum-improvement-b-v1",
+        "primary_metric": "benchmark_adjusted_signed_return",
+        "floor": 0.002,
+        "improvement": -0.018856348842203507,
+        "improvement_ci_lower": -0.056113373360865415,
+        "failures": [
+          "underpowered"
+        ]
+      },
+      "overall": {
+        "horizon": "+5",
+        "claim_count": 34,
+        "matured_count": 15,
+        "void_count": 19,
+        "independent_blocks": 15,
+        "coverage": 0.4411764705882353,
+        "hit_rate": 0.4666666666666667,
+        "baseline_hit_rate": 0.6666666666666666,
+        "mean_cost_adjusted_excess": -0.018856348842203507,
+        "excess_ci": [
+          -0.056113373360865415,
+          0.01646834419605091
+        ],
+        "first_entry_session": "2026-07-24",
+        "last_entry_session": "2026-08-10"
+      }
+    },
+    "naive-always-up-v1": {
+      "protocol_version": "direction-forecast-validation-v1",
+      "policy_version_id": "naive-always-up-v1",
+      "scoring_mode": "direction_only",
+      "verdict": "PASS",
+      "reason": "signed excess +0.0051, CI lower +0.0030 > floor 0.002",
+      "data_hash": "3010c60862885220222820e99c34a3050c2fa962259dd56a6a33837b6d134cc7",
+      "gate": {
+        "passed": true,
+        "profile": "promotion-minimum-improvement-b-v1",
+        "primary_metric": "benchmark_adjusted_signed_return",
+        "floor": 0.002,
+        "improvement": 0.0051478210787007025,
+        "improvement_ci_lower": 0.00298938144435887,
+        "failures": []
+      },
+      "overall": {
+        "horizon": "+5",
+        "claim_count": 2954,
+        "matured_count": 2916,
+        "void_count": 38,
+        "independent_blocks": 2916,
+        "coverage": 0.987136086662153,
+        "hit_rate": 0.5610425240054869,
+        "baseline_hit_rate": 0.5610425240054869,
+        "mean_cost_adjusted_excess": 0.0051478210787007025,
+        "excess_ci": [
+          0.00298938144435887,
+          0.007394656942289861
+        ],
+        "first_entry_session": "2016-01-04",
+        "last_entry_session": "2026-08-05"
+      }
+    },
+    "naive-momentum-5-v1": {
+      "protocol_version": "direction-forecast-validation-v1",
+      "policy_version_id": "naive-momentum-5-v1",
+      "scoring_mode": "direction_only",
+      "verdict": "FAIL",
+      "reason": "signed excess CI lower -0.0012292830802545774 \u2264 floor 0.002",
+      "data_hash": "982a37096a4b2584fe04741f4021fad652b7f88cfcf18428d71eb97237a40cbf",
+      "gate": {
+        "passed": false,
+        "profile": "promotion-minimum-improvement-b-v1",
+        "primary_metric": "benchmark_adjusted_signed_return",
+        "floor": 0.002,
+        "improvement": 0.0010073313409778377,
+        "improvement_ci_lower": -0.0012292830802545774,
+        "failures": [
+          "ci_below_floor"
+        ]
+      },
+      "overall": {
+        "horizon": "+5",
+        "claim_count": 2926,
+        "matured_count": 2915,
+        "void_count": 11,
+        "independent_blocks": 2915,
+        "coverage": 0.9962406015037594,
+        "hit_rate": 0.5152658662092624,
+        "baseline_hit_rate": 0.5519725557461407,
+        "mean_cost_adjusted_excess": 0.0010073313409778377,
+        "excess_ci": [
+          -0.0012292830802545774,
+          0.0032534353598316504
+        ],
+        "first_entry_session": "2016-01-11",
+        "last_entry_session": "2026-08-07"
+      }
+    }
+  }
+}

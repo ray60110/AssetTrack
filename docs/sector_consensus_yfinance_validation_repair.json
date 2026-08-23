@@ -1,0 +1,1344 @@
+{
+  "run_date": "2026-08-15",
+  "spec": {
+    "start": "2016-01-01",
+    "end_exclusive": "2026-08-16",
+    "horizons": [
+      1,
+      5,
+      10
+    ],
+    "benchmarks": [
+      "QQQ",
+      "SPY"
+    ],
+    "lookback": 5,
+    "min_days": 3,
+    "breadth_threshold": 0.5,
+    "return_threshold_pct": 0.1,
+    "min_coverage": 0.7,
+    "cost_bps": 10.0,
+    "bootstrap_samples": 10000,
+    "seed": 20260815,
+    "repair": true
+  },
+  "groups": {
+    "CPU 處理器": [
+      "INTC",
+      "AMD",
+      "NVDA",
+      "ARM",
+      "QCOM"
+    ],
+    "功率半導體": [
+      "ON",
+      "MPWR",
+      "IFX.DE",
+      "STM",
+      "NXPI",
+      "WOLF"
+    ],
+    "光通訊": [
+      "COHR",
+      "LITE",
+      "AAOI",
+      "POET",
+      "CIEN",
+      "INFN"
+    ],
+    "存儲記憶體 (HBM/DRAM)": [
+      "MU",
+      "005930.KS",
+      "000660.KS",
+      "WDC",
+      "STX",
+      "SNDK"
+    ],
+    "SaaS 雲端軟體": [
+      "CRM",
+      "NOW",
+      "SNOW",
+      "DDOG",
+      "TEAM",
+      "WDAY",
+      "HUBS",
+      "NET"
+    ],
+    "科技七巨頭": [
+      "AAPL",
+      "MSFT",
+      "GOOGL",
+      "AMZN",
+      "NVDA",
+      "META",
+      "TSLA"
+    ]
+  },
+  "data_sha256": "752fffa198be751b87429858c99dc003a190672e3c7851750877c4f06c6f12b6",
+  "data_first_date": "2016-01-04",
+  "data_last_date": "2026-08-14",
+  "data_quality": [
+    {
+      "symbol": "INTC",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "AMD",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "NVDA",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "ARM",
+      "rows": 732,
+      "first_date": "2023-09-14",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "QCOM",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "ON",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "MPWR",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "IFX.DE",
+      "rows": 2699,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "STM",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "NXPI",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "WOLF",
+      "rows": 221,
+      "first_date": "2025-09-29",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "COHR",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "LITE",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "AAOI",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "POET",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "CIEN",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "INFN",
+      "rows": 0,
+      "first_date": null,
+      "last_date": null
+    },
+    {
+      "symbol": "MU",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "005930.KS",
+      "rows": 2600,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "000660.KS",
+      "rows": 2600,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "WDC",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "STX",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "SNDK",
+      "rows": 377,
+      "first_date": "2025-02-13",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "CRM",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "NOW",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "SNOW",
+      "rows": 1485,
+      "first_date": "2020-09-16",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "DDOG",
+      "rows": 1735,
+      "first_date": "2019-09-19",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "TEAM",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "WDAY",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "HUBS",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "NET",
+      "rows": 1739,
+      "first_date": "2019-09-13",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "AAPL",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "MSFT",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "GOOGL",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "AMZN",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "META",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "TSLA",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "QQQ",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    },
+    {
+      "symbol": "SPY",
+      "rows": 2669,
+      "first_date": "2016-01-04",
+      "last_date": "2026-08-14"
+    }
+  ],
+  "analysis": [
+    {
+      "horizon_sessions": 1,
+      "direction": "up",
+      "raw_cluster_n": 1598,
+      "purged_cluster_n": 1598,
+      "raw_group_signal_n": 3421,
+      "hit_rate": 0.5350438047559449,
+      "hit_rate_ci": [
+        0.5105339190999226,
+        0.5593856035295309
+      ],
+      "baseline_rate": 0.5375305361136214,
+      "hit_edge": -0.0024867313576765193,
+      "hit_edge_bootstrap_ci": [
+        -0.03578639883739314,
+        0.030306082882758066
+      ],
+      "p_value": 0.5890373217097219,
+      "alpha_adjusted": 0.008333333333333333,
+      "familywise_confidence": 0.9916666666666667,
+      "significant_adjusted": false,
+      "mean_signed_return_net_pct": 0.03769578852713701,
+      "stability": {
+        "stable": false,
+        "early": {
+          "n": 799,
+          "hit_edge": 0.011101755936439061,
+          "mean_signed_excess_net_pct": -0.02498497766067233,
+          "first_date": "2016-01-21",
+          "last_date": "2021-05-26"
+        },
+        "late": {
+          "n": 799,
+          "hit_edge": -0.016075218651792057,
+          "mean_signed_excess_net_pct": -0.05753450836129595,
+          "first_date": "2021-05-27",
+          "last_date": "2026-08-13"
+        }
+      },
+      "sufficient_independent_blocks": true,
+      "directional_pass": false,
+      "economic_pass_primary": false,
+      "validated": false,
+      "first_date": "2016-01-21",
+      "last_date": "2026-08-13",
+      "mean_signed_excess_QQQ_net_pct": -0.04125974301098414,
+      "signed_excess_QQQ_bootstrap_ci": [
+        -0.14401249741947117,
+        0.06138557902728082
+      ],
+      "mean_signed_excess_SPY_net_pct": -0.029027535400083508,
+      "signed_excess_SPY_bootstrap_ci": [
+        -0.13923676576196178,
+        0.08312616332048275
+      ]
+    },
+    {
+      "horizon_sessions": 1,
+      "direction": "down",
+      "raw_cluster_n": 1187,
+      "purged_cluster_n": 1187,
+      "raw_group_signal_n": 2512,
+      "hit_rate": 0.44734625105307496,
+      "hit_rate_ci": [
+        0.41927476377178696,
+        0.4757574554587135
+      ],
+      "baseline_rate": 0.4630820204698634,
+      "hit_edge": -0.015735769416788448,
+      "hit_edge_bootstrap_ci": [
+        -0.05355677048380207,
+        0.02210953717201669
+      ],
+      "p_value": 0.8679308839727823,
+      "alpha_adjusted": 0.008333333333333333,
+      "familywise_confidence": 0.9916666666666667,
+      "significant_adjusted": false,
+      "mean_signed_return_net_pct": -0.32070470750329383,
+      "stability": {
+        "stable": false,
+        "early": {
+          "n": 593,
+          "hit_edge": -0.036466367037061215,
+          "mean_signed_excess_net_pct": -0.2319776514820298,
+          "first_date": "2016-01-07",
+          "last_date": "2022-02-24"
+        },
+        "late": {
+          "n": 594,
+          "hit_edge": 0.004959928207490634,
+          "mean_signed_excess_net_pct": -0.20758859563400697,
+          "first_date": "2022-02-25",
+          "last_date": "2026-08-03"
+        }
+      },
+      "sufficient_independent_blocks": true,
+      "directional_pass": false,
+      "economic_pass_primary": false,
+      "validated": false,
+      "first_date": "2016-01-07",
+      "last_date": "2026-08-03",
+      "mean_signed_excess_QQQ_net_pct": -0.21977285015622902,
+      "signed_excess_QQQ_bootstrap_ci": [
+        -0.3520686746604579,
+        -0.09359221512990591
+      ],
+      "mean_signed_excess_SPY_net_pct": -0.25225919316348294,
+      "signed_excess_SPY_bootstrap_ci": [
+        -0.3897836336391391,
+        -0.10887652400056579
+      ]
+    },
+    {
+      "horizon_sessions": 5,
+      "direction": "up",
+      "raw_cluster_n": 1567,
+      "purged_cluster_n": 404,
+      "raw_group_signal_n": 3300,
+      "hit_rate": 0.594059405940594,
+      "hit_rate_ci": [
+        0.5455049248056731,
+        0.6408419314247848
+      ],
+      "baseline_rate": 0.5755022433060971,
+      "hit_edge": 0.018557162634496915,
+      "hit_edge_bootstrap_ci": [
+        -0.045526387684374905,
+        0.08346984886147969
+      ],
+      "p_value": 0.24097119243861664,
+      "alpha_adjusted": 0.008333333333333333,
+      "familywise_confidence": 0.9916666666666667,
+      "significant_adjusted": false,
+      "mean_signed_return_net_pct": 0.7645932485531313,
+      "stability": {
+        "stable": false,
+        "early": {
+          "n": 202,
+          "hit_edge": 0.050168541120492634,
+          "mean_signed_excess_net_pct": 0.44704611167221786,
+          "first_date": "2016-01-21",
+          "last_date": "2021-05-17"
+        },
+        "late": {
+          "n": 202,
+          "hit_edge": -0.013054215851498687,
+          "mean_signed_excess_net_pct": 0.3503314863756539,
+          "first_date": "2021-05-24",
+          "last_date": "2026-08-06"
+        }
+      },
+      "sufficient_independent_blocks": true,
+      "directional_pass": false,
+      "economic_pass_primary": false,
+      "validated": false,
+      "first_date": "2016-01-21",
+      "last_date": "2026-08-06",
+      "mean_signed_excess_QQQ_net_pct": 0.39868879902393595,
+      "signed_excess_QQQ_bootstrap_ci": [
+        -0.04162355876241851,
+        0.8524064374665882
+      ],
+      "mean_signed_excess_SPY_net_pct": 0.4730373497314299,
+      "signed_excess_SPY_bootstrap_ci": [
+        -0.029946485597172952,
+        0.9746886718497824
+      ]
+    },
+    {
+      "horizon_sessions": 5,
+      "direction": "down",
+      "raw_cluster_n": 1172,
+      "purged_cluster_n": 326,
+      "raw_group_signal_n": 2442,
+      "hit_rate": 0.401840490797546,
+      "hit_rate_ci": [
+        0.3500612698355454,
+        0.45590620061087506
+      ],
+      "baseline_rate": 0.4268077367258212,
+      "hit_edge": -0.02496724592827515,
+      "hit_edge_bootstrap_ci": [
+        -0.09527557823804847,
+        0.04585648685358347
+      ],
+      "p_value": 0.8333522302224009,
+      "alpha_adjusted": 0.008333333333333333,
+      "familywise_confidence": 0.9916666666666667,
+      "significant_adjusted": false,
+      "mean_signed_return_net_pct": -1.2760226027901755,
+      "stability": {
+        "stable": false,
+        "early": {
+          "n": 163,
+          "hit_edge": -0.05067205908139192,
+          "mean_signed_excess_net_pct": -0.6432085633899158,
+          "first_date": "2016-01-07",
+          "last_date": "2022-01-18"
+        },
+        "late": {
+          "n": 163,
+          "hit_edge": 0.00073756722484165,
+          "mean_signed_excess_net_pct": -0.958075310272824,
+          "first_date": "2022-01-25",
+          "last_date": "2026-07-29"
+        }
+      },
+      "sufficient_independent_blocks": true,
+      "directional_pass": false,
+      "economic_pass_primary": false,
+      "validated": false,
+      "first_date": "2016-01-07",
+      "last_date": "2026-07-29",
+      "mean_signed_excess_QQQ_net_pct": -0.8006419368313701,
+      "signed_excess_QQQ_bootstrap_ci": [
+        -1.3770078636742071,
+        -0.2490971848030343
+      ],
+      "mean_signed_excess_SPY_net_pct": -0.9034999576741604,
+      "signed_excess_SPY_bootstrap_ci": [
+        -1.5027656215671412,
+        -0.28897474748702295
+      ]
+    },
+    {
+      "horizon_sessions": 10,
+      "direction": "up",
+      "raw_cluster_n": 1538,
+      "purged_cluster_n": 230,
+      "raw_group_signal_n": 3184,
+      "hit_rate": 0.6,
+      "hit_rate_ci": [
+        0.5355441991473282,
+        0.6611701579217304
+      ],
+      "baseline_rate": 0.5978241160425884,
+      "hit_edge": 0.0021758839574115285,
+      "hit_edge_bootstrap_ci": [
+        -0.0832767857760165,
+        0.0847322880832765
+      ],
+      "p_value": 0.5017245898875297,
+      "alpha_adjusted": 0.008333333333333333,
+      "familywise_confidence": 0.9916666666666667,
+      "significant_adjusted": false,
+      "mean_signed_return_net_pct": 1.4170988492376524,
+      "stability": {
+        "stable": false,
+        "early": {
+          "n": 115,
+          "hit_edge": 0.07560230712780278,
+          "mean_signed_excess_net_pct": 0.6453785367841692,
+          "first_date": "2016-01-21",
+          "last_date": "2021-04-28"
+        },
+        "late": {
+          "n": 115,
+          "hit_edge": -0.07125053921297979,
+          "mean_signed_excess_net_pct": 0.8172381672988025,
+          "first_date": "2021-05-17",
+          "last_date": "2026-07-23"
+        }
+      },
+      "sufficient_independent_blocks": true,
+      "directional_pass": false,
+      "economic_pass_primary": false,
+      "validated": false,
+      "first_date": "2016-01-21",
+      "last_date": "2026-07-23",
+      "mean_signed_excess_QQQ_net_pct": 0.7313083520414859,
+      "signed_excess_QQQ_bootstrap_ci": [
+        -0.1779432294662787,
+        1.650104371810094
+      ],
+      "mean_signed_excess_SPY_net_pct": 0.9073994558467938,
+      "signed_excess_SPY_bootstrap_ci": [
+        -0.07869196219959358,
+        1.9044141816511708
+      ]
+    },
+    {
+      "horizon_sessions": 10,
+      "direction": "down",
+      "raw_cluster_n": 1156,
+      "purged_cluster_n": 204,
+      "raw_group_signal_n": 2347,
+      "hit_rate": 0.3872549019607843,
+      "hit_rate_ci": [
+        0.32308007251937326,
+        0.45559753581312606
+      ],
+      "baseline_rate": 0.4051900045917083,
+      "hit_edge": -0.01793510263092396,
+      "hit_edge_bootstrap_ci": [
+        -0.10537814124318803,
+        0.07096817330489817
+      ],
+      "p_value": 0.7225615972558306,
+      "alpha_adjusted": 0.008333333333333333,
+      "familywise_confidence": 0.9916666666666667,
+      "significant_adjusted": false,
+      "mean_signed_return_net_pct": -1.7369200469265398,
+      "stability": {
+        "stable": false,
+        "early": {
+          "n": 102,
+          "hit_edge": -0.06540040076401833,
+          "mean_signed_excess_net_pct": -1.0366940867250007,
+          "first_date": "2016-01-07",
+          "last_date": "2021-09-29"
+        },
+        "late": {
+          "n": 102,
+          "hit_edge": 0.02953019550217037,
+          "mean_signed_excess_net_pct": -0.48750421275112116,
+          "first_date": "2021-10-13",
+          "last_date": "2026-07-27"
+        }
+      },
+      "sufficient_independent_blocks": true,
+      "directional_pass": false,
+      "economic_pass_primary": false,
+      "validated": false,
+      "first_date": "2016-01-07",
+      "last_date": "2026-07-27",
+      "mean_signed_excess_QQQ_net_pct": -0.7620991497380609,
+      "signed_excess_QQQ_bootstrap_ci": [
+        -1.726086627743784,
+        0.13140930753076244
+      ],
+      "mean_signed_excess_SPY_net_pct": -1.0220080738196529,
+      "signed_excess_SPY_bootstrap_ci": [
+        -2.085444941162881,
+        0.021811851843529174
+      ]
+    }
+  ],
+  "primary_episode_analysis": {
+    "hypothesis": "5-session sector-flow episodes have positive signed return and positive paired improvement over a simple five-session momentum direction",
+    "segments": {
+      "development": {
+        "purged_episode_blocks": 192,
+        "up_episode_votes": 146,
+        "down_episode_votes": 107,
+        "mean_signed_return_net_pct": 0.2771099089031192,
+        "signed_return_bootstrap_ci": [
+          -0.3957527614955215,
+          0.9304772442332939
+        ],
+        "mean_paired_improvement_vs_momentum_pct": 0.31791799982340607,
+        "paired_improvement_bootstrap_ci": [
+          0.018978140780051694,
+          0.6539697998396166
+        ],
+        "mean_signed_return_stress_25bps_pct": 0.1271099089031192,
+        "first_date": "2016-01-07",
+        "last_date": "2020-12-30",
+        "passed": false
+      },
+      "validation": {
+        "purged_episode_blocks": 124,
+        "up_episode_votes": 112,
+        "down_episode_votes": 92,
+        "mean_signed_return_net_pct": -0.2811534121291779,
+        "signed_return_bootstrap_ci": [
+          -1.126675327311172,
+          0.523502316795467
+        ],
+        "mean_paired_improvement_vs_momentum_pct": 0.17788474319090772,
+        "paired_improvement_bootstrap_ci": [
+          -0.47507253512762815,
+          0.9047255047742667
+        ],
+        "mean_signed_return_stress_25bps_pct": -0.4311534121291779,
+        "first_date": "2021-01-05",
+        "last_date": "2023-12-28",
+        "passed": false
+      },
+      "final_holdout": {
+        "purged_episode_blocks": 108,
+        "up_episode_votes": 85,
+        "down_episode_votes": 58,
+        "mean_signed_return_net_pct": -0.058447202311939166,
+        "signed_return_bootstrap_ci": [
+          -1.3611392711822934,
+          1.26723555999906
+        ],
+        "mean_paired_improvement_vs_momentum_pct": 0.258007836453579,
+        "paired_improvement_bootstrap_ci": [
+          -0.8031742671279783,
+          1.456281291767156
+        ],
+        "mean_signed_return_stress_25bps_pct": -0.20844720231193917,
+        "first_date": "2024-01-02",
+        "last_date": "2026-08-07",
+        "passed": false
+      }
+    },
+    "leave_one_sector_out": {
+      "CPU 處理器": {
+        "purged_episode_blocks": 105,
+        "up_episode_votes": 78,
+        "down_episode_votes": 51,
+        "mean_signed_return_net_pct": 0.3250641137693299,
+        "signed_return_bootstrap_ci": [
+          -1.06906218871554,
+          1.7293638366486759
+        ],
+        "mean_paired_improvement_vs_momentum_pct": 0.3132139677370641,
+        "paired_improvement_bootstrap_ci": [
+          -0.732692752195235,
+          1.5799603973675307
+        ],
+        "mean_signed_return_stress_25bps_pct": 0.17506411376932993,
+        "first_date": "2024-01-02",
+        "last_date": "2026-08-07",
+        "passed": false
+      },
+      "SaaS 雲端軟體": {
+        "purged_episode_blocks": 102,
+        "up_episode_votes": 75,
+        "down_episode_votes": 61,
+        "mean_signed_return_net_pct": 0.36426615455613737,
+        "signed_return_bootstrap_ci": [
+          -1.0794213126702126,
+          1.8586722518716063
+        ],
+        "mean_paired_improvement_vs_momentum_pct": 0.5868652779477151,
+        "paired_improvement_bootstrap_ci": [
+          -0.43669775650852644,
+          1.8047044557580227
+        ],
+        "mean_signed_return_stress_25bps_pct": 0.21426615455613737,
+        "first_date": "2024-01-02",
+        "last_date": "2026-08-03",
+        "passed": false
+      },
+      "光通訊": {
+        "purged_episode_blocks": 102,
+        "up_episode_votes": 79,
+        "down_episode_votes": 56,
+        "mean_signed_return_net_pct": -0.30928409597185946,
+        "signed_return_bootstrap_ci": [
+          -1.436956961157987,
+          0.8117539865418413
+        ],
+        "mean_paired_improvement_vs_momentum_pct": -0.21457992103119983,
+        "paired_improvement_bootstrap_ci": [
+          -0.8587520386560048,
+          0.36294290403956964
+        ],
+        "mean_signed_return_stress_25bps_pct": -0.4592840959718595,
+        "first_date": "2024-01-03",
+        "last_date": "2026-08-03",
+        "passed": false
+      },
+      "功率半導體": {
+        "purged_episode_blocks": 98,
+        "up_episode_votes": 74,
+        "down_episode_votes": 52,
+        "mean_signed_return_net_pct": 0.7473253008828689,
+        "signed_return_bootstrap_ci": [
+          -0.6997803011260229,
+          2.205455022105279
+        ],
+        "mean_paired_improvement_vs_momentum_pct": 0.47892271932856656,
+        "paired_improvement_bootstrap_ci": [
+          -0.4891909730840924,
+          1.737451983029063
+        ],
+        "mean_signed_return_stress_25bps_pct": 0.5973253008828688,
+        "first_date": "2024-01-02",
+        "last_date": "2026-08-07",
+        "passed": false
+      },
+      "存儲記憶體 (HBM/DRAM)": {
+        "purged_episode_blocks": 105,
+        "up_episode_votes": 81,
+        "down_episode_votes": 61,
+        "mean_signed_return_net_pct": -0.6198019097948287,
+        "signed_return_bootstrap_ci": [
+          -1.9618487473367954,
+          0.7485895967659545
+        ],
+        "mean_paired_improvement_vs_momentum_pct": 0.18501749236920628,
+        "paired_improvement_bootstrap_ci": [
+          -0.865521412502446,
+          1.3907994755370303
+        ],
+        "mean_signed_return_stress_25bps_pct": -0.7698019097948288,
+        "first_date": "2024-01-02",
+        "last_date": "2026-08-07",
+        "passed": false
+      },
+      "科技七巨頭": {
+        "purged_episode_blocks": 107,
+        "up_episode_votes": 81,
+        "down_episode_votes": 57,
+        "mean_signed_return_net_pct": -0.5146129039268761,
+        "signed_return_bootstrap_ci": [
+          -1.7769663920368919,
+          0.7014793965621575
+        ],
+        "mean_paired_improvement_vs_momentum_pct": 0.2458529788512321,
+        "paired_improvement_bootstrap_ci": [
+          -0.8349028442716119,
+          1.518273382594845
+        ],
+        "mean_signed_return_stress_25bps_pct": -0.6646129039268761,
+        "first_date": "2024-01-02",
+        "last_date": "2026-08-07",
+        "passed": false
+      }
+    },
+    "all_segments_positive": false,
+    "leave_one_sector_out_positive": false,
+    "passed": false,
+    "holdout_block_dates": [
+      "2024-01-02",
+      "2024-01-09",
+      "2024-01-22",
+      "2024-01-29",
+      "2024-02-05",
+      "2024-02-14",
+      "2024-02-23",
+      "2024-03-01",
+      "2024-03-08",
+      "2024-03-20",
+      "2024-03-28",
+      "2024-04-05",
+      "2024-04-12",
+      "2024-04-26",
+      "2024-05-03",
+      "2024-05-15",
+      "2024-05-24",
+      "2024-06-04",
+      "2024-06-12",
+      "2024-06-20",
+      "2024-06-27",
+      "2024-07-05",
+      "2024-07-16",
+      "2024-07-23",
+      "2024-07-31",
+      "2024-08-07",
+      "2024-08-16",
+      "2024-08-23",
+      "2024-09-04",
+      "2024-09-11",
+      "2024-09-19",
+      "2024-09-27",
+      "2024-10-04",
+      "2024-10-11",
+      "2024-10-21",
+      "2024-10-28",
+      "2024-11-04",
+      "2024-11-12",
+      "2024-11-19",
+      "2024-11-26",
+      "2024-12-04",
+      "2024-12-12",
+      "2024-12-23",
+      "2025-01-03",
+      "2025-01-13",
+      "2025-01-21",
+      "2025-01-28",
+      "2025-02-05",
+      "2025-02-12",
+      "2025-02-20",
+      "2025-03-11",
+      "2025-03-19",
+      "2025-03-26",
+      "2025-04-03",
+      "2025-04-15",
+      "2025-04-23",
+      "2025-05-06",
+      "2025-05-13",
+      "2025-05-21",
+      "2025-06-02",
+      "2025-06-10",
+      "2025-06-17",
+      "2025-06-25",
+      "2025-07-08",
+      "2025-07-15",
+      "2025-07-23",
+      "2025-08-01",
+      "2025-08-08",
+      "2025-08-18",
+      "2025-08-26",
+      "2025-09-03",
+      "2025-09-10",
+      "2025-10-02",
+      "2025-10-13",
+      "2025-10-21",
+      "2025-10-28",
+      "2025-11-06",
+      "2025-11-17",
+      "2025-11-26",
+      "2025-12-08",
+      "2025-12-17",
+      "2025-12-31",
+      "2026-01-12",
+      "2026-01-21",
+      "2026-01-29",
+      "2026-02-06",
+      "2026-02-13",
+      "2026-02-23",
+      "2026-03-03",
+      "2026-03-10",
+      "2026-03-18",
+      "2026-03-25",
+      "2026-04-01",
+      "2026-04-09",
+      "2026-04-16",
+      "2026-04-28",
+      "2026-05-07",
+      "2026-05-15",
+      "2026-05-26",
+      "2026-06-03",
+      "2026-06-10",
+      "2026-06-18",
+      "2026-06-26",
+      "2026-07-06",
+      "2026-07-13",
+      "2026-07-22",
+      "2026-07-29",
+      "2026-08-07"
+    ]
+  },
+  "group_diagnostics": [
+    {
+      "group": "CPU 處理器",
+      "horizon_sessions": 1,
+      "direction": "down",
+      "n": 635,
+      "hit_rate": 0.4062992125984252,
+      "baseline_rate": 0.4572713643178411,
+      "mean_signed_return_pct": -0.4423980733579335,
+      "mean_signed_excess_QQQ_pct": -0.24270666107205444,
+      "mean_signed_excess_SPY_pct": -0.3091941317144836
+    },
+    {
+      "group": "CPU 處理器",
+      "horizon_sessions": 1,
+      "direction": "up",
+      "n": 885,
+      "hit_rate": 0.5276836158192091,
+      "baseline_rate": 0.5427286356821589,
+      "mean_signed_return_pct": 0.09671936765961847,
+      "mean_signed_excess_QQQ_pct": 0.04685588169936924,
+      "mean_signed_excess_SPY_pct": 0.0350121743885448
+    },
+    {
+      "group": "CPU 處理器",
+      "horizon_sessions": 5,
+      "direction": "down",
+      "n": 635,
+      "hit_rate": 0.3858267716535433,
+      "baseline_rate": 0.41403903903903905,
+      "mean_signed_return_pct": -1.2065658769663758,
+      "mean_signed_excess_QQQ_pct": -0.48815027756504703,
+      "mean_signed_excess_SPY_pct": -0.6556993005344433
+    },
+    {
+      "group": "CPU 處理器",
+      "horizon_sessions": 5,
+      "direction": "up",
+      "n": 884,
+      "hit_rate": 0.5927601809954751,
+      "baseline_rate": 0.5859609609609608,
+      "mean_signed_return_pct": 0.7375316070717974,
+      "mean_signed_excess_QQQ_pct": 0.41737846372974063,
+      "mean_signed_excess_SPY_pct": 0.42202705636726284
+    },
+    {
+      "group": "CPU 處理器",
+      "horizon_sessions": 10,
+      "direction": "down",
+      "n": 634,
+      "hit_rate": 0.38170347003154576,
+      "baseline_rate": 0.3881158330199322,
+      "mean_signed_return_pct": -2.42320673100373,
+      "mean_signed_excess_QQQ_pct": -1.1970403029107488,
+      "mean_signed_excess_SPY_pct": -1.502037627270795
+    },
+    {
+      "group": "CPU 處理器",
+      "horizon_sessions": 10,
+      "direction": "up",
+      "n": 882,
+      "hit_rate": 0.6281179138321995,
+      "baseline_rate": 0.6118841669800676,
+      "mean_signed_return_pct": 1.8664022812618046,
+      "mean_signed_excess_QQQ_pct": 1.0656108207137591,
+      "mean_signed_excess_SPY_pct": 1.1918851953975718
+    },
+    {
+      "group": "SaaS 雲端軟體",
+      "horizon_sessions": 1,
+      "direction": "down",
+      "n": 379,
+      "hit_rate": 0.42480211081794195,
+      "baseline_rate": 0.45742232451093207,
+      "mean_signed_return_pct": -0.26046957268871596,
+      "mean_signed_excess_QQQ_pct": -0.19349377655549957,
+      "mean_signed_excess_SPY_pct": -0.2064788496858215
+    },
+    {
+      "group": "SaaS 雲端軟體",
+      "horizon_sessions": 1,
+      "direction": "up",
+      "n": 463,
+      "hit_rate": 0.5140388768898488,
+      "baseline_rate": 0.542577675489068,
+      "mean_signed_return_pct": -0.015702996513090393,
+      "mean_signed_excess_QQQ_pct": -0.07672504653678669,
+      "mean_signed_excess_SPY_pct": -0.06385269104202047
+    },
+    {
+      "group": "SaaS 雲端軟體",
+      "horizon_sessions": 5,
+      "direction": "down",
+      "n": 379,
+      "hit_rate": 0.42744063324538256,
+      "baseline_rate": 0.4348327566320646,
+      "mean_signed_return_pct": -1.4177402082979829,
+      "mean_signed_excess_QQQ_pct": -0.9518037532125103,
+      "mean_signed_excess_SPY_pct": -1.128063662692402
+    },
+    {
+      "group": "SaaS 雲端軟體",
+      "horizon_sessions": 5,
+      "direction": "up",
+      "n": 461,
+      "hit_rate": 0.5488069414316703,
+      "baseline_rate": 0.5651672433679354,
+      "mean_signed_return_pct": 0.12939209789589246,
+      "mean_signed_excess_QQQ_pct": -0.1936495798761075,
+      "mean_signed_excess_SPY_pct": -0.17602133324731709
+    },
+    {
+      "group": "SaaS 雲端軟體",
+      "horizon_sessions": 10,
+      "direction": "down",
+      "n": 379,
+      "hit_rate": 0.47229551451187335,
+      "baseline_rate": 0.44245228455754765,
+      "mean_signed_return_pct": -1.3062519038222489,
+      "mean_signed_excess_QQQ_pct": -0.6670537579097691,
+      "mean_signed_excess_SPY_pct": -0.7563098375992122
+    },
+    {
+      "group": "SaaS 雲端軟體",
+      "horizon_sessions": 10,
+      "direction": "up",
+      "n": 459,
+      "hit_rate": 0.5185185185185185,
+      "baseline_rate": 0.5575477154424524,
+      "mean_signed_return_pct": 0.5365254324228156,
+      "mean_signed_excess_QQQ_pct": -0.08968526650204087,
+      "mean_signed_excess_SPY_pct": 0.062252820044235845
+    },
+    {
+      "group": "光通訊",
+      "horizon_sessions": 1,
+      "direction": "down",
+      "n": 373,
+      "hit_rate": 0.49865951742627346,
+      "baseline_rate": 0.4760119940029985,
+      "mean_signed_return_pct": -0.09345601702520911,
+      "mean_signed_excess_QQQ_pct": -0.0016845187619017891,
+      "mean_signed_excess_SPY_pct": -0.03929769894389501
+    },
+    {
+      "group": "光通訊",
+      "horizon_sessions": 1,
+      "direction": "up",
+      "n": 431,
+      "hit_rate": 0.5174013921113689,
+      "baseline_rate": 0.5239880059970013,
+      "mean_signed_return_pct": 0.12864651674819796,
+      "mean_signed_excess_QQQ_pct": 0.0816346376850185,
+      "mean_signed_excess_SPY_pct": 0.06985108580519937
+    },
+    {
+      "group": "光通訊",
+      "horizon_sessions": 5,
+      "direction": "down",
+      "n": 373,
+      "hit_rate": 0.4477211796246649,
+      "baseline_rate": 0.44819819819819806,
+      "mean_signed_return_pct": -1.0622699061821181,
+      "mean_signed_excess_QQQ_pct": -0.4713083785445731,
+      "mean_signed_excess_SPY_pct": -0.6130137636440456
+    },
+    {
+      "group": "光通訊",
+      "horizon_sessions": 5,
+      "direction": "up",
+      "n": 429,
+      "hit_rate": 0.5244755244755245,
+      "baseline_rate": 0.5518018018018019,
+      "mean_signed_return_pct": 0.7627036458886719,
+      "mean_signed_excess_QQQ_pct": 0.44919071435974606,
+      "mean_signed_excess_SPY_pct": 0.488014561425824
+    },
+    {
+      "group": "光通訊",
+      "horizon_sessions": 10,
+      "direction": "down",
+      "n": 373,
+      "hit_rate": 0.4477211796246649,
+      "baseline_rate": 0.418954494170741,
+      "mean_signed_return_pct": -1.79008876483922,
+      "mean_signed_excess_QQQ_pct": -1.0713902918621274,
+      "mean_signed_excess_SPY_pct": -1.1919349337950984
+    },
+    {
+      "group": "光通訊",
+      "horizon_sessions": 10,
+      "direction": "up",
+      "n": 424,
+      "hit_rate": 0.6155660377358491,
+      "baseline_rate": 0.5810455058292591,
+      "mean_signed_return_pct": 2.703597565073133,
+      "mean_signed_excess_QQQ_pct": 2.0805772648035754,
+      "mean_signed_excess_SPY_pct": 2.122798888106827
+    },
+    {
+      "group": "功率半導體",
+      "horizon_sessions": 1,
+      "direction": "down",
+      "n": 605,
+      "hit_rate": 0.4380165289256198,
+      "baseline_rate": 0.4701348747591521,
+      "mean_signed_return_pct": -0.23777381070038373,
+      "mean_signed_excess_QQQ_pct": -0.05731555376421734,
+      "mean_signed_excess_SPY_pct": -0.11258076005628587
+    },
+    {
+      "group": "功率半導體",
+      "horizon_sessions": 1,
+      "direction": "up",
+      "n": 807,
+      "hit_rate": 0.5080545229244114,
+      "baseline_rate": 0.5298651252408478,
+      "mean_signed_return_pct": 0.0732196350820755,
+      "mean_signed_excess_QQQ_pct": 0.02328962036092956,
+      "mean_signed_excess_SPY_pct": 0.030166258855713803
+    },
+    {
+      "group": "功率半導體",
+      "horizon_sessions": 5,
+      "direction": "down",
+      "n": 579,
+      "hit_rate": 0.42487046632124353,
+      "baseline_rate": 0.4309504467912265,
+      "mean_signed_return_pct": -0.7612850138085531,
+      "mean_signed_excess_QQQ_pct": -0.13631521056163057,
+      "mean_signed_excess_SPY_pct": -0.30646299819454165
+    },
+    {
+      "group": "功率半導體",
+      "horizon_sessions": 5,
+      "direction": "up",
+      "n": 766,
+      "hit_rate": 0.5613577023498695,
+      "baseline_rate": 0.5690495532087735,
+      "mean_signed_return_pct": 0.48499150638812644,
+      "mean_signed_excess_QQQ_pct": 0.2386921969895027,
+      "mean_signed_excess_SPY_pct": 0.2636497856838216
+    },
+    {
+      "group": "功率半導體",
+      "horizon_sessions": 10,
+      "direction": "down",
+      "n": 530,
+      "hit_rate": 0.41132075471698115,
+      "baseline_rate": 0.41082251082251087,
+      "mean_signed_return_pct": -1.4015200670682813,
+      "mean_signed_excess_QQQ_pct": -0.24913924940675006,
+      "mean_signed_excess_SPY_pct": -0.5686288371468643
+    },
+    {
+      "group": "功率半導體",
+      "horizon_sessions": 10,
+      "direction": "up",
+      "n": 715,
+      "hit_rate": 0.5986013986013986,
+      "baseline_rate": 0.5891774891774891,
+      "mean_signed_return_pct": 1.4722761621756137,
+      "mean_signed_excess_QQQ_pct": 0.921942819947104,
+      "mean_signed_excess_SPY_pct": 1.0121691620767665
+    },
+    {
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "horizon_sessions": 1,
+      "direction": "down",
+      "n": 261,
+      "hit_rate": 0.5172413793103449,
+      "baseline_rate": 0.4667497921862011,
+      "mean_signed_return_pct": 0.14169712526512154,
+      "mean_signed_excess_QQQ_pct": 0.12833790252969737,
+      "mean_signed_excess_SPY_pct": 0.10160743570900278
+    },
+    {
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "horizon_sessions": 1,
+      "direction": "up",
+      "n": 421,
+      "hit_rate": 0.5653206650831354,
+      "baseline_rate": 0.5332502078137988,
+      "mean_signed_return_pct": 0.3466113243724027,
+      "mean_signed_excess_QQQ_pct": 0.2036320449281011,
+      "mean_signed_excess_SPY_pct": 0.22179681648857344
+    },
+    {
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "horizon_sessions": 5,
+      "direction": "down",
+      "n": 217,
+      "hit_rate": 0.4147465437788018,
+      "baseline_rate": 0.42575234336457807,
+      "mean_signed_return_pct": -0.7791322162298125,
+      "mean_signed_excess_QQQ_pct": -0.2805716668906859,
+      "mean_signed_excess_SPY_pct": -0.4417810168120738
+    },
+    {
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "horizon_sessions": 5,
+      "direction": "up",
+      "n": 346,
+      "hit_rate": 0.5867052023121387,
+      "baseline_rate": 0.5742476566354217,
+      "mean_signed_return_pct": 1.4218351988552005,
+      "mean_signed_excess_QQQ_pct": 0.9234697617005213,
+      "mean_signed_excess_SPY_pct": 1.067370277397288
+    },
+    {
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "horizon_sessions": 10,
+      "direction": "down",
+      "n": 172,
+      "hit_rate": 0.4069767441860465,
+      "baseline_rate": 0.40369230769230774,
+      "mean_signed_return_pct": -2.5370842498487534,
+      "mean_signed_excess_QQQ_pct": -1.417594708285292,
+      "mean_signed_excess_SPY_pct": -1.663294844619065
+    },
+    {
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "horizon_sessions": 10,
+      "direction": "up",
+      "n": 290,
+      "hit_rate": 0.5724137931034483,
+      "baseline_rate": 0.5963076923076923,
+      "mean_signed_return_pct": 2.448197556404554,
+      "mean_signed_excess_QQQ_pct": 1.5672889540231885,
+      "mean_signed_excess_SPY_pct": 1.8315174939869232
+    },
+    {
+      "group": "科技七巨頭",
+      "horizon_sessions": 1,
+      "direction": "down",
+      "n": 259,
+      "hit_rate": 0.416988416988417,
+      "baseline_rate": 0.44227886056971505,
+      "mean_signed_return_pct": -0.29588266644240463,
+      "mean_signed_excess_QQQ_pct": -0.06859290663976608,
+      "mean_signed_excess_SPY_pct": -0.19194643646331863
+    },
+    {
+      "group": "科技七巨頭",
+      "horizon_sessions": 1,
+      "direction": "up",
+      "n": 414,
+      "hit_rate": 0.5579710144927537,
+      "baseline_rate": 0.5577211394302849,
+      "mean_signed_return_pct": 0.1641851003091968,
+      "mean_signed_excess_QQQ_pct": 0.0872880068590716,
+      "mean_signed_excess_SPY_pct": 0.1305254592241888
+    },
+    {
+      "group": "科技七巨頭",
+      "horizon_sessions": 5,
+      "direction": "down",
+      "n": 259,
+      "hit_rate": 0.4092664092664093,
+      "baseline_rate": 0.39189189189189194,
+      "mean_signed_return_pct": -1.066359027592492,
+      "mean_signed_excess_QQQ_pct": -0.2692354440490357,
+      "mean_signed_excess_SPY_pct": -0.6356473859907371
+    },
+    {
+      "group": "科技七巨頭",
+      "horizon_sessions": 5,
+      "direction": "up",
+      "n": 414,
+      "hit_rate": 0.6594202898550725,
+      "baseline_rate": 0.6081081081081079,
+      "mean_signed_return_pct": 0.9645560197897441,
+      "mean_signed_excess_QQQ_pct": 0.4446013755270825,
+      "mean_signed_excess_SPY_pct": 0.5707785461588043
+    },
+    {
+      "group": "科技七巨頭",
+      "horizon_sessions": 10,
+      "direction": "down",
+      "n": 259,
+      "hit_rate": 0.3745173745173745,
+      "baseline_rate": 0.3527641970665663,
+      "mean_signed_return_pct": -1.72033204517245,
+      "mean_signed_excess_QQQ_pct": -0.4638980187972324,
+      "mean_signed_excess_SPY_pct": -0.9705985140761846
+    },
+    {
+      "group": "科技七巨頭",
+      "horizon_sessions": 10,
+      "direction": "up",
+      "n": 414,
+      "hit_rate": 0.6666666666666666,
+      "baseline_rate": 0.6472358029334337,
+      "mean_signed_return_pct": 1.4009838870369826,
+      "mean_signed_excess_QQQ_pct": 0.73865958464997,
+      "mean_signed_excess_SPY_pct": 0.7932820801641713
+    }
+  ],
+  "signal_record_n": 17206
+}

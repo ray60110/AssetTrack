@@ -1,0 +1,18 @@
+---
+description: 架構、技術或既有設計一改，必須同輪更新 glossary.md 與 blockDiagram.md
+alwaysApply: true
+---
+
+# 架構文件成對更新
+
+`glossary.md` 與 `blockDiagram.md` 是成對的現行契約，不是事後補寫的說明。
+
+下列任一情況發生時，**同一輪工作必須同時改這兩份檔**，不可只改程式或只改其中一份：
+
+- 新架構、新模組、新畫面、新協定、新外部服務、新資料檔
+- 既有設計、溝通路徑、門檻、建議邏輯或命名／定義變更
+- 功能下線、畫面不再呼叫、或從 TUI 搬出
+
+純 typo、純測試、純格式、不改行為的 bugfix 不必動這兩份檔。
+
+更新時讀並遵循 `.agents/skills/sync-architecture-docs/SKILL.md`。未同步這兩份檔，工作不算完成。

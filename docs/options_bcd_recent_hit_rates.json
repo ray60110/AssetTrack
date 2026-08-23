@@ -1,0 +1,428 @@
+{
+  "run_at": "2026-08-18T16:41:25",
+  "recent_first": "2026-07-23",
+  "recent_last": "2026-08-07",
+  "last_maturable_entry": "2026-08-07",
+  "year_first": "2025-08-18",
+  "recent_rows": [
+    {
+      "label": "B smirk \u4e2d\u4f4d\u6392\u5e8f",
+      "target": "8 \u6a94",
+      "verdict": "UNDERPOWERED",
+      "n": 16,
+      "hit": "50.0%",
+      "base": "50.0%",
+      "excess": "-0.138%",
+      "raw": {
+        "policy_version_id": "b-watchlist-smirk-median-v1",
+        "verdict": "UNDERPOWERED",
+        "reason": "purged n=16<30",
+        "independent_blocks": 16,
+        "hit_rate": 0.5,
+        "baseline_hit_rate": 0.5,
+        "mean_cost_adjusted_excess": -0.001382746105579119,
+        "excess_ci": [
+          -0.04008765899905291,
+          0.03278479689848442
+        ],
+        "claim_count": 16,
+        "matured_count": 16,
+        "void_count": 0,
+        "first_entry_session": "2026-07-23",
+        "last_entry_session": "2026-08-06"
+      }
+    },
+    {
+      "label": "B IV spread \u4e2d\u4f4d\u6392\u5e8f",
+      "target": "8 \u6a94",
+      "verdict": "UNDERPOWERED",
+      "n": 16,
+      "hit": "43.8%",
+      "base": "50.0%",
+      "excess": "-1.177%",
+      "raw": {
+        "policy_version_id": "b-watchlist-iv-spread-median-v1",
+        "verdict": "UNDERPOWERED",
+        "reason": "purged n=16<30",
+        "independent_blocks": 16,
+        "hit_rate": 0.4375,
+        "baseline_hit_rate": 0.5,
+        "mean_cost_adjusted_excess": -0.01177059607584223,
+        "excess_ci": [
+          -0.05027715122790184,
+          0.02170374524662396
+        ],
+        "claim_count": 16,
+        "matured_count": 16,
+        "void_count": 0,
+        "first_entry_session": "2026-07-23",
+        "last_entry_session": "2026-08-06"
+      }
+    },
+    {
+      "label": "B \u96d9\u78ba\u8a8d\uff08\u4e3b\uff09",
+      "target": "8 \u6a94",
+      "verdict": "UNDERPOWERED",
+      "n": 14,
+      "hit": "42.9%",
+      "base": "50.0%",
+      "excess": "-0.918%",
+      "raw": {
+        "policy_version_id": "b-watchlist-dual-confirm-v1",
+        "verdict": "UNDERPOWERED",
+        "reason": "purged n=14<30",
+        "independent_blocks": 14,
+        "hit_rate": 0.42857142857142855,
+        "baseline_hit_rate": 0.5,
+        "mean_cost_adjusted_excess": -0.009175804802439362,
+        "excess_ci": [
+          -0.052242149504175835,
+          0.02814310674332387
+        ],
+        "claim_count": 14,
+        "matured_count": 14,
+        "void_count": 0,
+        "first_entry_session": "2026-07-23",
+        "last_entry_session": "2026-08-06"
+      }
+    },
+    {
+      "label": "C Xing smirk 8 \u6a94\u8fd1\u4f3c",
+      "target": "8 \u6a94",
+      "verdict": "UNDERPOWERED",
+      "n": 16,
+      "hit": "50.0%",
+      "base": "50.0%",
+      "excess": "-0.138%",
+      "raw": {
+        "policy_version_id": "c-watchlist-xing-smirk-v1",
+        "verdict": "UNDERPOWERED",
+        "reason": "purged n=16<30",
+        "independent_blocks": 16,
+        "hit_rate": 0.5,
+        "baseline_hit_rate": 0.5,
+        "mean_cost_adjusted_excess": -0.001382746105579119,
+        "excess_ci": [
+          -0.04008765899905291,
+          0.03278479689848442
+        ],
+        "claim_count": 16,
+        "matured_count": 16,
+        "void_count": 0,
+        "first_entry_session": "2026-07-23",
+        "last_entry_session": "2026-08-06"
+      }
+    },
+    {
+      "label": "C CBOE SKEW\u2192SPY\uff08\u4e3b\uff09",
+      "target": "SPY",
+      "verdict": "UNDERPOWERED",
+      "n": 2,
+      "hit": "50.0%",
+      "base": "100.0%",
+      "excess": "-1.736%",
+      "raw": {
+        "policy_version_id": "c-cboe-skew-spy-v1",
+        "verdict": "UNDERPOWERED",
+        "reason": "purged n=2<30",
+        "independent_blocks": 2,
+        "hit_rate": 0.5,
+        "baseline_hit_rate": 1.0,
+        "mean_cost_adjusted_excess": -0.017363780669265305,
+        "excess_ci": [
+          -0.017908881833346157,
+          -0.016818679505184453
+        ],
+        "claim_count": 2,
+        "matured_count": 2,
+        "void_count": 0,
+        "first_entry_session": "2026-07-23",
+        "last_entry_session": "2026-07-31"
+      }
+    },
+    {
+      "label": "D VIX VRP\u2192SPY\uff08\u4e3b\uff09",
+      "target": "SPY",
+      "verdict": "UNDERPOWERED",
+      "n": 2,
+      "hit": "50.0%",
+      "base": "100.0%",
+      "excess": "+1.536%",
+      "raw": {
+        "policy_version_id": "d-vix-vrp-spy-v1",
+        "verdict": "UNDERPOWERED",
+        "reason": "purged n=2<30",
+        "independent_blocks": 2,
+        "hit_rate": 0.5,
+        "baseline_hit_rate": 1.0,
+        "mean_cost_adjusted_excess": 0.015363780669265303,
+        "excess_ci": [
+          0.014818679505184451,
+          0.015908881833346156
+        ],
+        "claim_count": 2,
+        "matured_count": 2,
+        "void_count": 0,
+        "first_entry_session": "2026-07-23",
+        "last_entry_session": "2026-07-31"
+      }
+    },
+    {
+      "label": "D \u672c\u6a5f\u6210\u4ea4\u91cf PCR\u2192SPY",
+      "target": "SPY",
+      "verdict": "UNDERPOWERED",
+      "n": 1,
+      "hit": "0.0%",
+      "base": "100.0%",
+      "excess": "+1.482%",
+      "raw": {
+        "policy_version_id": "d-watchlist-volume-pcr-spy-v1",
+        "verdict": "UNDERPOWERED",
+        "reason": "purged n=1<30",
+        "independent_blocks": 1,
+        "hit_rate": 0.0,
+        "baseline_hit_rate": 1.0,
+        "mean_cost_adjusted_excess": 0.014818679505184451,
+        "excess_ci": [
+          0.014818679505184451,
+          0.014818679505184451
+        ],
+        "claim_count": 1,
+        "matured_count": 1,
+        "void_count": 0,
+        "first_entry_session": "2026-07-31",
+        "last_entry_session": "2026-07-31"
+      }
+    }
+  ],
+  "year_rows": [
+    {
+      "label": "C CBOE SKEW\u2192SPY\uff08\u4e3b\uff09",
+      "target": "SPY",
+      "verdict": "FAIL",
+      "n": 41,
+      "hit": "51.2%",
+      "base": "53.7%",
+      "excess": "-0.377%",
+      "raw": {
+        "policy_version_id": "c-cboe-skew-spy-v1",
+        "verdict": "FAIL",
+        "reason": "signed excess CI lower -0.007209714740970233 \u2264 floor 0.002",
+        "independent_blocks": 41,
+        "hit_rate": 0.5121951219512195,
+        "baseline_hit_rate": 0.5365853658536586,
+        "mean_cost_adjusted_excess": -0.0037747130282989906,
+        "excess_ci": [
+          -0.007209714740970233,
+          -0.00040696243680997136
+        ],
+        "claim_count": 41,
+        "matured_count": 41,
+        "void_count": 0,
+        "first_entry_session": "2025-08-18",
+        "last_entry_session": "2026-08-03"
+      }
+    },
+    {
+      "label": "D VIX VRP\u2192SPY\uff08\u4e3b\uff09",
+      "target": "SPY",
+      "verdict": "FAIL",
+      "n": 41,
+      "hit": "48.8%",
+      "base": "53.7%",
+      "excess": "-0.217%",
+      "raw": {
+        "policy_version_id": "d-vix-vrp-spy-v1",
+        "verdict": "FAIL",
+        "reason": "signed excess CI lower -0.005677335488295048 \u2264 floor 0.002",
+        "independent_blocks": 41,
+        "hit_rate": 0.4878048780487805,
+        "baseline_hit_rate": 0.5365853658536586,
+        "mean_cost_adjusted_excess": -0.002165503110733445,
+        "excess_ci": [
+          -0.005677335488295048,
+          0.0013670631335943354
+        ],
+        "claim_count": 41,
+        "matured_count": 41,
+        "void_count": 0,
+        "first_entry_session": "2025-08-18",
+        "last_entry_session": "2026-08-03"
+      }
+    }
+  ],
+  "recent_raw": {
+    "B smirk \u4e2d\u4f4d\u6392\u5e8f": {
+      "policy_version_id": "b-watchlist-smirk-median-v1",
+      "verdict": "UNDERPOWERED",
+      "reason": "purged n=16<30",
+      "independent_blocks": 16,
+      "hit_rate": 0.5,
+      "baseline_hit_rate": 0.5,
+      "mean_cost_adjusted_excess": -0.001382746105579119,
+      "excess_ci": [
+        -0.04008765899905291,
+        0.03278479689848442
+      ],
+      "claim_count": 16,
+      "matured_count": 16,
+      "void_count": 0,
+      "first_entry_session": "2026-07-23",
+      "last_entry_session": "2026-08-06"
+    },
+    "B IV spread \u4e2d\u4f4d\u6392\u5e8f": {
+      "policy_version_id": "b-watchlist-iv-spread-median-v1",
+      "verdict": "UNDERPOWERED",
+      "reason": "purged n=16<30",
+      "independent_blocks": 16,
+      "hit_rate": 0.4375,
+      "baseline_hit_rate": 0.5,
+      "mean_cost_adjusted_excess": -0.01177059607584223,
+      "excess_ci": [
+        -0.05027715122790184,
+        0.02170374524662396
+      ],
+      "claim_count": 16,
+      "matured_count": 16,
+      "void_count": 0,
+      "first_entry_session": "2026-07-23",
+      "last_entry_session": "2026-08-06"
+    },
+    "B \u96d9\u78ba\u8a8d\uff08\u4e3b\uff09": {
+      "policy_version_id": "b-watchlist-dual-confirm-v1",
+      "verdict": "UNDERPOWERED",
+      "reason": "purged n=14<30",
+      "independent_blocks": 14,
+      "hit_rate": 0.42857142857142855,
+      "baseline_hit_rate": 0.5,
+      "mean_cost_adjusted_excess": -0.009175804802439362,
+      "excess_ci": [
+        -0.052242149504175835,
+        0.02814310674332387
+      ],
+      "claim_count": 14,
+      "matured_count": 14,
+      "void_count": 0,
+      "first_entry_session": "2026-07-23",
+      "last_entry_session": "2026-08-06"
+    },
+    "C Xing smirk 8 \u6a94\u8fd1\u4f3c": {
+      "policy_version_id": "c-watchlist-xing-smirk-v1",
+      "verdict": "UNDERPOWERED",
+      "reason": "purged n=16<30",
+      "independent_blocks": 16,
+      "hit_rate": 0.5,
+      "baseline_hit_rate": 0.5,
+      "mean_cost_adjusted_excess": -0.001382746105579119,
+      "excess_ci": [
+        -0.04008765899905291,
+        0.03278479689848442
+      ],
+      "claim_count": 16,
+      "matured_count": 16,
+      "void_count": 0,
+      "first_entry_session": "2026-07-23",
+      "last_entry_session": "2026-08-06"
+    },
+    "C CBOE SKEW\u2192SPY\uff08\u4e3b\uff09": {
+      "policy_version_id": "c-cboe-skew-spy-v1",
+      "verdict": "UNDERPOWERED",
+      "reason": "purged n=2<30",
+      "independent_blocks": 2,
+      "hit_rate": 0.5,
+      "baseline_hit_rate": 1.0,
+      "mean_cost_adjusted_excess": -0.017363780669265305,
+      "excess_ci": [
+        -0.017908881833346157,
+        -0.016818679505184453
+      ],
+      "claim_count": 2,
+      "matured_count": 2,
+      "void_count": 0,
+      "first_entry_session": "2026-07-23",
+      "last_entry_session": "2026-07-31"
+    },
+    "D VIX VRP\u2192SPY\uff08\u4e3b\uff09": {
+      "policy_version_id": "d-vix-vrp-spy-v1",
+      "verdict": "UNDERPOWERED",
+      "reason": "purged n=2<30",
+      "independent_blocks": 2,
+      "hit_rate": 0.5,
+      "baseline_hit_rate": 1.0,
+      "mean_cost_adjusted_excess": 0.015363780669265303,
+      "excess_ci": [
+        0.014818679505184451,
+        0.015908881833346156
+      ],
+      "claim_count": 2,
+      "matured_count": 2,
+      "void_count": 0,
+      "first_entry_session": "2026-07-23",
+      "last_entry_session": "2026-07-31"
+    },
+    "D \u672c\u6a5f\u6210\u4ea4\u91cf PCR\u2192SPY": {
+      "policy_version_id": "d-watchlist-volume-pcr-spy-v1",
+      "verdict": "UNDERPOWERED",
+      "reason": "purged n=1<30",
+      "independent_blocks": 1,
+      "hit_rate": 0.0,
+      "baseline_hit_rate": 1.0,
+      "mean_cost_adjusted_excess": 0.014818679505184451,
+      "excess_ci": [
+        0.014818679505184451,
+        0.014818679505184451
+      ],
+      "claim_count": 1,
+      "matured_count": 1,
+      "void_count": 0,
+      "first_entry_session": "2026-07-31",
+      "last_entry_session": "2026-07-31"
+    }
+  },
+  "year_raw": {
+    "C CBOE SKEW\u2192SPY\uff08\u4e3b\uff09": {
+      "policy_version_id": "c-cboe-skew-spy-v1",
+      "verdict": "FAIL",
+      "reason": "signed excess CI lower -0.007209714740970233 \u2264 floor 0.002",
+      "independent_blocks": 41,
+      "hit_rate": 0.5121951219512195,
+      "baseline_hit_rate": 0.5365853658536586,
+      "mean_cost_adjusted_excess": -0.0037747130282989906,
+      "excess_ci": [
+        -0.007209714740970233,
+        -0.00040696243680997136
+      ],
+      "claim_count": 41,
+      "matured_count": 41,
+      "void_count": 0,
+      "first_entry_session": "2025-08-18",
+      "last_entry_session": "2026-08-03"
+    },
+    "D VIX VRP\u2192SPY\uff08\u4e3b\uff09": {
+      "policy_version_id": "d-vix-vrp-spy-v1",
+      "verdict": "FAIL",
+      "reason": "signed excess CI lower -0.005677335488295048 \u2264 floor 0.002",
+      "independent_blocks": 41,
+      "hit_rate": 0.4878048780487805,
+      "baseline_hit_rate": 0.5365853658536586,
+      "mean_cost_adjusted_excess": -0.002165503110733445,
+      "excess_ci": [
+        -0.005677335488295048,
+        0.0013670631335943354
+      ],
+      "claim_count": 41,
+      "matured_count": 41,
+      "void_count": 0,
+      "first_entry_session": "2025-08-18",
+      "last_entry_session": "2026-08-03"
+    }
+  },
+  "cboe_pcr_note": "Cboe free PCR CSV ends 2019-10-04; recent Cboe PCR hit rate not computed.",
+  "frozen": {
+    "horizon": 5,
+    "cost_bps": 10.0,
+    "min_cross_section": 4,
+    "target_dte": 30,
+    "rolling": 20
+  }
+}

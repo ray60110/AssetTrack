@@ -34,7 +34,7 @@ from typing import Optional
 class Recommendation:
     """一則投資建議的結構化表示（三層寫作格式的單一真理來源）。"""
     rec_id: str                       # 穩定唯一 id（僅供辨識/測試；畫面點選用 render token）
-    category: str                     # 'etf'|'etf_stance'|'sector'|'options'|'event'|'cross_model'
+    category: str                     # 'etf'|'etf_stance'|'sector'|'options'|'event'
     direction: Optional[str]          # '多'|'空'|'觀望'|None（事件為 None，資訊性）
     verdict: str                      # 第一層：emoji＋方向＋標的＋結論（單行 Rich markup）
     basis: str                        # 第二層：1–2 句「如何判斷」（Rich markup，可空）
@@ -97,8 +97,8 @@ def format_updated_at(dt: Optional[datetime]) -> str:
 def is_taiwan_position(p) -> bool:
     """判斷一筆部位是否屬於台股 / 台幣市場。
 
-    bug#00091（使用者決策：投資建議一律以美股為主、移除台股）：四大分析功能
-    （主動式ETF／期權觀察清單／類股板塊／跨模型總結）與其回測，一律排除台股
+    bug#00091（使用者決策：投資建議一律以美股為主、移除台股）：各分析功能
+    （主動式ETF／期權觀察清單／類股板塊）與其回測，一律排除台股
     部位；台股/TWD 的「持倉追蹤、報價、基準幣別換算」不受影響、照常運作，僅
     「投資建議」層面剔除台股。判定口徑與 models.Position 內建的 is_tw 完全一致
     （幣別 TWD、代碼 .TW/.TWO 結尾、或 market == "TW"），是唯一的判定來源。"""

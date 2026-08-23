@@ -124,7 +124,7 @@ During development, wrapping yfinance operations in a global standard output/err
 
 ## 5. Verification & Tests
 
-An automated integration test has been added to [verify_tui.py](file:///Users/rayyj/Projects/AssetTrack/scripts/verify_tui.py):
+An automated integration test has been added to [verify_tui.py](../scripts/verify_tui.py):
 - **`verify_upcoming_events_screen`**: 
   - Simulates keyboard key `4` presses.
   - Mounts the `UpcomingEventsScreen`.

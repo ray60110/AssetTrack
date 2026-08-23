@@ -1,0 +1,5101 @@
+{
+  "run_date": "2026-08-17",
+  "eval_start": "2025-08-18",
+  "eval_end": "2026-08-14",
+  "horizon_sessions": 10,
+  "sample_n": 10,
+  "seed": 20260817,
+  "hit_threshold": 0.55,
+  "min_history_sessions": 273,
+  "candidate_windows": 24,
+  "eligible_windows": 12,
+  "median_abs_qqq_return": 0.022611830810520983,
+  "sampled_windows": [
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736
+    }
+  ],
+  "sampled_records": [
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "CPU 處理器",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.029989710425710303,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.029187846109413985,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.21493891855124153,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.31797088714698346,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": true
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.00214697377578954,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.0734404040110039,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.09559055806139201,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.014086148334958304,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.1290695096137831,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.15837568181947506,
+      "up_votes": 0,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.03210225165285374,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.05106114573600405,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.06015777832950349,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "功率半導體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.16842302775008322,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.28328910537401375,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.09082798371517463,
+      "up_votes": 0,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.04043459562933839,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.028039006817443757,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.004058626099313112,
+      "up_votes": 0,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.027670695362401836,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "光通訊",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.04012060171080671,
+      "up_votes": 2,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.10430820225460342,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.0386619536216935,
+      "up_votes": 1,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "科技七巨頭",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.039385725122867914,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.19425740257164872,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.26492894663248573,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.3005900464360435,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.22280727702444295,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.028182637338909397,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "科技七巨頭",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.12090267755924791,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "CPU 處理器",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.2860479821976946,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "功率半導體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.2606830978971026,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.0678844497989132,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.30237806713571147,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.06551353879741373,
+      "up_votes": 1,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.02804161954035711,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.08595440445015186,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "功率半導體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.1181637177042807,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.06220369347048791,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.06612931479770251,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": true
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.04654673444767378,
+      "up_votes": 0,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": null
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.024347966736582745,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.28491728363017355,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.2032631837077016,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.1260207432702538,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.35273455641911183,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.18332605048302372,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": null
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.0013669449237350775,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.07796779093160075,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.09327808581156838,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "光通訊",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.11690113498965712,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.12893915406233383,
+      "up_votes": 2,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.0651252433153428,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.02704956491909554,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.12545402620686336,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.06722896085882095,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "光通訊",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.32752767636509483,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.10093071050875424,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.14713972737878017,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "科技七巨頭",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.039506366934196194,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    }
+  ],
+  "census_records": [
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "CPU 處理器",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.029989710425710303,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.029187846109413985,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.21493891855124153,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.31797088714698346,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": true
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.00214697377578954,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2556,
+      "signal_date": "2025-08-29",
+      "outcome_date": "2025-09-15",
+      "qqq_return": 0.037307110048340864,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.037307110048340864,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.0734404040110039,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2566,
+      "signal_date": "2025-09-15",
+      "outcome_date": "2025-09-29",
+      "qqq_return": 0.013088305716850268,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.013088305716850268,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.07004776995114381,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2566,
+      "signal_date": "2025-09-15",
+      "outcome_date": "2025-09-29",
+      "qqq_return": 0.013088305716850268,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.013088305716850268,
+      "group": "功率半導體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.03400586396370238,
+      "up_votes": 1,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2566,
+      "signal_date": "2025-09-15",
+      "outcome_date": "2025-09-29",
+      "qqq_return": 0.013088305716850268,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.013088305716850268,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.003461329297768012,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2566,
+      "signal_date": "2025-09-15",
+      "outcome_date": "2025-09-29",
+      "qqq_return": 0.013088305716850268,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.013088305716850268,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.11402583009604757,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2566,
+      "signal_date": "2025-09-15",
+      "outcome_date": "2025-09-29",
+      "qqq_return": 0.013088305716850268,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.013088305716850268,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.012963393851801827,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2566,
+      "signal_date": "2025-09-15",
+      "outcome_date": "2025-09-29",
+      "qqq_return": 0.013088305716850268,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.013088305716850268,
+      "group": "科技七巨頭",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.011447760768053919,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2576,
+      "signal_date": "2025-09-29",
+      "outcome_date": "2025-10-13",
+      "qqq_return": 0.00547826858310585,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.00547826858310585,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.1329749942280098,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2576,
+      "signal_date": "2025-09-29",
+      "outcome_date": "2025-10-13",
+      "qqq_return": 0.00547826858310585,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.00547826858310585,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.09331187128863543,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2576,
+      "signal_date": "2025-09-29",
+      "outcome_date": "2025-10-13",
+      "qqq_return": 0.00547826858310585,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.00547826858310585,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.17091632266903642,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2576,
+      "signal_date": "2025-09-29",
+      "outcome_date": "2025-10-13",
+      "qqq_return": 0.00547826858310585,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.00547826858310585,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.10653542376329556,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2576,
+      "signal_date": "2025-09-29",
+      "outcome_date": "2025-10-13",
+      "qqq_return": 0.00547826858310585,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.00547826858310585,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.004088381503708383,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2576,
+      "signal_date": "2025-09-29",
+      "outcome_date": "2025-10-13",
+      "qqq_return": 0.00547826858310585,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.00547826858310585,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.007842201519555534,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.09559055806139201,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.014086148334958304,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.1290695096137831,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.15837568181947506,
+      "up_votes": 0,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.03210225165285374,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2586,
+      "signal_date": "2025-10-13",
+      "outcome_date": "2025-10-27",
+      "qqq_return": 0.0433216805809451,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0433216805809451,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.05106114573600405,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2596,
+      "signal_date": "2025-10-27",
+      "outcome_date": "2025-11-10",
+      "qqq_return": -0.007737895067830736,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.007737895067830736,
+      "group": "CPU 處理器",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.053495876229380256,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2596,
+      "signal_date": "2025-10-27",
+      "outcome_date": "2025-11-10",
+      "qqq_return": -0.007737895067830736,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.007737895067830736,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.1310486459389806,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2596,
+      "signal_date": "2025-10-27",
+      "outcome_date": "2025-11-10",
+      "qqq_return": -0.007737895067830736,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.007737895067830736,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.023024633606474797,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2596,
+      "signal_date": "2025-10-27",
+      "outcome_date": "2025-11-10",
+      "qqq_return": -0.007737895067830736,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.007737895067830736,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.2399779803827339,
+      "up_votes": 0,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2596,
+      "signal_date": "2025-10-27",
+      "outcome_date": "2025-11-10",
+      "qqq_return": -0.007737895067830736,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.007737895067830736,
+      "group": "SaaS 雲端軟體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.006452946846251306,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2596,
+      "signal_date": "2025-10-27",
+      "outcome_date": "2025-11-10",
+      "qqq_return": -0.007737895067830736,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.007737895067830736,
+      "group": "科技七巨頭",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.0011351178565643144,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2606,
+      "signal_date": "2025-11-10",
+      "outcome_date": "2025-11-24",
+      "qqq_return": -0.028994072836622697,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.028994072836622697,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.08771974065762449,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2606,
+      "signal_date": "2025-11-10",
+      "outcome_date": "2025-11-24",
+      "qqq_return": -0.028994072836622697,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.028994072836622697,
+      "group": "功率半導體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.04151122235968805,
+      "up_votes": 1,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2606,
+      "signal_date": "2025-11-10",
+      "outcome_date": "2025-11-24",
+      "qqq_return": -0.028994072836622697,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.028994072836622697,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.04879535649842746,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2606,
+      "signal_date": "2025-11-10",
+      "outcome_date": "2025-11-24",
+      "qqq_return": -0.028994072836622697,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.028994072836622697,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.12023714850955786,
+      "up_votes": 0,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2606,
+      "signal_date": "2025-11-10",
+      "outcome_date": "2025-11-24",
+      "qqq_return": -0.028994072836622697,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.028994072836622697,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.097696935566812,
+      "up_votes": 1,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2606,
+      "signal_date": "2025-11-10",
+      "outcome_date": "2025-11-24",
+      "qqq_return": -0.028994072836622697,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.028994072836622697,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.02891996469607261,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.06015777832950349,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "功率半導體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.16842302775008322,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.28328910537401375,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.09082798371517463,
+      "up_votes": 0,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.04043459562933839,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2616,
+      "signal_date": "2025-11-24",
+      "outcome_date": "2025-12-09",
+      "qqq_return": 0.03286726389500316,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.03286726389500316,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.028039006817443757,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2626,
+      "signal_date": "2025-12-09",
+      "outcome_date": "2025-12-23",
+      "qqq_return": -0.0034212609182610043,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0034212609182610043,
+      "group": "CPU 處理器",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.06554173775303032,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2626,
+      "signal_date": "2025-12-09",
+      "outcome_date": "2025-12-23",
+      "qqq_return": -0.0034212609182610043,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0034212609182610043,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.03725748008146893,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2626,
+      "signal_date": "2025-12-09",
+      "outcome_date": "2025-12-23",
+      "qqq_return": -0.0034212609182610043,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0034212609182610043,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.11313244573524114,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2626,
+      "signal_date": "2025-12-09",
+      "outcome_date": "2025-12-23",
+      "qqq_return": -0.0034212609182610043,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0034212609182610043,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.053661419004903864,
+      "up_votes": 0,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2626,
+      "signal_date": "2025-12-09",
+      "outcome_date": "2025-12-23",
+      "qqq_return": -0.0034212609182610043,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0034212609182610043,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.02222170696165876,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2626,
+      "signal_date": "2025-12-09",
+      "outcome_date": "2025-12-23",
+      "qqq_return": -0.0034212609182610043,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0034212609182610043,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.015518968333026113,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2636,
+      "signal_date": "2025-12-23",
+      "outcome_date": "2026-01-08",
+      "qqq_return": -0.0026361443257056916,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0026361443257056916,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.022311926030402794,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2636,
+      "signal_date": "2025-12-23",
+      "outcome_date": "2026-01-08",
+      "qqq_return": -0.0026361443257056916,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0026361443257056916,
+      "group": "功率半導體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.06237735963789474,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2636,
+      "signal_date": "2025-12-23",
+      "outcome_date": "2026-01-08",
+      "qqq_return": -0.0026361443257056916,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0026361443257056916,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.08618869738696369,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2636,
+      "signal_date": "2025-12-23",
+      "outcome_date": "2026-01-08",
+      "qqq_return": -0.0026361443257056916,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0026361443257056916,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.1928440753371441,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2636,
+      "signal_date": "2025-12-23",
+      "outcome_date": "2026-01-08",
+      "qqq_return": -0.0026361443257056916,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0026361443257056916,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.04919681648956775,
+      "up_votes": 1,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2636,
+      "signal_date": "2025-12-23",
+      "outcome_date": "2026-01-08",
+      "qqq_return": -0.0026361443257056916,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.0026361443257056916,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.01764806892444753,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2646,
+      "signal_date": "2026-01-08",
+      "outcome_date": "2026-01-23",
+      "qqq_return": 0.003626267559325713,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.003626267559325713,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.052491918613600495,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2646,
+      "signal_date": "2026-01-08",
+      "outcome_date": "2026-01-23",
+      "qqq_return": 0.003626267559325713,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.003626267559325713,
+      "group": "功率半導體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.022390080408812036,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2646,
+      "signal_date": "2026-01-08",
+      "outcome_date": "2026-01-23",
+      "qqq_return": 0.003626267559325713,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.003626267559325713,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.03201482887375111,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2646,
+      "signal_date": "2026-01-08",
+      "outcome_date": "2026-01-23",
+      "qqq_return": 0.003626267559325713,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.003626267559325713,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.20416950659561195,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2646,
+      "signal_date": "2026-01-08",
+      "outcome_date": "2026-01-23",
+      "qqq_return": 0.003626267559325713,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.003626267559325713,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.08715404925683977,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2646,
+      "signal_date": "2026-01-08",
+      "outcome_date": "2026-01-23",
+      "qqq_return": 0.003626267559325713,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.003626267559325713,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.003556970007214016,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2656,
+      "signal_date": "2026-01-23",
+      "outcome_date": "2026-02-06",
+      "qqq_return": -0.020988523973312634,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.020988523973312634,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.027949649540898357,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2656,
+      "signal_date": "2026-01-23",
+      "outcome_date": "2026-02-06",
+      "qqq_return": -0.020988523973312634,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.020988523973312634,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.011794060764440709,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2656,
+      "signal_date": "2026-01-23",
+      "outcome_date": "2026-02-06",
+      "qqq_return": -0.020988523973312634,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.020988523973312634,
+      "group": "光通訊",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.21144793480193189,
+      "up_votes": 2,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2656,
+      "signal_date": "2026-01-23",
+      "outcome_date": "2026-02-06",
+      "qqq_return": -0.020988523973312634,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.020988523973312634,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.1369991699573854,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": true
+    },
+    {
+      "index": 2656,
+      "signal_date": "2026-01-23",
+      "outcome_date": "2026-02-06",
+      "qqq_return": -0.020988523973312634,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.020988523973312634,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.18044908530960665,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2656,
+      "signal_date": "2026-01-23",
+      "outcome_date": "2026-02-06",
+      "qqq_return": -0.020988523973312634,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.020988523973312634,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.03518918070791331,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2666,
+      "signal_date": "2026-02-06",
+      "outcome_date": "2026-02-23",
+      "qqq_return": -0.013516038573499811,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.013516038573499811,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.027652730407791794,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2666,
+      "signal_date": "2026-02-06",
+      "outcome_date": "2026-02-23",
+      "qqq_return": -0.013516038573499811,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.013516038573499811,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.07931663170855467,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2666,
+      "signal_date": "2026-02-06",
+      "outcome_date": "2026-02-23",
+      "qqq_return": -0.013516038573499811,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.013516038573499811,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.14898423477574002,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2666,
+      "signal_date": "2026-02-06",
+      "outcome_date": "2026-02-23",
+      "qqq_return": -0.013516038573499811,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.013516038573499811,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.07881629860825984,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2666,
+      "signal_date": "2026-02-06",
+      "outcome_date": "2026-02-23",
+      "qqq_return": -0.013516038573499811,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.013516038573499811,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.10436877322272647,
+      "up_votes": 0,
+      "down_votes": 3,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2666,
+      "signal_date": "2026-02-06",
+      "outcome_date": "2026-02-23",
+      "qqq_return": -0.013516038573499811,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.013516038573499811,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.024507901897197,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2676,
+      "signal_date": "2026-02-23",
+      "outcome_date": "2026-03-09",
+      "qqq_return": 0.010558590902058018,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.010558590902058018,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.006118734080811872,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2676,
+      "signal_date": "2026-02-23",
+      "outcome_date": "2026-03-09",
+      "qqq_return": 0.010558590902058018,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.010558590902058018,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.09505033614340357,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2676,
+      "signal_date": "2026-02-23",
+      "outcome_date": "2026-03-09",
+      "qqq_return": 0.010558590902058018,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.010558590902058018,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.2298115817240106,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2676,
+      "signal_date": "2026-02-23",
+      "outcome_date": "2026-03-09",
+      "qqq_return": 0.010558590902058018,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.010558590902058018,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.09306553905016517,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2676,
+      "signal_date": "2026-02-23",
+      "outcome_date": "2026-03-09",
+      "qqq_return": 0.010558590902058018,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.010558590902058018,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.2068241014313605,
+      "up_votes": 0,
+      "down_votes": 3,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2676,
+      "signal_date": "2026-02-23",
+      "outcome_date": "2026-03-09",
+      "qqq_return": 0.010558590902058018,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.010558590902058018,
+      "group": "科技七巨頭",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.004577298826633523,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.004058626099313112,
+      "up_votes": 0,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.027670695362401836,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "光通訊",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.04012060171080671,
+      "up_votes": 2,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.10430820225460342,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.0386619536216935,
+      "up_votes": 1,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2686,
+      "signal_date": "2026-03-09",
+      "outcome_date": "2026-03-23",
+      "qqq_return": -0.03129287323248653,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.03129287323248653,
+      "group": "科技七巨頭",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.039385725122867914,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2696,
+      "signal_date": "2026-03-23",
+      "outcome_date": "2026-04-07",
+      "qqq_return": 0.0010034066570461242,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0010034066570461242,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.06536139958164011,
+      "up_votes": 0,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": null
+    },
+    {
+      "index": 2696,
+      "signal_date": "2026-03-23",
+      "outcome_date": "2026-04-07",
+      "qqq_return": 0.0010034066570461242,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0010034066570461242,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.0754897111764433,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2696,
+      "signal_date": "2026-03-23",
+      "outcome_date": "2026-04-07",
+      "qqq_return": 0.0010034066570461242,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0010034066570461242,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.08585437624123274,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2696,
+      "signal_date": "2026-03-23",
+      "outcome_date": "2026-04-07",
+      "qqq_return": 0.0010034066570461242,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0010034066570461242,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.03418976042054097,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2696,
+      "signal_date": "2026-03-23",
+      "outcome_date": "2026-04-07",
+      "qqq_return": 0.0010034066570461242,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0010034066570461242,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.09343337614430963,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2696,
+      "signal_date": "2026-03-23",
+      "outcome_date": "2026-04-07",
+      "qqq_return": 0.0010034066570461242,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0010034066570461242,
+      "group": "科技七巨頭",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": -1,
+      "sector_return": -0.016465604971193617,
+      "up_votes": 0,
+      "down_votes": 3,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": true
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.19425740257164872,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.26492894663248573,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.3005900464360435,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.22280727702444295,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.028182637338909397,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2706,
+      "signal_date": "2026-04-07",
+      "outcome_date": "2026-04-21",
+      "qqq_return": 0.0947008229009143,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.0947008229009143,
+      "group": "科技七巨頭",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.12090267755924791,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "CPU 處理器",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.2860479821976946,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "功率半導體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.2606830978971026,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.0678844497989132,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.30237806713571147,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": null
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "SaaS 雲端軟體",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.06551353879741373,
+      "up_votes": 1,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2716,
+      "signal_date": "2026-04-21",
+      "outcome_date": "2026-05-05",
+      "qqq_return": 0.05785854946660596,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.05785854946660596,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.02804161954035711,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.08595440445015186,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "功率半導體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.1181637177042807,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.06220369347048791,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.06612931479770251,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "none"
+      },
+      "hit": true
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.04654673444767378,
+      "up_votes": 0,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": null
+    },
+    {
+      "index": 2726,
+      "signal_date": "2026-05-05",
+      "outcome_date": "2026-05-19",
+      "qqq_return": 0.029225012570326836,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.029225012570326836,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.024347966736582745,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.28491728363017355,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.2032631837077016,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.1260207432702538,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.35273455641911183,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.18332605048302372,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": null
+    },
+    {
+      "index": 2736,
+      "signal_date": "2026-05-19",
+      "outcome_date": "2026-06-03",
+      "qqq_return": 0.06083840515288785,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06083840515288785,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.0013669449237350775,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2746,
+      "signal_date": "2026-06-03",
+      "outcome_date": "2026-06-17",
+      "qqq_return": -0.029158475476347978,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.029158475476347978,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.030948461283453278,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2746,
+      "signal_date": "2026-06-03",
+      "outcome_date": "2026-06-17",
+      "qqq_return": -0.029158475476347978,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.029158475476347978,
+      "group": "功率半導體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.13131884560175544,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2746,
+      "signal_date": "2026-06-03",
+      "outcome_date": "2026-06-17",
+      "qqq_return": -0.029158475476347978,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.029158475476347978,
+      "group": "光通訊",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.15497559666911948,
+      "up_votes": 2,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2746,
+      "signal_date": "2026-06-03",
+      "outcome_date": "2026-06-17",
+      "qqq_return": -0.029158475476347978,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.029158475476347978,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": 1,
+      "sector_return": 0.06624004209654412,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": true
+    },
+    {
+      "index": 2746,
+      "signal_date": "2026-06-03",
+      "outcome_date": "2026-06-17",
+      "qqq_return": -0.029158475476347978,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.029158475476347978,
+      "group": "SaaS 雲端軟體",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.14843984082826417,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2746,
+      "signal_date": "2026-06-03",
+      "outcome_date": "2026-06-17",
+      "qqq_return": -0.029158475476347978,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.029158475476347978,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.05629067670589884,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2756,
+      "signal_date": "2026-06-17",
+      "outcome_date": "2026-07-02",
+      "qqq_return": -0.012632214731159386,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.012632214731159386,
+      "group": "CPU 處理器",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.09270049070997655,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2756,
+      "signal_date": "2026-06-17",
+      "outcome_date": "2026-07-02",
+      "qqq_return": -0.012632214731159386,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.012632214731159386,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.10607544918287189,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2756,
+      "signal_date": "2026-06-17",
+      "outcome_date": "2026-07-02",
+      "qqq_return": -0.012632214731159386,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.012632214731159386,
+      "group": "光通訊",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.17194467900519012,
+      "up_votes": 2,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2756,
+      "signal_date": "2026-06-17",
+      "outcome_date": "2026-07-02",
+      "qqq_return": -0.012632214731159386,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.012632214731159386,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "bullish_candidate",
+      "prediction": 1,
+      "actual": -1,
+      "sector_return": -0.15889920263299545,
+      "up_votes": 3,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "up",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": false
+    },
+    {
+      "index": 2756,
+      "signal_date": "2026-06-17",
+      "outcome_date": "2026-07-02",
+      "qqq_return": -0.012632214731159386,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.012632214731159386,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.08797002030473433,
+      "up_votes": 0,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": null
+    },
+    {
+      "index": 2756,
+      "signal_date": "2026-06-17",
+      "outcome_date": "2026-07-02",
+      "qqq_return": -0.012632214731159386,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.012632214731159386,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.008017838510899957,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.07796779093160075,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.09327808581156838,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "光通訊",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.11690113498965712,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.12893915406233383,
+      "up_votes": 2,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "up",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.0651252433153428,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2766,
+      "signal_date": "2026-07-02",
+      "outcome_date": "2026-07-17",
+      "qqq_return": -0.024235137647729332,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.024235137647729332,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.02704956491909554,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2776,
+      "signal_date": "2026-07-17",
+      "outcome_date": "2026-07-31",
+      "qqq_return": -0.010556177174960601,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.010556177174960601,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.06885298693122163,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2776,
+      "signal_date": "2026-07-17",
+      "outcome_date": "2026-07-31",
+      "qqq_return": -0.010556177174960601,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.010556177174960601,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.0860114471224855,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2776,
+      "signal_date": "2026-07-17",
+      "outcome_date": "2026-07-31",
+      "qqq_return": -0.010556177174960601,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.010556177174960601,
+      "group": "光通訊",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.040965153243374755,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2776,
+      "signal_date": "2026-07-17",
+      "outcome_date": "2026-07-31",
+      "qqq_return": -0.010556177174960601,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.010556177174960601,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.009476427319325464,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2776,
+      "signal_date": "2026-07-17",
+      "outcome_date": "2026-07-31",
+      "qqq_return": -0.010556177174960601,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.010556177174960601,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.06687113858761526,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2776,
+      "signal_date": "2026-07-17",
+      "outcome_date": "2026-07-31",
+      "qqq_return": -0.010556177174960601,
+      "qqq_direction": -1,
+      "abs_qqq_return": 0.010556177174960601,
+      "group": "科技七巨頭",
+      "status": "abstain",
+      "prediction": null,
+      "actual": -1,
+      "sector_return": -0.01430107300288235,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "CPU 處理器",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.12545402620686336,
+      "up_votes": 1,
+      "down_votes": 1,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "功率半導體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.06722896085882095,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "光通訊",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.32752767636509483,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "down",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "存儲記憶體 (HBM/DRAM)",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.10093071050875424,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "SaaS 雲端軟體",
+      "status": "abstain",
+      "prediction": null,
+      "actual": 1,
+      "sector_return": 0.14713972737878017,
+      "up_votes": 1,
+      "down_votes": 0,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "none",
+        "sma_5_150": "up"
+      },
+      "hit": null
+    },
+    {
+      "index": 2786,
+      "signal_date": "2026-07-31",
+      "outcome_date": "2026-08-14",
+      "qqq_return": 0.06261721493239736,
+      "qqq_direction": 1,
+      "abs_qqq_return": 0.06261721493239736,
+      "group": "科技七巨頭",
+      "status": "risk_alert",
+      "prediction": -1,
+      "actual": 1,
+      "sector_return": 0.039506366934196194,
+      "up_votes": 0,
+      "down_votes": 2,
+      "votes": {
+        "breadth_3_of_5": "none",
+        "relative_momentum_50ma": "down",
+        "sma_5_150": "down"
+      },
+      "hit": false
+    }
+  ],
+  "sampled_score": {
+    "label": "sampled_10",
+    "evaluable_cases": 60,
+    "directional_signals": 24,
+    "bullish_candidates": 14,
+    "risk_alerts": 10,
+    "abstain": 36,
+    "coverage": 0.4,
+    "diagnostic_hits": 16,
+    "diagnostic_accuracy": 0.6666666666666666,
+    "diagnostic_wilson_95": [
+      0.4670595949408046,
+      0.8202802131162036
+    ],
+    "p_value_vs_55pct": 0.17300323873705248,
+    "passed_55pct": true,
+    "long_only_hits": 14,
+    "long_only_accuracy": 1.0,
+    "long_only_wilson_95": [
+      0.7846829880728186,
+      1.0
+    ],
+    "risk_alert_hits": 2,
+    "risk_alert_accuracy": 0.2,
+    "actual_up_rate": 0.9166666666666666,
+    "unfiltered_up_rate": 0.8666666666666667,
+    "majority_baseline": 0.9166666666666666,
+    "edge_vs_majority": -0.25,
+    "long_only_edge_vs_unfiltered": 0.1333333333333333
+  },
+  "census_score": {
+    "label": "all_nonoverlap_year",
+    "evaluable_cases": 144,
+    "directional_signals": 62,
+    "bullish_candidates": 40,
+    "risk_alerts": 22,
+    "abstain": 82,
+    "coverage": 0.4305555555555556,
+    "diagnostic_hits": 39,
+    "diagnostic_accuracy": 0.6290322580645161,
+    "diagnostic_wilson_95": [
+      0.504577349121774,
+      0.7384301112072582
+    ],
+    "p_value_vs_55pct": 0.13034620827667998,
+    "passed_55pct": true,
+    "long_only_hits": 28,
+    "long_only_accuracy": 0.7,
+    "long_only_wilson_95": [
+      0.545696893456796,
+      0.8192532908430471
+    ],
+    "risk_alert_hits": 11,
+    "risk_alert_accuracy": 0.5,
+    "actual_up_rate": 0.6290322580645161,
+    "unfiltered_up_rate": 0.6319444444444444,
+    "majority_baseline": 0.6290322580645161,
+    "edge_vs_majority": 0.0,
+    "long_only_edge_vs_unfiltered": 0.06805555555555554
+  },
+  "challenger": {
+    "rule": "longs unchanged 2-of-3; risk alert only when breadth 3-of-5 is down and equal-weight SMA5 < SMA20",
+    "burned_10": {
+      "windows": [
+        {
+          "signal_date": "2025-08-29",
+          "outcome_date": "2025-09-15",
+          "qqq_return": 0.037307110048340864
+        },
+        {
+          "signal_date": "2025-10-13",
+          "outcome_date": "2025-10-27",
+          "qqq_return": 0.0433216805809451
+        },
+        {
+          "signal_date": "2025-11-24",
+          "outcome_date": "2025-12-09",
+          "qqq_return": 0.03286726389500316
+        },
+        {
+          "signal_date": "2026-03-09",
+          "outcome_date": "2026-03-23",
+          "qqq_return": -0.03129287323248653
+        },
+        {
+          "signal_date": "2026-04-07",
+          "outcome_date": "2026-04-21",
+          "qqq_return": 0.0947008229009143
+        },
+        {
+          "signal_date": "2026-04-21",
+          "outcome_date": "2026-05-05",
+          "qqq_return": 0.05785854946660596
+        },
+        {
+          "signal_date": "2026-05-05",
+          "outcome_date": "2026-05-19",
+          "qqq_return": 0.029225012570326836
+        },
+        {
+          "signal_date": "2026-05-19",
+          "outcome_date": "2026-06-03",
+          "qqq_return": 0.06083840515288785
+        },
+        {
+          "signal_date": "2026-07-02",
+          "outcome_date": "2026-07-17",
+          "qqq_return": -0.024235137647729332
+        },
+        {
+          "signal_date": "2026-07-31",
+          "outcome_date": "2026-08-14",
+          "qqq_return": 0.06261721493239736
+        }
+      ],
+      "champion": {
+        "label": "burned_10_champion",
+        "evaluable_cases": 60,
+        "directional_signals": 24,
+        "bullish_candidates": 14,
+        "risk_alerts": 10,
+        "abstain": 36,
+        "coverage": 0.4,
+        "diagnostic_hits": 16,
+        "diagnostic_accuracy": 0.6666666666666666,
+        "diagnostic_wilson_95": [
+          0.4670595949408046,
+          0.8202802131162036
+        ],
+        "p_value_vs_55pct": 0.17300323873705248,
+        "passed_55pct": true,
+        "long_only_hits": 14,
+        "long_only_accuracy": 1.0,
+        "long_only_wilson_95": [
+          0.7846829880728186,
+          1.0
+        ],
+        "risk_alert_hits": 2,
+        "risk_alert_accuracy": 0.2,
+        "actual_up_rate": 0.9166666666666666,
+        "unfiltered_up_rate": 0.8666666666666667,
+        "majority_baseline": 0.9166666666666666,
+        "edge_vs_majority": -0.25,
+        "long_only_edge_vs_unfiltered": 0.1333333333333333
+      },
+      "challenger": {
+        "label": "burned_10_challenger",
+        "evaluable_cases": 60,
+        "directional_signals": 20,
+        "bullish_candidates": 14,
+        "risk_alerts": 6,
+        "abstain": 40,
+        "coverage": 0.3333333333333333,
+        "diagnostic_hits": 18,
+        "diagnostic_accuracy": 0.9,
+        "diagnostic_wilson_95": [
+          0.6989617935882066,
+          0.9721341060158468
+        ],
+        "p_value_vs_55pct": 0.0009274340985326072,
+        "passed_55pct": true,
+        "long_only_hits": 14,
+        "long_only_accuracy": 1.0,
+        "long_only_wilson_95": [
+          0.7846829880728186,
+          1.0
+        ],
+        "risk_alert_hits": 4,
+        "risk_alert_accuracy": 0.6666666666666666,
+        "actual_up_rate": 0.8,
+        "unfiltered_up_rate": 0.8666666666666667,
+        "majority_baseline": 0.8,
+        "edge_vs_majority": 0.09999999999999998,
+        "long_only_edge_vs_unfiltered": 0.1333333333333333
+      }
+    },
+    "added_3": {
+      "windows": [
+        {
+          "signal_date": "2025-11-10",
+          "outcome_date": "2025-11-24",
+          "qqq_return": -0.028994072836622697
+        },
+        {
+          "signal_date": "2026-01-23",
+          "outcome_date": "2026-02-06",
+          "qqq_return": -0.020988523973312634
+        },
+        {
+          "signal_date": "2026-06-03",
+          "outcome_date": "2026-06-17",
+          "qqq_return": -0.029158475476347978
+        }
+      ],
+      "champion": {
+        "label": "added_3_champion",
+        "evaluable_cases": 18,
+        "directional_signals": 8,
+        "bullish_candidates": 5,
+        "risk_alerts": 3,
+        "abstain": 10,
+        "coverage": 0.4444444444444444,
+        "diagnostic_hits": 5,
+        "diagnostic_accuracy": 0.625,
+        "diagnostic_wilson_95": [
+          0.30573785458380187,
+          0.863158240538479
+        ],
+        "p_value_vs_55pct": 0.4769563111328126,
+        "passed_55pct": true,
+        "long_only_hits": 2,
+        "long_only_accuracy": 0.4,
+        "long_only_wilson_95": [
+          0.1176182311592533,
+          0.769280067791163
+        ],
+        "risk_alert_hits": 3,
+        "risk_alert_accuracy": 1.0,
+        "actual_up_rate": 0.25,
+        "unfiltered_up_rate": 0.2222222222222222,
+        "majority_baseline": 0.75,
+        "edge_vs_majority": -0.125,
+        "long_only_edge_vs_unfiltered": 0.1777777777777778
+      },
+      "challenger": {
+        "label": "added_3_challenger",
+        "evaluable_cases": 18,
+        "directional_signals": 6,
+        "bullish_candidates": 5,
+        "risk_alerts": 1,
+        "abstain": 12,
+        "coverage": 0.3333333333333333,
+        "diagnostic_hits": 3,
+        "diagnostic_accuracy": 0.5,
+        "diagnostic_wilson_95": [
+          0.18761280689940868,
+          0.8123871931005913
+        ],
+        "p_value_vs_55pct": 0.7447360937500005,
+        "passed_55pct": false,
+        "long_only_hits": 2,
+        "long_only_accuracy": 0.4,
+        "long_only_wilson_95": [
+          0.1176182311592533,
+          0.769280067791163
+        ],
+        "risk_alert_hits": 1,
+        "risk_alert_accuracy": 1.0,
+        "actual_up_rate": 0.3333333333333333,
+        "unfiltered_up_rate": 0.2222222222222222,
+        "majority_baseline": 0.6666666666666667,
+        "edge_vs_majority": -0.16666666666666674,
+        "long_only_edge_vs_unfiltered": 0.1777777777777778
+      }
+    },
+    "holdout_unseen": {
+      "windows": [
+        {
+          "signal_date": "2025-09-15",
+          "outcome_date": "2025-09-29",
+          "qqq_return": 0.013088305716850268
+        },
+        {
+          "signal_date": "2025-09-29",
+          "outcome_date": "2025-10-13",
+          "qqq_return": 0.00547826858310585
+        },
+        {
+          "signal_date": "2025-10-27",
+          "outcome_date": "2025-11-10",
+          "qqq_return": -0.007737895067830736
+        },
+        {
+          "signal_date": "2025-11-10",
+          "outcome_date": "2025-11-24",
+          "qqq_return": -0.028994072836622697
+        },
+        {
+          "signal_date": "2025-12-09",
+          "outcome_date": "2025-12-23",
+          "qqq_return": -0.0034212609182610043
+        },
+        {
+          "signal_date": "2025-12-23",
+          "outcome_date": "2026-01-08",
+          "qqq_return": -0.0026361443257056916
+        },
+        {
+          "signal_date": "2026-01-08",
+          "outcome_date": "2026-01-23",
+          "qqq_return": 0.003626267559325713
+        },
+        {
+          "signal_date": "2026-01-23",
+          "outcome_date": "2026-02-06",
+          "qqq_return": -0.020988523973312634
+        },
+        {
+          "signal_date": "2026-02-06",
+          "outcome_date": "2026-02-23",
+          "qqq_return": -0.013516038573499811
+        },
+        {
+          "signal_date": "2026-02-23",
+          "outcome_date": "2026-03-09",
+          "qqq_return": 0.010558590902058018
+        },
+        {
+          "signal_date": "2026-03-23",
+          "outcome_date": "2026-04-07",
+          "qqq_return": 0.0010034066570461242
+        },
+        {
+          "signal_date": "2026-06-03",
+          "outcome_date": "2026-06-17",
+          "qqq_return": -0.029158475476347978
+        },
+        {
+          "signal_date": "2026-06-17",
+          "outcome_date": "2026-07-02",
+          "qqq_return": -0.012632214731159386
+        },
+        {
+          "signal_date": "2026-07-17",
+          "outcome_date": "2026-07-31",
+          "qqq_return": -0.010556177174960601
+        }
+      ],
+      "champion": {
+        "label": "holdout_unseen_champion",
+        "evaluable_cases": 84,
+        "directional_signals": 38,
+        "bullish_candidates": 26,
+        "risk_alerts": 12,
+        "abstain": 46,
+        "coverage": 0.4523809523809524,
+        "diagnostic_hits": 23,
+        "diagnostic_accuracy": 0.6052631578947368,
+        "diagnostic_wilson_95": [
+          0.4471758699869596,
+          0.7440214073638108
+        ],
+        "p_value_vs_55pct": 0.302642769975103,
+        "passed_55pct": true,
+        "long_only_hits": 14,
+        "long_only_accuracy": 0.5384615384615384,
+        "long_only_wilson_95": [
+          0.3545763620443012,
+          0.712444173047651
+        ],
+        "risk_alert_hits": 9,
+        "risk_alert_accuracy": 0.75,
+        "actual_up_rate": 0.4473684210526316,
+        "unfiltered_up_rate": 0.4642857142857143,
+        "majority_baseline": 0.5526315789473684,
+        "edge_vs_majority": 0.052631578947368474,
+        "long_only_edge_vs_unfiltered": 0.07417582417582413
+      },
+      "challenger": {
+        "label": "holdout_unseen_challenger",
+        "evaluable_cases": 84,
+        "directional_signals": 34,
+        "bullish_candidates": 26,
+        "risk_alerts": 8,
+        "abstain": 50,
+        "coverage": 0.40476190476190477,
+        "diagnostic_hits": 20,
+        "diagnostic_accuracy": 0.5882352941176471,
+        "diagnostic_wilson_95": [
+          0.42221304146519273,
+          0.7363426221431113
+        ],
+        "p_value_vs_55pct": 0.39368345788863685,
+        "passed_55pct": true,
+        "long_only_hits": 14,
+        "long_only_accuracy": 0.5384615384615384,
+        "long_only_wilson_95": [
+          0.3545763620443012,
+          0.712444173047651
+        ],
+        "risk_alert_hits": 6,
+        "risk_alert_accuracy": 0.75,
+        "actual_up_rate": 0.47058823529411764,
+        "unfiltered_up_rate": 0.4642857142857143,
+        "majority_baseline": 0.5294117647058824,
+        "edge_vs_majority": 0.05882352941176472,
+        "long_only_edge_vs_unfiltered": 0.07417582417582413
+      }
+    },
+    "expanded_13": {
+      "windows": [
+        {
+          "signal_date": "2025-08-29",
+          "outcome_date": "2025-09-15",
+          "qqq_return": 0.037307110048340864
+        },
+        {
+          "signal_date": "2025-10-13",
+          "outcome_date": "2025-10-27",
+          "qqq_return": 0.0433216805809451
+        },
+        {
+          "signal_date": "2025-11-10",
+          "outcome_date": "2025-11-24",
+          "qqq_return": -0.028994072836622697
+        },
+        {
+          "signal_date": "2025-11-24",
+          "outcome_date": "2025-12-09",
+          "qqq_return": 0.03286726389500316
+        },
+        {
+          "signal_date": "2026-01-23",
+          "outcome_date": "2026-02-06",
+          "qqq_return": -0.020988523973312634
+        },
+        {
+          "signal_date": "2026-03-09",
+          "outcome_date": "2026-03-23",
+          "qqq_return": -0.03129287323248653
+        },
+        {
+          "signal_date": "2026-04-07",
+          "outcome_date": "2026-04-21",
+          "qqq_return": 0.0947008229009143
+        },
+        {
+          "signal_date": "2026-04-21",
+          "outcome_date": "2026-05-05",
+          "qqq_return": 0.05785854946660596
+        },
+        {
+          "signal_date": "2026-05-05",
+          "outcome_date": "2026-05-19",
+          "qqq_return": 0.029225012570326836
+        },
+        {
+          "signal_date": "2026-05-19",
+          "outcome_date": "2026-06-03",
+          "qqq_return": 0.06083840515288785
+        },
+        {
+          "signal_date": "2026-06-03",
+          "outcome_date": "2026-06-17",
+          "qqq_return": -0.029158475476347978
+        },
+        {
+          "signal_date": "2026-07-02",
+          "outcome_date": "2026-07-17",
+          "qqq_return": -0.024235137647729332
+        },
+        {
+          "signal_date": "2026-07-31",
+          "outcome_date": "2026-08-14",
+          "qqq_return": 0.06261721493239736
+        }
+      ],
+      "champion": {
+        "label": "expanded_13_champion",
+        "evaluable_cases": 78,
+        "directional_signals": 32,
+        "bullish_candidates": 19,
+        "risk_alerts": 13,
+        "abstain": 46,
+        "coverage": 0.41025641025641024,
+        "diagnostic_hits": 21,
+        "diagnostic_accuracy": 0.65625,
+        "diagnostic_wilson_95": [
+          0.4831077350878594,
+          0.7958976664567146
+        ],
+        "p_value_vs_55pct": 0.15128995875728252,
+        "passed_55pct": true,
+        "long_only_hits": 16,
+        "long_only_accuracy": 0.8421052631578947,
+        "long_only_wilson_95": [
+          0.6243407235682331,
+          0.9447962896007217
+        ],
+        "risk_alert_hits": 5,
+        "risk_alert_accuracy": 0.38461538461538464,
+        "actual_up_rate": 0.75,
+        "unfiltered_up_rate": 0.717948717948718,
+        "majority_baseline": 0.75,
+        "edge_vs_majority": -0.09375,
+        "long_only_edge_vs_unfiltered": 0.12415654520917674
+      },
+      "challenger": {
+        "label": "expanded_13_challenger",
+        "evaluable_cases": 78,
+        "directional_signals": 26,
+        "bullish_candidates": 19,
+        "risk_alerts": 7,
+        "abstain": 52,
+        "coverage": 0.3333333333333333,
+        "diagnostic_hits": 21,
+        "diagnostic_accuracy": 0.8076923076923077,
+        "diagnostic_wilson_95": [
+          0.6212336384535001,
+          0.9149306422821174
+        ],
+        "p_value_vs_55pct": 0.005768530936029225,
+        "passed_55pct": true,
+        "long_only_hits": 16,
+        "long_only_accuracy": 0.8421052631578947,
+        "long_only_wilson_95": [
+          0.6243407235682331,
+          0.9447962896007217
+        ],
+        "risk_alert_hits": 5,
+        "risk_alert_accuracy": 0.7142857142857143,
+        "actual_up_rate": 0.6923076923076923,
+        "unfiltered_up_rate": 0.717948717948718,
+        "majority_baseline": 0.6923076923076923,
+        "edge_vs_majority": 0.11538461538461542,
+        "long_only_edge_vs_unfiltered": 0.12415654520917674
+      }
+    },
+    "census": {
+      "windows": [
+        {
+          "signal_date": "2025-08-29",
+          "outcome_date": "2025-09-15",
+          "qqq_return": 0.037307110048340864
+        },
+        {
+          "signal_date": "2025-09-15",
+          "outcome_date": "2025-09-29",
+          "qqq_return": 0.013088305716850268
+        },
+        {
+          "signal_date": "2025-09-29",
+          "outcome_date": "2025-10-13",
+          "qqq_return": 0.00547826858310585
+        },
+        {
+          "signal_date": "2025-10-13",
+          "outcome_date": "2025-10-27",
+          "qqq_return": 0.0433216805809451
+        },
+        {
+          "signal_date": "2025-10-27",
+          "outcome_date": "2025-11-10",
+          "qqq_return": -0.007737895067830736
+        },
+        {
+          "signal_date": "2025-11-10",
+          "outcome_date": "2025-11-24",
+          "qqq_return": -0.028994072836622697
+        },
+        {
+          "signal_date": "2025-11-24",
+          "outcome_date": "2025-12-09",
+          "qqq_return": 0.03286726389500316
+        },
+        {
+          "signal_date": "2025-12-09",
+          "outcome_date": "2025-12-23",
+          "qqq_return": -0.0034212609182610043
+        },
+        {
+          "signal_date": "2025-12-23",
+          "outcome_date": "2026-01-08",
+          "qqq_return": -0.0026361443257056916
+        },
+        {
+          "signal_date": "2026-01-08",
+          "outcome_date": "2026-01-23",
+          "qqq_return": 0.003626267559325713
+        },
+        {
+          "signal_date": "2026-01-23",
+          "outcome_date": "2026-02-06",
+          "qqq_return": -0.020988523973312634
+        },
+        {
+          "signal_date": "2026-02-06",
+          "outcome_date": "2026-02-23",
+          "qqq_return": -0.013516038573499811
+        },
+        {
+          "signal_date": "2026-02-23",
+          "outcome_date": "2026-03-09",
+          "qqq_return": 0.010558590902058018
+        },
+        {
+          "signal_date": "2026-03-09",
+          "outcome_date": "2026-03-23",
+          "qqq_return": -0.03129287323248653
+        },
+        {
+          "signal_date": "2026-03-23",
+          "outcome_date": "2026-04-07",
+          "qqq_return": 0.0010034066570461242
+        },
+        {
+          "signal_date": "2026-04-07",
+          "outcome_date": "2026-04-21",
+          "qqq_return": 0.0947008229009143
+        },
+        {
+          "signal_date": "2026-04-21",
+          "outcome_date": "2026-05-05",
+          "qqq_return": 0.05785854946660596
+        },
+        {
+          "signal_date": "2026-05-05",
+          "outcome_date": "2026-05-19",
+          "qqq_return": 0.029225012570326836
+        },
+        {
+          "signal_date": "2026-05-19",
+          "outcome_date": "2026-06-03",
+          "qqq_return": 0.06083840515288785
+        },
+        {
+          "signal_date": "2026-06-03",
+          "outcome_date": "2026-06-17",
+          "qqq_return": -0.029158475476347978
+        },
+        {
+          "signal_date": "2026-06-17",
+          "outcome_date": "2026-07-02",
+          "qqq_return": -0.012632214731159386
+        },
+        {
+          "signal_date": "2026-07-02",
+          "outcome_date": "2026-07-17",
+          "qqq_return": -0.024235137647729332
+        },
+        {
+          "signal_date": "2026-07-17",
+          "outcome_date": "2026-07-31",
+          "qqq_return": -0.010556177174960601
+        },
+        {
+          "signal_date": "2026-07-31",
+          "outcome_date": "2026-08-14",
+          "qqq_return": 0.06261721493239736
+        }
+      ],
+      "champion": {
+        "label": "census_champion",
+        "evaluable_cases": 144,
+        "directional_signals": 62,
+        "bullish_candidates": 40,
+        "risk_alerts": 22,
+        "abstain": 82,
+        "coverage": 0.4305555555555556,
+        "diagnostic_hits": 39,
+        "diagnostic_accuracy": 0.6290322580645161,
+        "diagnostic_wilson_95": [
+          0.504577349121774,
+          0.7384301112072582
+        ],
+        "p_value_vs_55pct": 0.13034620827667998,
+        "passed_55pct": true,
+        "long_only_hits": 28,
+        "long_only_accuracy": 0.7,
+        "long_only_wilson_95": [
+          0.545696893456796,
+          0.8192532908430471
+        ],
+        "risk_alert_hits": 11,
+        "risk_alert_accuracy": 0.5,
+        "actual_up_rate": 0.6290322580645161,
+        "unfiltered_up_rate": 0.6319444444444444,
+        "majority_baseline": 0.6290322580645161,
+        "edge_vs_majority": 0.0,
+        "long_only_edge_vs_unfiltered": 0.06805555555555554
+      },
+      "challenger": {
+        "label": "census_challenger",
+        "evaluable_cases": 144,
+        "directional_signals": 54,
+        "bullish_candidates": 40,
+        "risk_alerts": 14,
+        "abstain": 90,
+        "coverage": 0.375,
+        "diagnostic_hits": 38,
+        "diagnostic_accuracy": 0.7037037037037037,
+        "diagnostic_wilson_95": [
+          0.5717217482621142,
+          0.8086273430493296
+        ],
+        "p_value_vs_55pct": 0.015266314193719318,
+        "passed_55pct": true,
+        "long_only_hits": 28,
+        "long_only_accuracy": 0.7,
+        "long_only_wilson_95": [
+          0.545696893456796,
+          0.8192532908430471
+        ],
+        "risk_alert_hits": 10,
+        "risk_alert_accuracy": 0.7142857142857143,
+        "actual_up_rate": 0.5925925925925926,
+        "unfiltered_up_rate": 0.6319444444444444,
+        "majority_baseline": 0.5925925925925926,
+        "edge_vs_majority": 0.11111111111111116,
+        "long_only_edge_vs_unfiltered": 0.06805555555555554
+      }
+    },
+    "decision": {
+      "import_into_product": false,
+      "risk_improved": false,
+      "long_kept": true,
+      "reasons": {
+        "challenger_risk_accuracy": 0.75,
+        "champion_risk_accuracy": 0.75,
+        "challenger_risk_n": 8,
+        "challenger_long_accuracy": 0.5384615384615384,
+        "champion_long_accuracy": 0.5384615384615384
+      }
+    }
+  },
+  "data_sha256": "869593edb746b5a42ab9f307ca9abb8f06217b2917cd1bba61cbb1fe1ca56b4f",
+  "data_first_date": "2015-07-01",
+  "data_last_date": "2026-08-14"
+}

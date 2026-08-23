@@ -13,16 +13,104 @@ CashCurrency = Literal["USD", "TWD", "JPY"]
 
 
 class CashPosition(BaseModel):
-    """A single cash holding stored at a specific bank."""
+    """A cash holding stored at a broker/account in its native currency."""
 
-    bank: str = Field(..., description="銀行名稱，例如 '國泰世華', 'Chase', '玉山銀行'")
+    broker: str = Field(..., description="券商或銀行名稱")
+    account: Optional[str] = Field(None, description="Account ID or nickname")
     currency: CashCurrency = Field("TWD", description="存款幣別 (USD / TWD / JPY)")
-    amount: float = Field(..., description="存款金額（正數）")
+    amount: float = Field(..., gt=0, description="存款金額（正數）")
     notes: Optional[str] = Field(None, description="備註")
     last_updated: datetime = Field(default_factory=datetime.utcnow)
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_bank(cls, data):
+        """Read cash records written before broker/account joined the portfolio schema."""
+        if isinstance(data, dict) and not data.get("broker") and data.get("bank"):
+            data = dict(data)
+            data["broker"] = data.pop("bank")
+        return data
+
+    @property
+    def bank(self) -> str:
+        """Backward-compatible name for callers that still label the institution a bank."""
+        return self.broker
+
     def to_dict(self) -> dict:
         return self.model_dump(mode="json")
+
+
+def merge_cash_position(
+    cash_positions: list[CashPosition],
+    incoming: CashPosition,
+) -> None:
+    """Stack cash added to the same broker/account/currency holding."""
+    incoming_key = (
+        incoming.broker.casefold(),
+        (incoming.account or "").casefold(),
+        incoming.currency,
+    )
+    for existing in cash_positions:
+        existing_key = (
+            existing.broker.casefold(),
+            (existing.account or "").casefold(),
+            existing.currency,
+        )
+        if existing_key == incoming_key:
+            existing.amount += incoming.amount
+            existing.notes = incoming.notes or existing.notes
+            existing.last_updated = incoming.last_updated
+            return
+    cash_positions.append(incoming)
+
+
+def cash_value_usd(
+    cash_positions: list[CashPosition],
+    usdtwd_rate: float,
+) -> Optional[float]:
+    """Return USD-equivalent cash, or None when a currency cannot be valued."""
+    if usdtwd_rate <= 0:
+        return None
+    total = 0.0
+    for cash in cash_positions:
+        if cash.currency == "USD":
+            total += cash.amount
+        elif cash.currency == "TWD":
+            total += cash.amount / usdtwd_rate
+        else:
+            return None
+    return total
+
+
+def total_asset_value_usd(
+    positions: list[Position],
+    cash_positions: list[CashPosition],
+    usdtwd_rate: float,
+) -> Optional[float]:
+    """Cash plus every positive long/short current market value in USD."""
+    cash_total = cash_value_usd(cash_positions, usdtwd_rate)
+    if cash_total is None:
+        return None
+    total = cash_total
+    for position in positions:
+        if position.market_price is None and position.market_value is None:
+            return None
+        value = position.value
+        total += value if position.currency == "USD" else value / usdtwd_rate
+    return total
+
+
+def calculate_cash_ratio(
+    positions: list[Position],
+    cash_positions: list[CashPosition],
+    usdtwd_rate: float,
+) -> Optional[float]:
+    """Portfolio cash percentage, or None when any market value is unavailable."""
+    cash_total = cash_value_usd(cash_positions, usdtwd_rate)
+    total = total_asset_value_usd(positions, cash_positions, usdtwd_rate)
+    if cash_total is None or total is None or total <= 0:
+        return None
+    return cash_total / total * 100.0
 
 
 class Position(BaseModel):
@@ -44,6 +132,11 @@ class Position(BaseModel):
     strike: Optional[float] = None
     option_type: Optional[Literal["call", "put"]] = None
     multiplier: Optional[float] = None  # Contract multiplier (US options=100, Taiwan options=50, etc.)
+    # Signed daily exposure multiple for ETFs.  Examples: 2.0 for a long 2x
+    # fund, -1.0 for an inverse 1x fund, -3.0 for an inverse 3x fund.  None
+    # means the quote refresh should infer it from the fund name/description;
+    # exposure calculations conservatively treat an unresolved ETF as 1x.
+    leverage_factor: Optional[float] = Field(None, ge=-10.0, le=10.0)
     # Extended metadata
     market: Optional[str] = None      # Market identifier: US / TW / HK / etc.
     exchange: Optional[str] = None    # Exchange: NYSE / NASDAQ / TSE / OTC / etc.
@@ -81,6 +174,9 @@ class Position(BaseModel):
             # Default multiplier: 50.0 for TWD/Taiwan markets, otherwise 100.0
             is_tw = self.currency == "TWD" or self.symbol.endswith(".TW") or self.symbol.endswith(".TWO") or (self.market == "TW")
             self.multiplier = 50.0 if is_tw else 100.0
+
+        if self.instrument_type == "etf" and self.leverage_factor == 0:
+            raise ValueError("ETF leverage_factor cannot be zero")
 
         # bug#00050: an option's `symbol` must be the OCC/TW contract code, never the
         # bare underlying ticker — quote lookups (quotes.py) use `symbol` as-is for
@@ -120,17 +216,17 @@ class Position(BaseModel):
     def value(self) -> float:
         """Best available market value for this position."""
         if self.market_value is not None:
-            return self.market_value
+            return abs(self.market_value)
         if self.market_price is not None and self.quantity is not None:
             mult = self.multiplier if (self.instrument_type == "option" and self.multiplier is not None) else 1.0
-            return self.market_price * self.quantity * mult
+            return self.market_price * abs(self.quantity) * mult
         return 0.0
 
     @property
     def total_cost(self) -> Optional[float]:
         if self.avg_cost is not None and self.quantity is not None:
             mult = self.multiplier if (self.instrument_type == "option" and self.multiplier is not None) else 1.0
-            return self.avg_cost * self.quantity * mult
+            return self.avg_cost * abs(self.quantity) * mult
         return None
 
     @property
@@ -139,6 +235,8 @@ class Position(BaseModel):
             return None
         cost = self.total_cost
         if cost is not None:
+            if self.quantity < 0:
+                return cost - self.value
             return self.value - cost
         return None
 
@@ -161,7 +259,8 @@ class Position(BaseModel):
             if math.isnan(self.prev_close) or math.isnan(self.market_price):
                 return None
             mult = self.multiplier if (self.instrument_type == "option" and self.multiplier is not None) else 1.0
-            return (self.market_price - self.prev_close) * self.quantity * mult
+            direction = -1.0 if self.quantity < 0 else 1.0
+            return (self.market_price - self.prev_close) * abs(self.quantity) * mult * direction
         return None
 
     @property
@@ -171,11 +270,38 @@ class Position(BaseModel):
             import math
             if math.isnan(self.prev_close) or math.isnan(self.market_price):
                 return None
-            return (self.market_price - self.prev_close) / self.prev_close * 100
+            direction = -1.0 if self.quantity < 0 else 1.0
+            return (self.market_price - self.prev_close) / self.prev_close * 100 * direction
         return None
 
     def to_dict(self) -> dict:
         return self.model_dump(mode="json")
+
+
+def portfolio_unrealized_performance(
+    positions: list[Position],
+    cash_positions: list[CashPosition],
+    usdtwd_rate: float,
+) -> Optional[tuple[float, float]]:
+    """Return USD unrealized P&L and return %, with cash as zero-return capital."""
+    cash_cost = cash_value_usd(cash_positions, usdtwd_rate)
+    if cash_cost is None:
+        return None
+    pnl_usd = 0.0
+    cost_usd = cash_cost
+    for position in positions:
+        pnl = position.unrealized_pnl
+        cost = position.total_cost
+        if pnl is None or cost is None:
+            return None
+        if position.currency != "USD":
+            pnl /= usdtwd_rate
+            cost /= usdtwd_rate
+        pnl_usd += pnl
+        cost_usd += cost
+    if cost_usd <= 0:
+        return None
+    return pnl_usd, pnl_usd / cost_usd * 100.0
 
 
 @dataclass

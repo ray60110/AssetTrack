@@ -26,6 +26,8 @@ import math
 from collections import Counter
 from typing import Optional
 
+TREND_CONFIDENCE_THRESHOLD = 60.0
+
 
 def wilson_interval(hits: int, n: int, z: float = 1.96) -> tuple:
     """Wilson score 信賴區間（預設 95%）。n=0 時回傳 (0,1) 表示完全未知。"""
@@ -74,14 +76,36 @@ def direction_significance(
     horizon: int = 1,
     num_tests: int = 1,
     z: float = 1.96,
+    distinct_dates: Optional[int] = None,
+    overlap_purged: bool = False,
 ) -> Optional[dict]:
     """單一方向（多/空）在單一前瞻期的顯著性摘要。無樣本/缺基準時回傳 None。
-    bug#00106: 導入 Effective Sample Size (ESS = floor(n / horizon)) 計算顯著性 p 值與 Wilson CI，
-    消除連續每日重複訊號在長前瞻期（如 14/30/60 天）下重疊視窗報酬自相關造成的 p 值過度膨脹與顯著性高估。
+
+    一般回測以 Effective Sample Size (ESS = floor(n / horizon)) 保守處理重疊視窗。
+    若呼叫端已在樣本建構時 purge 重疊 label interval，必須傳 ``overlap_purged=True``，
+    此時不再除以 horizon 第二次，只保留跨標的同日聚類上限。
+
+    bug#00125（跨截面修正）：舊 ESS 只對「時間」去相關（÷horizon），沒有對「跨標的」去
+    相關。彙總回測把多檔標的池在一起時，同一天的 6 檔半導體其實是**同一個市場日**的一次
+    觀測，卻被算成 6 筆獨立樣本。實測本機資料：h=1 的池化結果 n=24、ESS=24、命中率 96%、
+    p=0.033「顯著」，但那 24 筆只落在 5 個不同日期、且 6 檔標的高度同向——真正的獨立觀
+    測約 5 次，不是 24 次。故 ESS 另以「不同訊號日期數 ÷ horizon」設上限：
+
+        ESS = max(1, min(floor(n / horizon), floor(distinct_dates / horizon)))
+
+    `distinct_dates=None`（呼叫端沒提供日期）時退回舊行為，只做時間去相關。此修正只會
+    **收緊**顯著性，不會放寬。
     """
     if not n or hit_rate is None or baseline_rate is None:
         return None
-    ess = max(1, math.floor(n / max(1, horizon)))
+    h = max(1, horizon)
+    # A caller that already removed overlapping label intervals must not be
+    # penalised a second time by dividing n by the horizon again.
+    ess = n if overlap_purged else math.floor(n / h)
+    if distinct_dates is not None:
+        date_ess = distinct_dates if overlap_purged else math.floor(distinct_dates / h)
+        ess = min(ess, date_ess)
+    ess = max(1, ess)
     hits_ess = int(round(hit_rate * ess))
     raw_hits = int(round(hit_rate * n))
     lo, hi = wilson_interval(hits_ess, ess, z=z)
@@ -90,6 +114,7 @@ def direction_significance(
     return {
         "n": n,
         "ess": ess,
+        "distinct_dates": distinct_dates,
         "hits": raw_hits,
         "hits_ess": hits_ess,
         "hit_rate": hit_rate,
@@ -175,13 +200,32 @@ def attach_significance(report: dict, records: Optional[list] = None) -> dict:
             num_tests += 1
     num_tests = max(1, num_tests)
 
+    # bug#00125: 由 records 統計每個 (horizon, direction) 的**不同訊號日期數**，供
+    # direction_significance 做跨截面去相關（同一天多檔標的 ≠ 多次獨立觀測）。
+    dates_by: dict = {}
+    for r in (records or []):
+        if r.get("date") is None:
+            continue
+        dates_by.setdefault((r.get("h"), r.get("dir")), set()).add(r["date"])
+
+    def _dd(h, direction):
+        s = dates_by.get((h, direction))
+        return len(s) if s else None
+
     for h, st in by_h.items():
         base = st.get("baseline_up_rate")
         up_n, up_hr = _hz_dir_stats(st, "up")
         down_n, down_hr = _hz_dir_stats(st, "down")
-        up_sig = direction_significance(up_n, up_hr, base, horizon=int(h), num_tests=num_tests)
+        overlap_purged = bool(report.get("overlap_purged"))
+        up_sig = direction_significance(
+            up_n, up_hr, base, horizon=int(h), num_tests=num_tests,
+            distinct_dates=_dd(h, "up"), overlap_purged=overlap_purged,
+        )
         down_base = (1.0 - base) if base is not None else None
-        down_sig = direction_significance(down_n, down_hr, down_base, horizon=int(h), num_tests=num_tests)
+        down_sig = direction_significance(
+            down_n, down_hr, down_base, horizon=int(h), num_tests=num_tests,
+            distinct_dates=_dd(h, "down"), overlap_purged=overlap_purged,
+        )
         st["significance"] = {"up": up_sig, "down": down_sig, "num_tests": num_tests}
 
     report["stability"] = _stability(records, by_h) if records else None
@@ -209,8 +253,12 @@ def significance_phrase(report: dict, horizon: int, direction: str) -> str:
 
 
 def confidence_percentage_info(report: dict, horizon: int, direction: str) -> dict:
-    """bug#00110: 計算並導出 % 格式的信心水準 (Confidence Level %) 及 95% 信賴區間。
-    信心水準 % 定義為：基於統計二項檢定 p 值 (1 - p_value)，並結合樣本數門檻調整。
+    """導出回測 edge 的證據分數與 95% 信賴區間。
+
+    `1-p` 只能描述「反對無技能基準的證據」，不是下一次漲跌的預測機率。為了相容既有
+    顯示仍保留 `confidence_pct` 欄位，也回傳語意較精確的 `evidence_pct`。Dashboard
+    依產品規格以嚴格 `>60%` 作趨勢門檻；樣本量、ESS、調整後顯著性與穩定性另以
+    `validation_passed / validation_reason` 保留供診斷與校準。
     回傳 {"confidence_pct": float|None, "confidence_str": str, "ci_str": str, "p_value": float|None}
     """
     st = report.get("by_horizon", {}).get(horizon, {})
@@ -223,7 +271,15 @@ def confidence_percentage_info(report: dict, horizon: int, direction: str) -> di
     hit_rate = sig["hit_rate"]
     lo, hi = sig["ci_lo"] * 100, sig["ci_hi"] * 100
 
-    raw_conf = (1.0 - p_val) * 100.0 if p_val is not None else (hit_rate * 100.0 if hit_rate is not None else 50.0)
+    # bug#00125: 舊版在 p_value 缺漏時退回寫死的 50.0。該分支目前不可達
+    # （direction_significance 一定會填 p_value），但這正是本次修掉的那種「算不出來就
+    # 捏一個看起來合理的數字」模式，一次重構就會復活。改為明確回報「無法計算」。
+    if p_val is None and hit_rate is None:
+        return {"confidence_pct": None, "confidence_str": "無法計算信心水準",
+                "ci_str": f"95%CI {lo:.0f}–{hi:.0f}%", "p_value": None,
+                "n": n, "hit_rate": None, "below_baseline": None}
+
+    raw_conf = (1.0 - p_val) * 100.0 if p_val is not None else hit_rate * 100.0
     if n < 5:
         conf_pct = min(raw_conf, 60.0)
     elif n < 20:
@@ -231,46 +287,162 @@ def confidence_percentage_info(report: dict, horizon: int, direction: str) -> di
     else:
         conf_pct = raw_conf
 
-    conf_pct = round(max(50.0, min(99.0, conf_pct)), 0)
+    # bug#00125: 舊版下限鎖死 50.0。命中率**低於**基準時 p→1、raw_conf→0，會被改寫成
+    # 「信心水準 50%」，讀起來像「擲硬幣」，但回測其實是說這個訊號比什麼都不做更差。
+    # 方向判定不受影響（門檻仍擋掉），但顯示的「程度」會誤導，故改為據實顯示並附旗標。
+    below = (hit_rate is not None and sig.get("baseline_rate") is not None
+             and hit_rate < sig["baseline_rate"])
+    conf_pct = round(max(0.0, min(99.0, conf_pct)), 0)
 
     return {
         "confidence_pct": conf_pct,
-        "confidence_str": f"{conf_pct:.0f}%",
+        "evidence_pct": conf_pct,
+        "confidence_str": (f"{conf_pct:.0f}%（低於無技能基準）" if below else f"{conf_pct:.0f}%"),
         "ci_str": f"95%CI {lo:.0f}–{hi:.0f}%",
         "p_value": p_val,
         "n": n,
         "hit_rate": hit_rate,
+        "below_baseline": below,
     }
 
 
-def find_best_horizon_confidence(report: dict, direction: str, horizons: tuple = (7, 10, 14, 21, 30, 35)) -> dict:
-    """bug#00110: 跨多個前瞻期 (+7~+35天波段區間) 動態搜尋信心水準 (%) 最高的前瞻期 h_best。
-    回傳 {best_horizon, confidence_pct, confidence_str, ci_str, p_value, n, hit_rate, meets_threshold(>=60%)}
-    """
-    best = None  # (conf_pct, h, conf_info)
-    for h in horizons:
-        info = confidence_percentage_info(report, h, direction)
-        c_pct = info.get("confidence_pct")
-        if c_pct is not None:
-            if best is None or c_pct > best[0]:
-                best = (c_pct, h, info)
+def evaluable_horizons(report: dict, direction: str, horizons: tuple) -> tuple:
+    """bug#00125: 只回傳「該方向真的有前瞻樣本」的前瞻期。
 
-    if best is None:
+    背景：`calibration.backtest_verdicts` 只有在 T 之後存在 ≥ T+h 的真實快照時才會累積
+    一筆前瞻樣本。快照累積天數不足時（例如剛上線只有 6 天、跨 5 日曆天），所有 h≥7 的
+    樣本數都是 0，整組候選都算不出信心水準。此函式讓呼叫端能誠實區分「算過但沒 edge」
+    與「根本還沒有樣本可算」，而不是靜默退回一個寫死的天數。
+    """
+    out = []
+    for h in horizons:
+        by_h = report.get("by_horizon", {}) or {}
+        st = by_h.get(h)
+        if st is None:
+            st = by_h.get(str(h), {})
+        n, _ = _hz_dir_stats(st or {}, direction)
+        if n:
+            out.append(h)
+    return tuple(out)
+
+
+def max_evaluable_horizon(report: dict, horizons: Optional[tuple] = None) -> Optional[int]:
+    """整份 report（不分方向、含 baseline）中最大「有前瞻樣本」的 h，供畫面誠實揭露
+    「目前資料只夠評估到 +N 天」。完全沒有任何前瞻樣本時回 None。"""
+    by_h = report.get("by_horizon", {}) or {}
+    cands = []
+    for h, st in by_h.items():
+        try:
+            h_int = int(h)
+        except (TypeError, ValueError):
+            continue
+        if horizons is not None and h_int not in horizons:
+            continue
+        if (st or {}).get("baseline_n") or _hz_dir_stats(st or {}, "up")[0] \
+                or _hz_dir_stats(st or {}, "down")[0]:
+            cands.append(h_int)
+    return max(cands) if cands else None
+
+
+def find_best_horizon_confidence(
+    report: dict,
+    direction: str,
+    horizons: tuple = (1, 5, 7, 10, 14, 21, 30, 35),
+    fallback_horizon: Optional[int] = None,
+    preferred_horizon: int = 5,
+) -> dict:
+    """Resolve one pre-declared forecast horizon and validate its backtest edge.
+
+    Horizon selection uses availability and distance to the pre-declared 5-session
+    target, never the largest `(1-p)` on the same data. This removes horizon
+    shopping. The legacy function/field names remain for API compatibility.
+
+    Dashboard trend activation follows the product rule `confidence_pct > 60%`
+    (strictly greater, not equal). The fuller n／ESS／edge／Bonferroni／stability
+    result is retained separately as `validation_passed` for diagnostics and
+    calibration, while model-health `degraded` remains a downstream limitation
+    disclosure and proposal trigger under governance decision D-02.
+    """
+    usable = evaluable_horizons(report, direction, horizons)
+    if not usable:
         return {
-            "best_horizon": 14,
+            "best_horizon": fallback_horizon,
             "confidence_pct": None,
+            "evidence_pct": None,
             "confidence_str": "樣本累積中",
             "ci_str": "",
             "p_value": None,
             "n": 0,
             "hit_rate": None,
             "meets_threshold": False,
+            "gate_reason": "尚無前瞻樣本",
+            "evaluable_horizons": usable,
         }
 
-    c_pct, h_best, info = best
+    h_best = min(usable, key=lambda h: (abs(h - preferred_horizon), -h))
+    info = confidence_percentage_info(report, h_best, direction)
+    c_pct = info.get("confidence_pct")
+    if c_pct is None:
+        info.update({
+            "best_horizon": h_best,
+            "meets_threshold": False,
+            "gate_reason": "回測證據無法計算",
+            "evaluable_horizons": usable,
+        })
+        return info
+
     info["best_horizon"] = h_best
-    info["meets_threshold"] = c_pct >= 60.0
+    by_h = report.get("by_horizon", {}) or {}
+    st = by_h.get(h_best) if h_best in by_h else by_h.get(str(h_best), {})
+    sig = ((st or {}).get("significance") or {}).get(direction) or {}
+    need_n = int(report.get("min_signals", 20))
+    reasons = []
+    if info.get("n", 0) < need_n:
+        reasons.append(f"n={info.get('n', 0)}<{need_n}")
+    if sig.get("ess", 0) < 3:
+        reasons.append(f"ESS={sig.get('ess', 0)}<3")
+    if info.get("hit_rate") is None or sig.get("baseline_rate") is None \
+            or info["hit_rate"] <= sig["baseline_rate"]:
+        reasons.append("未優於無技能基準")
+    if not sig.get("significant_adj"):
+        reasons.append("未通過多重檢定")
+    stability = report.get("stability") or {}
+    if stability.get("consistent") is False:
+        reasons.append("前後區間不穩定")
+    info["validation_passed"] = not reasons
+    info["validation_reason"] = "；".join(reasons) if reasons else "通過完整統計驗證"
+    info["meets_threshold"] = c_pct > TREND_CONFIDENCE_THRESHOLD
+    info["gate_reason"] = (
+        f"信心水準 {c_pct:.0f}% 已超過 {TREND_CONFIDENCE_THRESHOLD:.0f}%"
+        if info["meets_threshold"]
+        else f"信心水準 {c_pct:.0f}% 未超過 {TREND_CONFIDENCE_THRESHOLD:.0f}%"
+    )
+    info["evaluable_horizons"] = usable
     return info
+
+
+def has_backtest_evidence(conf_best: dict) -> bool:
+    """bug#00125: 是否真有可用的回測統計證據（有信心水準且有前瞻期）。
+    結論卡的 60% 門檻守門一律經由此函式，避免「無證據」被當成「通過」。"""
+    return conf_best.get("confidence_pct") is not None and conf_best.get("best_horizon") is not None
+
+
+def horizon_coverage_note(report: dict, horizons: tuple = (1, 5, 7, 10, 14, 21, 30, 35)) -> str:
+    """bug#00125: 一句誠實揭露「資料涵蓋到哪」，接在結論標頭後面，讓使用者一眼知道
+    看不到長前瞻期結論是因為快照還不夠久，而不是系統只會算 14 天。"""
+    days = report.get("total_snapshot_days") or 0
+    first, last = report.get("first_date"), report.get("last_date")
+    span = ""
+    if first and last:
+        try:
+            from datetime import datetime as _dt
+            d = (_dt.strptime(last, "%Y-%m-%d") - _dt.strptime(first, "%Y-%m-%d")).days
+            span = f"／跨 {d} 日曆天"
+        except (TypeError, ValueError):
+            span = ""
+    h_max = max_evaluable_horizon(report, horizons)
+    limit = f"目前僅能評估至 +{h_max} 天" if h_max else "尚無任何前瞻樣本"
+    return f"快照 {days} 天{span}，{limit}"
 
 
 
@@ -299,4 +471,3 @@ def validation_label(report: dict) -> str:
             parts.append("⚠️前後子區間不一致(慎用)")
         # consistent is None → 樣本不足，略過不誤導
     return "；".join(parts)
-

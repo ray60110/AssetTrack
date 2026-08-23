@@ -1,0 +1,1415 @@
+{
+  "run_date": "2026-08-16",
+  "windows": [
+    {
+      "window": "W1",
+      "start": "2016-08-15",
+      "end_exclusive": "2017-08-15",
+      "purpose": "development"
+    },
+    {
+      "window": "W2",
+      "start": "2017-08-15",
+      "end_exclusive": "2018-08-15",
+      "purpose": "development"
+    },
+    {
+      "window": "W3",
+      "start": "2018-08-15",
+      "end_exclusive": "2019-08-15",
+      "purpose": "development"
+    },
+    {
+      "window": "W4",
+      "start": "2019-08-15",
+      "end_exclusive": "2020-08-15",
+      "purpose": "development"
+    },
+    {
+      "window": "W5",
+      "start": "2020-08-15",
+      "end_exclusive": "2021-08-15",
+      "purpose": "development"
+    },
+    {
+      "window": "W6",
+      "start": "2021-08-15",
+      "end_exclusive": "2022-08-15",
+      "purpose": "development"
+    },
+    {
+      "window": "W7",
+      "start": "2022-08-15",
+      "end_exclusive": "2023-08-15",
+      "purpose": "selection"
+    },
+    {
+      "window": "W8",
+      "start": "2023-08-15",
+      "end_exclusive": "2024-08-15",
+      "purpose": "selection"
+    },
+    {
+      "window": "W9",
+      "start": "2024-08-15",
+      "end_exclusive": "2025-08-15",
+      "purpose": "final_holdout"
+    },
+    {
+      "window": "W10",
+      "start": "2025-08-15",
+      "end_exclusive": "2026-08-15",
+      "purpose": "final_holdout"
+    }
+  ],
+  "horizon_sessions": 20,
+  "anchor_step_sessions": 20,
+  "min_member_coverage": 0.7,
+  "tui_gate": {
+    "accuracy_strictly_above": 0.6,
+    "final_holdout_balanced_accuracy_strictly_above": 0.6,
+    "final_holdout_cluster_ci_lower_above": 0.5,
+    "signal_coverage_at_least": 0.5,
+    "must_beat_own_majority_baseline": true
+  },
+  "current_method_passed": false,
+  "first_eligible_challenger": null,
+  "user_selected_tui_method": "two_of_three_bullish",
+  "methods": [
+    {
+      "name": "current_consensus",
+      "order": 0,
+      "target": "absolute",
+      "description": "現行 breadth ±0.5、等權日報酬 ±0.1%、近 5 日至少 3 日同向",
+      "signals": 275,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.3895184135977337,
+      "accuracy": 0.5709090909090909,
+      "balanced_accuracy": 0.5420806051027319,
+      "actual_up_rate": 0.6254545454545455,
+      "majority_baseline": 0.6254545454545455,
+      "edge_vs_majority": -0.054545454545454564,
+      "nonworse_windows": 3,
+      "holdout_signals": 56,
+      "holdout_up_n": 32,
+      "holdout_down_n": 24,
+      "holdout_accuracy": 0.5535714285714286,
+      "holdout_balanced_accuracy": 0.5208333333333334,
+      "holdout_majority_baseline": 0.5714285714285714,
+      "holdout_balanced_accuracy_ci": [
+        0.4067011737528042,
+        0.635782196969697
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 172,
+          "accuracy": 0.6569767441860465
+        },
+        "down": {
+          "signals": 103,
+          "accuracy": 0.42718446601941745
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 17,
+          "accuracy": 0.47058823529411764,
+          "balanced_accuracy": 0.25,
+          "majority_baseline": 0.9411764705882353,
+          "edge_vs_majority": -0.47058823529411764
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 19,
+          "accuracy": 0.7368421052631579,
+          "balanced_accuracy": 0.5583333333333333,
+          "majority_baseline": 0.7894736842105263,
+          "edge_vs_majority": -0.052631578947368474
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 19,
+          "accuracy": 0.42105263157894735,
+          "balanced_accuracy": 0.4277777777777778,
+          "majority_baseline": 0.5263157894736842,
+          "edge_vs_majority": -0.10526315789473684
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 35,
+          "accuracy": 0.6857142857142857,
+          "balanced_accuracy": 0.5492424242424242,
+          "majority_baseline": 0.6857142857142857,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 29,
+          "accuracy": 0.5862068965517241,
+          "balanced_accuracy": 0.5857843137254902,
+          "majority_baseline": 0.5862068965517241,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 40,
+          "accuracy": 0.45,
+          "balanced_accuracy": 0.45112781954887216,
+          "majority_baseline": 0.525,
+          "edge_vs_majority": -0.07500000000000001
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 37,
+          "accuracy": 0.6216216216216216,
+          "balanced_accuracy": 0.6191176470588236,
+          "majority_baseline": 0.5405405405405406,
+          "edge_vs_majority": 0.08108108108108103
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 23,
+          "accuracy": 0.6086956521739131,
+          "balanced_accuracy": 0.5735294117647058,
+          "majority_baseline": 0.7391304347826086,
+          "edge_vs_majority": -0.13043478260869557
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 28,
+          "accuracy": 0.5357142857142857,
+          "balanced_accuracy": 0.5729166666666667,
+          "majority_baseline": 0.5714285714285714,
+          "edge_vs_majority": -0.0357142857142857
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 28,
+          "accuracy": 0.5714285714285714,
+          "balanced_accuracy": 0.475,
+          "majority_baseline": 0.7142857142857143,
+          "edge_vs_majority": -0.1428571428571429
+        }
+      ],
+      "eligible_for_tui": false
+    },
+    {
+      "name": "cross_sector_relative_momentum",
+      "order": 1,
+      "target": "relative_qqq",
+      "description": "6/12 月動能各半、排除最近 1 月；六板塊 top/bottom 2 預測相對 QQQ 強弱",
+      "signals": 496,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.7025495750708215,
+      "accuracy": 0.4959677419354839,
+      "balanced_accuracy": 0.49594638770840144,
+      "actual_up_rate": 0.5362903225806451,
+      "majority_baseline": 0.5362903225806451,
+      "edge_vs_majority": -0.040322580645161255,
+      "nonworse_windows": 1,
+      "holdout_signals": 96,
+      "holdout_up_n": 54,
+      "holdout_down_n": 42,
+      "holdout_accuracy": 0.5208333333333334,
+      "holdout_balanced_accuracy": 0.5211640211640212,
+      "holdout_majority_baseline": 0.5625,
+      "holdout_balanced_accuracy_ci": [
+        0.4052215884159719,
+        0.6358723623262996
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 248,
+          "accuracy": 0.532258064516129
+        },
+        "down": {
+          "signals": 248,
+          "accuracy": 0.4596774193548387
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 48,
+          "accuracy": 0.4791666666666667,
+          "balanced_accuracy": 0.47575757575757577,
+          "majority_baseline": 0.6875,
+          "edge_vs_majority": -0.20833333333333331
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 52,
+          "accuracy": 0.46153846153846156,
+          "balanced_accuracy": 0.46153846153846156,
+          "majority_baseline": 0.5,
+          "edge_vs_majority": -0.038461538461538436
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 48,
+          "accuracy": 0.5208333333333334,
+          "balanced_accuracy": 0.5217785843920145,
+          "majority_baseline": 0.6041666666666667,
+          "edge_vs_majority": -0.08333333333333337
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 52,
+          "accuracy": 0.5384615384615384,
+          "balanced_accuracy": 0.5393939393939393,
+          "majority_baseline": 0.5769230769230769,
+          "edge_vs_majority": -0.038461538461538436
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 52,
+          "accuracy": 0.4230769230769231,
+          "balanced_accuracy": 0.41503267973856206,
+          "majority_baseline": 0.6538461538461539,
+          "edge_vs_majority": -0.23076923076923078
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 48,
+          "accuracy": 0.5416666666666666,
+          "balanced_accuracy": 0.5428571428571429,
+          "majority_baseline": 0.5833333333333333,
+          "edge_vs_majority": -0.04166666666666663
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 52,
+          "accuracy": 0.4807692307692308,
+          "balanced_accuracy": 0.48050974512743627,
+          "majority_baseline": 0.5576923076923077,
+          "edge_vs_majority": -0.07692307692307693
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 48,
+          "accuracy": 0.4791666666666667,
+          "balanced_accuracy": 0.47883597883597884,
+          "majority_baseline": 0.5625,
+          "edge_vs_majority": -0.08333333333333331
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 52,
+          "accuracy": 0.38461538461538464,
+          "balanced_accuracy": 0.38461538461538464,
+          "majority_baseline": 0.5,
+          "edge_vs_majority": -0.11538461538461536
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 44,
+          "accuracy": 0.6818181818181818,
+          "balanced_accuracy": 0.6964285714285714,
+          "majority_baseline": 0.6363636363636364,
+          "edge_vs_majority": 0.045454545454545414
+        }
+      ],
+      "eligible_for_tui": false
+    },
+    {
+      "name": "time_series_momentum_12m",
+      "order": 2,
+      "target": "absolute",
+      "description": "12 月板塊等權動能、排除最近 1 月，預測未來 20-session 絕對方向",
+      "signals": 691,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.9787535410764873,
+      "accuracy": 0.5600578871201157,
+      "balanced_accuracy": 0.5033522727272728,
+      "actual_up_rate": 0.6020260492040521,
+      "majority_baseline": 0.6020260492040521,
+      "edge_vs_majority": -0.04196816208393639,
+      "nonworse_windows": 4,
+      "holdout_signals": 144,
+      "holdout_up_n": 87,
+      "holdout_down_n": 57,
+      "holdout_accuracy": 0.5416666666666666,
+      "holdout_balanced_accuracy": 0.4785238959467635,
+      "holdout_majority_baseline": 0.6041666666666666,
+      "holdout_balanced_accuracy_ci": [
+        0.3985890652557319,
+        0.5573214285714285
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 538,
+          "accuracy": 0.604089219330855
+        },
+        "down": {
+          "signals": 153,
+          "accuracy": 0.40522875816993464
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 60,
+          "accuracy": 0.7333333333333333,
+          "balanced_accuracy": 0.5198863636363636,
+          "majority_baseline": 0.7333333333333333,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 64,
+          "accuracy": 0.609375,
+          "balanced_accuracy": 0.5071794871794871,
+          "majority_baseline": 0.609375,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 60,
+          "accuracy": 0.38333333333333336,
+          "balanced_accuracy": 0.3833333333333333,
+          "majority_baseline": 0.5,
+          "edge_vs_majority": -0.11666666666666664
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 65,
+          "accuracy": 0.6,
+          "balanced_accuracy": 0.47500000000000003,
+          "majority_baseline": 0.6923076923076923,
+          "edge_vs_majority": -0.09230769230769231
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 76,
+          "accuracy": 0.6842105263157895,
+          "balanced_accuracy": 0.49056603773584906,
+          "majority_baseline": 0.6973684210526315,
+          "edge_vs_majority": -0.013157894736842035
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 72,
+          "accuracy": 0.4861111111111111,
+          "balanced_accuracy": 0.515625,
+          "majority_baseline": 0.5555555555555556,
+          "edge_vs_majority": -0.06944444444444448
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 78,
+          "accuracy": 0.4358974358974359,
+          "balanced_accuracy": 0.46179401993355484,
+          "majority_baseline": 0.5512820512820513,
+          "edge_vs_majority": -0.11538461538461542
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 72,
+          "accuracy": 0.5972222222222222,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.5972222222222222,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 78,
+          "accuracy": 0.46153846153846156,
+          "balanced_accuracy": 0.41032608695652173,
+          "majority_baseline": 0.5897435897435898,
+          "edge_vs_majority": -0.1282051282051282
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 66,
+          "accuracy": 0.6363636363636364,
+          "balanced_accuracy": 0.5590243902439025,
+          "majority_baseline": 0.6212121212121212,
+          "edge_vs_majority": 0.015151515151515138
+        }
+      ],
+      "eligible_for_tui": false
+    },
+    {
+      "name": "sma_5_150",
+      "order": 3,
+      "target": "absolute",
+      "description": "等權板塊指數 SMA5 與 SMA150 的相對位置",
+      "signals": 667,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.9447592067988668,
+      "accuracy": 0.5562218890554723,
+      "balanced_accuracy": 0.5163655407174653,
+      "actual_up_rate": 0.5982008995502249,
+      "majority_baseline": 0.5982008995502249,
+      "edge_vs_majority": -0.04197901049475261,
+      "nonworse_windows": 1,
+      "holdout_signals": 129,
+      "holdout_up_n": 75,
+      "holdout_down_n": 54,
+      "holdout_accuracy": 0.5193798449612403,
+      "holdout_balanced_accuracy": 0.49592592592592594,
+      "holdout_majority_baseline": 0.5813953488372093,
+      "holdout_balanced_accuracy_ci": [
+        0.38919684219473843,
+        0.6054475025760914
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 471,
+          "accuracy": 0.6093418259023354
+        },
+        "down": {
+          "signals": 196,
+          "accuracy": 0.42857142857142855
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 60,
+          "accuracy": 0.7166666666666667,
+          "balanced_accuracy": 0.48863636363636365,
+          "majority_baseline": 0.7333333333333333,
+          "edge_vs_majority": -0.016666666666666607
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 57,
+          "accuracy": 0.6140350877192983,
+          "balanced_accuracy": 0.5257936507936508,
+          "majority_baseline": 0.631578947368421,
+          "edge_vs_majority": -0.01754385964912275
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 60,
+          "accuracy": 0.38333333333333336,
+          "balanced_accuracy": 0.3833333333333333,
+          "majority_baseline": 0.5,
+          "edge_vs_majority": -0.11666666666666664
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 69,
+          "accuracy": 0.6666666666666666,
+          "balanced_accuracy": 0.5285714285714286,
+          "majority_baseline": 0.7101449275362319,
+          "edge_vs_majority": -0.0434782608695653
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 78,
+          "accuracy": 0.6153846153846154,
+          "balanced_accuracy": 0.4675925925925926,
+          "majority_baseline": 0.6923076923076923,
+          "edge_vs_majority": -0.07692307692307687
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 72,
+          "accuracy": 0.4583333333333333,
+          "balanced_accuracy": 0.446875,
+          "majority_baseline": 0.5555555555555556,
+          "edge_vs_majority": -0.09722222222222227
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 78,
+          "accuracy": 0.5512820512820513,
+          "balanced_accuracy": 0.5451827242524917,
+          "majority_baseline": 0.5512820512820513,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 64,
+          "accuracy": 0.515625,
+          "balanced_accuracy": 0.47023809523809523,
+          "majority_baseline": 0.5625,
+          "edge_vs_majority": -0.046875
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 71,
+          "accuracy": 0.4788732394366197,
+          "balanced_accuracy": 0.4772357723577236,
+          "majority_baseline": 0.5774647887323944,
+          "edge_vs_majority": -0.09859154929577468
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 58,
+          "accuracy": 0.5689655172413793,
+          "balanced_accuracy": 0.5159313725490196,
+          "majority_baseline": 0.5862068965517241,
+          "edge_vs_majority": -0.01724137931034475
+        }
+      ],
+      "eligible_for_tui": false
+    },
+    {
+      "name": "breakout_50",
+      "order": 4,
+      "target": "absolute",
+      "description": "等權板塊指數突破/跌破前 50-session 區間才發訊號",
+      "signals": 117,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.16572237960339944,
+      "accuracy": 0.5641025641025641,
+      "balanced_accuracy": 0.5063829787234043,
+      "actual_up_rate": 0.5982905982905983,
+      "majority_baseline": 0.5982905982905983,
+      "edge_vs_majority": -0.03418803418803418,
+      "nonworse_windows": 4,
+      "holdout_signals": 27,
+      "holdout_up_n": 21,
+      "holdout_down_n": 6,
+      "holdout_accuracy": 0.6666666666666666,
+      "holdout_balanced_accuracy": 0.4880952380952381,
+      "holdout_majority_baseline": 0.7777777777777778,
+      "holdout_balanced_accuracy_ci": [
+        0.32053571428571426,
+        0.7222222222222222
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 93,
+          "accuracy": 0.6021505376344086
+        },
+        "down": {
+          "signals": 24,
+          "accuracy": 0.4166666666666667
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 13,
+          "accuracy": 0.6153846153846154,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.6153846153846154,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 5,
+          "accuracy": 0.8,
+          "balanced_accuracy": 0.75,
+          "majority_baseline": 0.6,
+          "edge_vs_majority": 0.20000000000000007
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 10,
+          "accuracy": 0.2,
+          "balanced_accuracy": 0.2,
+          "majority_baseline": 0.5,
+          "edge_vs_majority": -0.3
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 16,
+          "accuracy": 0.6875,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.6875,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 11,
+          "accuracy": 0.45454545454545453,
+          "balanced_accuracy": 0.48333333333333334,
+          "majority_baseline": 0.5454545454545454,
+          "edge_vs_majority": -0.09090909090909088
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 9,
+          "accuracy": 0.3333333333333333,
+          "balanced_accuracy": 0.39285714285714285,
+          "majority_baseline": 0.7777777777777778,
+          "edge_vs_majority": -0.4444444444444445
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 18,
+          "accuracy": 0.4444444444444444,
+          "balanced_accuracy": 0.4444444444444444,
+          "majority_baseline": 0.5,
+          "edge_vs_majority": -0.05555555555555558
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 8,
+          "accuracy": 0.875,
+          "balanced_accuracy": 0.9166666666666667,
+          "majority_baseline": 0.75,
+          "edge_vs_majority": 0.125
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 13,
+          "accuracy": 0.6923076923076923,
+          "balanced_accuracy": 0.4090909090909091,
+          "majority_baseline": 0.8461538461538461,
+          "edge_vs_majority": -0.15384615384615385
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 14,
+          "accuracy": 0.6428571428571429,
+          "balanced_accuracy": 0.525,
+          "majority_baseline": 0.7142857142857143,
+          "edge_vs_majority": -0.0714285714285714
+        }
+      ],
+      "eligible_for_tui": false
+    },
+    {
+      "name": "relative_momentum_breadth",
+      "order": 5,
+      "target": "relative_qqq",
+      "description": "跨板塊相對動能再要求至少 60% 成分股位於 50MA 同側",
+      "signals": 254,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.3597733711048159,
+      "accuracy": 0.5275590551181102,
+      "balanced_accuracy": 0.5240312965722802,
+      "actual_up_rate": 0.5196850393700787,
+      "majority_baseline": 0.5196850393700787,
+      "edge_vs_majority": 0.007874015748031482,
+      "nonworse_windows": 3,
+      "holdout_signals": 59,
+      "holdout_up_n": 34,
+      "holdout_down_n": 25,
+      "holdout_accuracy": 0.6440677966101694,
+      "holdout_balanced_accuracy": 0.638235294117647,
+      "holdout_majority_baseline": 0.576271186440678,
+      "holdout_balanced_accuracy_ci": [
+        0.5,
+        0.7738922038327525
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 150,
+          "accuracy": 0.54
+        },
+        "down": {
+          "signals": 104,
+          "accuracy": 0.5096153846153846
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 21,
+          "accuracy": 0.47619047619047616,
+          "balanced_accuracy": 0.38461538461538464,
+          "majority_baseline": 0.6190476190476191,
+          "edge_vs_majority": -0.1428571428571429
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 21,
+          "accuracy": 0.5238095238095238,
+          "balanced_accuracy": 0.5666666666666667,
+          "majority_baseline": 0.7142857142857143,
+          "edge_vs_majority": -0.19047619047619047
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 22,
+          "accuracy": 0.4090909090909091,
+          "balanced_accuracy": 0.4,
+          "majority_baseline": 0.5454545454545454,
+          "edge_vs_majority": -0.1363636363636363
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 28,
+          "accuracy": 0.5,
+          "balanced_accuracy": 0.44385026737967914,
+          "majority_baseline": 0.6071428571428571,
+          "edge_vs_majority": -0.1071428571428571
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 25,
+          "accuracy": 0.56,
+          "balanced_accuracy": 0.538961038961039,
+          "majority_baseline": 0.56,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 27,
+          "accuracy": 0.5555555555555556,
+          "balanced_accuracy": 0.5397727272727273,
+          "majority_baseline": 0.5925925925925926,
+          "edge_vs_majority": -0.03703703703703698
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 24,
+          "accuracy": 0.4166666666666667,
+          "balanced_accuracy": 0.4444444444444444,
+          "majority_baseline": 0.625,
+          "edge_vs_majority": -0.20833333333333331
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 27,
+          "accuracy": 0.48148148148148145,
+          "balanced_accuracy": 0.4722222222222222,
+          "majority_baseline": 0.6666666666666666,
+          "edge_vs_majority": -0.18518518518518517
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 26,
+          "accuracy": 0.5384615384615384,
+          "balanced_accuracy": 0.5416666666666667,
+          "majority_baseline": 0.5384615384615384,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 33,
+          "accuracy": 0.7272727272727273,
+          "balanced_accuracy": 0.7272727272727273,
+          "majority_baseline": 0.6666666666666666,
+          "edge_vs_majority": 0.06060606060606066
+        }
+      ],
+      "eligible_for_tui": false
+    },
+    {
+      "name": "agreement_absolute",
+      "order": 6,
+      "target": "absolute",
+      "description": "breadth 3-of-5 與相對動能＋50MA breadth 同向；評估板塊絕對漲跌",
+      "signals": 66,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.09348441926345609,
+      "accuracy": 0.5454545454545454,
+      "balanced_accuracy": 0.5178571428571429,
+      "actual_up_rate": 0.6363636363636364,
+      "majority_baseline": 0.6363636363636364,
+      "edge_vs_majority": -0.09090909090909094,
+      "nonworse_windows": 4,
+      "holdout_signals": 11,
+      "holdout_up_n": 9,
+      "holdout_down_n": 2,
+      "holdout_accuracy": 0.6363636363636364,
+      "holdout_balanced_accuracy": 0.5833333333333333,
+      "holdout_majority_baseline": 0.8181818181818182,
+      "holdout_balanced_accuracy_ci": [
+        0.22727272727272727,
+        0.9444444444444444
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 40,
+          "accuracy": 0.65
+        },
+        "down": {
+          "signals": 26,
+          "accuracy": 0.38461538461538464
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 4,
+          "accuracy": 0.25,
+          "balanced_accuracy": 0.16666666666666666,
+          "majority_baseline": 0.75,
+          "edge_vs_majority": -0.5
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 4,
+          "accuracy": 0.75,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.75,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 5,
+          "accuracy": 0.6,
+          "balanced_accuracy": 0.5833333333333333,
+          "majority_baseline": 0.6,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 13,
+          "accuracy": 0.7692307692307693,
+          "balanced_accuracy": 0.6166666666666667,
+          "majority_baseline": 0.7692307692307693,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 9,
+          "accuracy": 0.4444444444444444,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.6666666666666667,
+          "edge_vs_majority": -0.22222222222222232
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 5,
+          "accuracy": 0.2,
+          "balanced_accuracy": 0.25,
+          "majority_baseline": 0.6,
+          "edge_vs_majority": -0.39999999999999997
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 11,
+          "accuracy": 0.5454545454545454,
+          "balanced_accuracy": 0.55,
+          "majority_baseline": 0.5454545454545454,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 4,
+          "accuracy": 0.25,
+          "balanced_accuracy": null,
+          "majority_baseline": 1.0,
+          "edge_vs_majority": -0.75
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 2,
+          "accuracy": 0.5,
+          "balanced_accuracy": null,
+          "majority_baseline": 1.0,
+          "edge_vs_majority": -0.5
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 9,
+          "accuracy": 0.6666666666666666,
+          "balanced_accuracy": null,
+          "majority_baseline": 1.0,
+          "edge_vs_majority": -0.33333333333333337
+        }
+      ],
+      "eligible_for_tui": false
+    },
+    {
+      "name": "agreement_relative_qqq",
+      "order": 7,
+      "target": "relative_qqq",
+      "description": "完全相同 AND 訊號；評估板塊相對 QQQ 強弱",
+      "signals": 66,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.09348441926345609,
+      "accuracy": 0.5303030303030303,
+      "balanced_accuracy": 0.5368663594470046,
+      "actual_up_rate": 0.4696969696969697,
+      "majority_baseline": 0.5303030303030303,
+      "edge_vs_majority": 0.0,
+      "nonworse_windows": 4,
+      "holdout_signals": 11,
+      "holdout_up_n": 8,
+      "holdout_down_n": 3,
+      "holdout_accuracy": 0.7272727272727273,
+      "holdout_balanced_accuracy": 0.7083333333333333,
+      "holdout_majority_baseline": 0.7272727272727273,
+      "holdout_balanced_accuracy_ci": [
+        0.3,
+        1.0
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 40,
+          "accuracy": 0.5
+        },
+        "down": {
+          "signals": 26,
+          "accuracy": 0.5769230769230769
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 4,
+          "accuracy": 0.25,
+          "balanced_accuracy": 0.16666666666666666,
+          "majority_baseline": 0.75,
+          "edge_vs_majority": -0.5
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 4,
+          "accuracy": 0.5,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.5,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 5,
+          "accuracy": 0.8,
+          "balanced_accuracy": 0.875,
+          "majority_baseline": 0.8,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 13,
+          "accuracy": 0.5384615384615384,
+          "balanced_accuracy": 0.5119047619047619,
+          "majority_baseline": 0.5384615384615384,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 9,
+          "accuracy": 0.2222222222222222,
+          "balanced_accuracy": 0.125,
+          "majority_baseline": 0.8888888888888888,
+          "edge_vs_majority": -0.6666666666666666
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 5,
+          "accuracy": 0.6,
+          "balanced_accuracy": 0.375,
+          "majority_baseline": 0.8,
+          "edge_vs_majority": -0.20000000000000007
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 11,
+          "accuracy": 0.5454545454545454,
+          "balanced_accuracy": 0.55,
+          "majority_baseline": 0.5454545454545454,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 4,
+          "accuracy": 0.5,
+          "balanced_accuracy": 0.6666666666666666,
+          "majority_baseline": 0.75,
+          "edge_vs_majority": -0.25
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 2,
+          "accuracy": 0.5,
+          "balanced_accuracy": null,
+          "majority_baseline": 1.0,
+          "edge_vs_majority": -0.5
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 9,
+          "accuracy": 0.7777777777777778,
+          "balanced_accuracy": 0.875,
+          "majority_baseline": 0.8888888888888888,
+          "edge_vs_majority": -0.11111111111111105
+        }
+      ],
+      "eligible_for_tui": false
+    },
+    {
+      "name": "two_of_three_bullish",
+      "order": 8,
+      "target": "absolute",
+      "description": "breadth 3-of-5、相對動能＋50MA breadth、SMA5/150 至少兩票多方且零偏空票；只發多方候選",
+      "signals": 199,
+      "evaluable_cases": 706,
+      "signal_coverage": 0.2818696883852691,
+      "accuracy": 0.6432160804020101,
+      "balanced_accuracy": 0.5,
+      "actual_up_rate": 0.6432160804020101,
+      "majority_baseline": 0.6432160804020101,
+      "edge_vs_majority": 0.0,
+      "nonworse_windows": 8,
+      "holdout_signals": 39,
+      "holdout_up_n": 27,
+      "holdout_down_n": 12,
+      "holdout_accuracy": 0.6923076923076923,
+      "holdout_balanced_accuracy": 0.5,
+      "holdout_majority_baseline": 0.6923076923076923,
+      "holdout_balanced_accuracy_ci": [
+        0.5,
+        0.5
+      ],
+      "prediction_direction_breakdown": {
+        "up": {
+          "signals": 199,
+          "accuracy": 0.6432160804020101
+        },
+        "down": {
+          "signals": 0,
+          "accuracy": null
+        }
+      },
+      "windows": [
+        {
+          "window": "W1",
+          "start": "2016-08-15",
+          "end_exclusive": "2017-08-15",
+          "purpose": "development",
+          "signals": 25,
+          "accuracy": 0.64,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.64,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W2",
+          "start": "2017-08-15",
+          "end_exclusive": "2018-08-15",
+          "purpose": "development",
+          "signals": 20,
+          "accuracy": 0.7,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.7,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W3",
+          "start": "2018-08-15",
+          "end_exclusive": "2019-08-15",
+          "purpose": "development",
+          "signals": 7,
+          "accuracy": 0.14285714285714285,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.8571428571428572,
+          "edge_vs_majority": -0.7142857142857144
+        },
+        {
+          "window": "W4",
+          "start": "2019-08-15",
+          "end_exclusive": "2020-08-15",
+          "purpose": "development",
+          "signals": 35,
+          "accuracy": 0.7714285714285715,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.7714285714285715,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W5",
+          "start": "2020-08-15",
+          "end_exclusive": "2021-08-15",
+          "purpose": "development",
+          "signals": 22,
+          "accuracy": 0.6818181818181818,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.6818181818181818,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W6",
+          "start": "2021-08-15",
+          "end_exclusive": "2022-08-15",
+          "purpose": "development",
+          "signals": 14,
+          "accuracy": 0.42857142857142855,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.5714285714285714,
+          "edge_vs_majority": -0.14285714285714285
+        },
+        {
+          "window": "W7",
+          "start": "2022-08-15",
+          "end_exclusive": "2023-08-15",
+          "purpose": "selection",
+          "signals": 18,
+          "accuracy": 0.5,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.5,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W8",
+          "start": "2023-08-15",
+          "end_exclusive": "2024-08-15",
+          "purpose": "selection",
+          "signals": 19,
+          "accuracy": 0.6842105263157895,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.6842105263157895,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W9",
+          "start": "2024-08-15",
+          "end_exclusive": "2025-08-15",
+          "purpose": "final_holdout",
+          "signals": 16,
+          "accuracy": 0.6875,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.6875,
+          "edge_vs_majority": 0.0
+        },
+        {
+          "window": "W10",
+          "start": "2025-08-15",
+          "end_exclusive": "2026-08-15",
+          "purpose": "final_holdout",
+          "signals": 23,
+          "accuracy": 0.6956521739130435,
+          "balanced_accuracy": 0.5,
+          "majority_baseline": 0.6956521739130435,
+          "edge_vs_majority": 0.0
+        }
+      ],
+      "eligible_for_tui": false
+    }
+  ],
+  "data_sha256": "869593edb746b5a42ab9f307ca9abb8f06217b2917cd1bba61cbb1fe1ca56b4f",
+  "data_first_date": "2015-07-01",
+  "data_last_date": "2026-08-14"
+}

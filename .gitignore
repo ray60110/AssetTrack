@@ -52,6 +52,13 @@ beta_cache.json
 .env.*
 secrets.toml
 config.local.toml
+# Local backups / spinout leftovers (may contain personal DBs or journals)
+_spinout_backup/
+_to_delete/
+*.bak
+*.tgz
+*.db-journal
+*-journal
 # ──────────────────────────────────────────────────────────────────────────
 
 # OS

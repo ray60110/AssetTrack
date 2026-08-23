@@ -10,13 +10,14 @@ ETF 購入大量市值部位）雙維度結論，供 Dashboard 首頁卡片與 E
 這個模組不打任何網路請求 —— 純粹讀取 `storage.py` 已經在背景刷新時逐日真實累積
 下來的每檔 ETF 持股快照（`load_etf_daily_snapshots`），在本機離線運算完成。
 
-**沒有真實快照就沒有趨勢**：不會、也不能對缺資料的天數做任何估計或回填。一檔 ETF
-必須在指定視窗（預設 60 天）內至少有兩筆「真實」記錄的快照，才會被納入計算；
-不足的 ETF 會被列在 `etf_coverage` 裡標示 `ready=False`，供畫面顯示「資料收集中」。
+**觀測狀態與方向訊號分開**：兩筆真實日期觀測即可列出期間買入／賣出／持平狀態與
+淨部位市值變化；但 ETF 必須在視窗內至少有兩個內容不同的真實持股狀態，才可產生
+方向訊號。相同 Yahoo top-holdings 即使跨日抓取，也只算一個方向狀態，不會灌高
+`ready`；原始每日觀測仍保留供期間狀態表使用。
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date as _date_cls, datetime, timedelta
 from typing import Optional
 
 from .quotes import estimate_shares
@@ -27,6 +28,140 @@ def _filter_window(snapshots: list[dict], cutoff_date: str) -> list[dict]:
     return [s for s in snapshots if s.get("date", "") >= cutoff_date]
 
 
+def _portfolio_state_signature(snapshot: dict) -> tuple:
+    """Identity of disclosed precise holdings, excluding observation-only data.
+
+    Prices, estimated shares, AUM, and fetch dates can change while Yahoo's
+    disclosed top-holdings payload remains the same. Those enrichments must not
+    make duplicate holdings look like independent portfolio states. Broad asset
+    allocation is deliberately excluded: it has its own analysis and cannot make
+    unchanged named positions ready for precise-position analysis.
+    """
+    return tuple(sorted(
+        (
+            str(item.get("symbol") or ""),
+            round(float(item.get("weight") or 0.0), 6),
+            str(item.get("instrument_type") or ""),
+            str(item.get("option_type") or ""),
+            str(item.get("expiration") or ""),
+            str(item.get("strike") or ""),
+        )
+        for item in (snapshot.get("holdings") or [])
+        if item.get("symbol") is not None
+    ))
+
+
+def _collapse_unchanged_states(snapshots: list[dict]) -> list[dict]:
+    """Collapse consecutive identical portfolio observations to their newest row."""
+    states: list[dict] = []
+    signatures: list[tuple] = []
+    for snapshot in snapshots:
+        signature = _portfolio_state_signature(snapshot)
+        if signatures and signature == signatures[-1]:
+            # Keep the newest observation because it is most likely to contain
+            # the price/share enrichments added by newer fetches.
+            states[-1] = snapshot
+        else:
+            states.append(snapshot)
+            signatures.append(signature)
+    return states
+
+
+def _date_span_days(first: Optional[str], last: Optional[str]) -> Optional[int]:
+    """Calendar days between two ``YYYY-MM-DD`` strings; None if either is bad."""
+    try:
+        return (
+            datetime.strptime(last, "%Y-%m-%d") - datetime.strptime(first, "%Y-%m-%d")
+        ).days
+    except (TypeError, ValueError):
+        return None
+
+
+def _reported_share_direction(
+    shares0: Optional[float],
+    shares1: Optional[float],
+    rel_threshold: float,
+) -> str:
+    """Direction from an *exactly reported* share count (SEC 13F).
+
+    Returns "up"/"down" only when the reported share count moved by at least
+    ``rel_threshold`` of the larger endpoint, so a rounding-level restatement is
+    not reported as accumulation. A brand-new or fully exited position is always
+    material. Missing counts are "flat" — never guessed.
+    """
+    if shares0 is None or shares1 is None:
+        return "flat"
+    delta = shares1 - shares0
+    if delta == 0:
+        return "flat"
+    base = max(abs(shares0), abs(shares1))
+    if base <= 0:
+        return "flat"
+    if abs(delta) / base < rel_threshold:
+        return "flat"
+    return "up" if delta > 0 else "down"
+
+
+def consensus_from_counts(
+    n_up: int, n_down: int, evaluated: int, threshold: float,
+) -> tuple[str, float]:
+    """The single definition of cross-source consensus (extracted, bug#00124).
+
+    bug#00107（使用者審查 #1）：需嚴格多於反向才算共識。舊版 `pct_up >= pct_down`
+    讓 2 上 2 下的平手一律判為「up」，注入系統性多頭偏誤；平手一律
+    歸 mixed，多空對稱處理。Both the headline comparison and the quarter-by-
+    quarter consistency pass call this, so the two can never drift apart.
+    """
+    if evaluated <= 0:
+        return "flat", 0.0
+    pct_up, pct_down = n_up / evaluated, n_down / evaluated
+    if not n_up and not n_down:
+        return "flat", 0.0
+    if pct_up >= threshold and pct_up > pct_down:
+        return "up", pct_up
+    if pct_down >= threshold and pct_down > pct_up:
+        return "down", pct_down
+    return "mixed", max(pct_up, pct_down)
+
+
+def _aggregate_allocation(contribs: list[dict]) -> dict:
+    """Share of the combined book this position occupies, at each endpoint.
+
+    Aggregated as sum(position value) / sum(fund AUM) rather than as an average
+    of per-fund weights: a 5% position in a $1B fund and a 0.1% position in a
+    $600B fund are not two comparable "weights" to be averaged, they are two
+    very different dollar commitments. Returns None where the inputs are not
+    all real — an allocation figure is only meaningful if both the numerator
+    and the denominator are complete.
+    """
+    def side(value_key: str, aum_key: str) -> Optional[float]:
+        pairs = [
+            (c.get(value_key), c.get(aum_key)) for c in contribs
+            if c.get(value_key) is not None and c.get(aum_key)
+        ]
+        if len(pairs) != len(contribs) or not pairs:
+            return None
+        total_aum = sum(aum for _, aum in pairs)
+        if total_aum <= 0:
+            return None
+        return sum(value for value, _ in pairs) / total_aum * 100.0
+
+    start = side("value_start", "aum_earliest")
+    end = side("value_end", "aum_latest")
+    return {
+        "start_pct": start,
+        "end_pct": end,
+        "delta_pp": (end - start) if (start is not None and end is not None) else None,
+    }
+
+
+def _sum_or_none(values) -> Optional[float]:
+    """Sum of the real values, or None when there are none — so "no data" never
+    collapses into a confident 0."""
+    real = [v for v in values if v is not None]
+    return sum(real) if real else None
+
+
 def _median(xs: list) -> Optional[float]:
     xs = sorted(x for x in xs if x is not None)
     n = len(xs)
@@ -35,12 +170,15 @@ def _median(xs: list) -> Optional[float]:
     return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
 
 
-def _endpoint_view(snaps_subset: list[dict]) -> "tuple[dict, dict, Optional[float]]":
+def _endpoint_view(snaps_subset: list[dict]) -> tuple[dict, dict, dict, dict, Optional[float], dict]:
     """bug#00110（使用者審查 #4）：把視窗一端的數筆快照聚合成穩健代表值——每檔持股
     的權重／價格取該端各快照的中位數、AUM 取中位數，避免單一異常端點快照翻轉整個
     方向訊號。缺真實值者不臆造（僅對有值者取中位數）。"""
     weights: dict[str, list] = {}
     prices: dict[str, list] = {}
+    shares: dict[str, list] = {}
+    values: dict[str, list] = {}
+    metadata: dict[str, dict] = {}
     aums: list = []
     for s in snaps_subset:
         a = s.get("aum")
@@ -56,9 +194,28 @@ def _endpoint_view(snaps_subset: list[dict]) -> "tuple[dict, dict, Optional[floa
             p = h.get("price")
             if p is not None:
                 prices.setdefault(sym, []).append(p)
-    return ({k: _median(v) for k, v in weights.items()},
-            {k: _median(v) for k, v in prices.items()},
-            _median(aums))
+            sh = h.get("shares")
+            if sh is not None:
+                shares.setdefault(sym, []).append(sh)
+            value = h.get("value")
+            if value is not None:
+                values.setdefault(sym, []).append(value)
+            metadata[sym] = {
+                key: h.get(key)
+                for key in (
+                    "name", "issuer", "cusip", "figi", "instrument_type",
+                    "option_type", "expiration", "strike",
+                )
+                if h.get(key) is not None
+            }
+    return (
+        {k: _median(v) for k, v in weights.items()},
+        {k: _median(v) for k, v in prices.items()},
+        {k: _median(v) for k, v in shares.items()},
+        {k: _median(v) for k, v in values.items()},
+        _median(aums),
+        metadata,
+    )
 
 
 def compute_symbol_trends(
@@ -67,20 +224,43 @@ def compute_symbol_trends(
     flat_threshold_pp: float = 0.5,
     consensus_threshold: float = 0.5,
     as_of: Optional[str] = None,
+    *,
+    endpoint_k: int = 3,
+    reported_share_signal: bool = False,
+    rel_share_threshold: float = 0.05,
 ) -> dict:
     """Compute cross-ETF holding-weight trend consensus from real daily snapshots.
+
+    bug#00123 keyword-only additions:
+
+      - ``endpoint_k`` caps how many snapshots each window endpoint aggregates
+        into a robust median. Quarterly sources (SEC 13F) must pass ``1`` so the
+        latest filing is compared against the immediately preceding one instead
+        of blending several quarters into a single "endpoint".
+      - ``reported_share_signal`` switches direction classification to the exact
+        **reported** share count. Yahoo ETF top-holdings never disclose shares,
+        so `share_dir` there is derived from AUM x weight / price and can only
+        corroborate the weight signal — hence the AND rule below. SEC 13F does
+        report the exact share count per position, so requiring a >=0.5pp weight
+        move as well would discard real, exactly-reported trades (a 15,000-line
+        13F portfolio has per-position weights around 0.001pp; no genuine trade
+        can ever clear a 0.5pp bar). With this flag the reported share delta is
+        the signal and ``rel_share_threshold`` is the materiality filter.
+      - ``rel_share_threshold`` is the minimum |share delta| / max(shares) that
+        counts as a real position change under ``reported_share_signal``.
 
     snapshots_by_etf: {etf_symbol: [{"date": "YYYY-MM-DD", "aum": float|None,
                        "holdings": [{"symbol": str, "weight": float}, ...]}, ...]}
                        (as returned by storage.load_etf_daily_snapshots; order doesn't
                        matter, this function re-sorts and re-filters defensively.)
 
-    For each ETF with >= 2 real snapshots inside the trailing `window_days`, compares
-    its earliest vs. latest snapshot in that window. For every holding symbol seen in
-    either snapshot (a symbol dropping out of the top list between snapshots is
-    treated as its weight going to 0 — a real observed signal, not a guess), the
-    direction is classified using **two independent real signals that must agree**
-    (bug#00061 follow-up — a user-requested fix for a representativeness gap):
+    For each ETF with >= 2 real observations inside the trailing `window_days`,
+    compares its earliest vs. latest observation for the period-status table.
+    Directional signals additionally require >= 2 distinct disclosed holdings
+    states. For every holding symbol seen in either endpoint (a symbol dropping out
+    of the top list is treated as its weight going to 0 — a real observed signal,
+    not a guess), direction is classified using **two independent real signals that
+    must agree** (bug#00061 follow-up):
 
       - share_dir:  sign of the real share-count delta (shares1 - shares0), each
                     computed from real AUM x weight / real holding price at that
@@ -117,10 +297,9 @@ def compute_symbol_trends(
       - share_delta: real share-count delta as described above (None when a real
         price wasn't available for either snapshot — never fabricated/guessed).
 
-    Returns a dict with `symbols` (multiplicity-oriented, see rank_symbol_trends)
-    and `raw_contributions` (every individual etf/symbol up|down event with its
-    value_delta, unfiltered by consensus — see rank_scale_events for the
-    single-or-multi-fund "large position" view).
+    Returns a dict with `symbols` (all comparable positions for the status table;
+    directional ranking remains in rank_symbol_trends) and `raw_contributions`
+    (every individual etf/symbol up|down|flat period result with value_delta).
     """
     as_of_date = as_of or taiwan_now().strftime("%Y-%m-%d")
     cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=window_days)).strftime("%Y-%m-%d")
@@ -129,25 +308,55 @@ def compute_symbol_trends(
     all_contributions: list[dict] = []
 
     for etf_sym, raw_snaps in snapshots_by_etf.items():
-        snaps = sorted(_filter_window(raw_snaps or [], cutoff_date), key=lambda s: s.get("date", ""))
-        days_in_window = len(snaps)
-        ready = days_in_window >= 2
+        observations = sorted(
+            _filter_window(raw_snaps or [], cutoff_date),
+            key=lambda s: s.get("date", ""),
+        )
+        snaps = _collapse_unchanged_states(observations)
+        observations_in_window = len(observations)
+        distinct_states = len(snaps)
+        comparable = observations_in_window >= 2
+        ready = distinct_states >= 2
         etf_coverage[etf_sym] = {
-            "days_in_window": days_in_window,
-            "first_date": snaps[0]["date"] if snaps else None,
-            "last_date": snaps[-1]["date"] if snaps else None,
+            # Keep the legacy field for callers, but distinguish raw daily
+            # observations from independently disclosed portfolio states.
+            "days_in_window": observations_in_window,
+            "observations_in_window": observations_in_window,
+            "distinct_states": distinct_states,
+            "comparable": comparable,
+            "first_date": observations[0]["date"] if observations else None,
+            "last_date": observations[-1]["date"] if observations else None,
             "ready": ready,
+            # bug#00123: a single disclosed state across the whole window means
+            # the upstream provider has not published a new portfolio since
+            # `state_since` — that is a source-freshness fact, not a measured
+            # "no change". Callers must be able to say so instead of printing a
+            # row of zeroes that looks like a completed comparison.
+            "source_unchanged": comparable and not ready,
+            "state_since": (
+                observations[0]["date"] if (observations and not ready) else None
+            ),
+            "state_unchanged_days": (
+                _date_span_days(observations[0]["date"], observations[-1]["date"])
+                if (observations and not ready) else None
+            ),
         }
-        if not ready:
+        if not comparable:
             continue
 
-        earliest, latest = snaps[0], snaps[-1]
+        # A repeated disclosed state is still a useful period observation for
+        # the detail table (for example, "no holdings change" while exposure
+        # value moved with AUM). It must not make the ETF signal-ready. Use raw
+        # endpoints for that flat status, and distinct states only when there is
+        # a real state transition eligible for directional analysis.
+        comparison_snaps = snaps if ready else observations
+        earliest, latest = comparison_snaps[0], comparison_snaps[-1]
         # bug#00110（使用者審查 #4）：不再用單一頭尾快照，改取視窗兩端各 k 筆的中位數
         # 代表值（k = min(3, len//2)，兩端不重疊；只有 2 筆時退化為原本的兩點比較），
         # 降低單一異常端點快照翻轉整個方向訊號的脆弱度。日期標籤仍取真實頭尾（span）。
-        k = max(1, min(3, len(snaps) // 2))
-        early_w, early_price, early_aum = _endpoint_view(snaps[:k])
-        late_w, late_price, late_aum = _endpoint_view(snaps[-k:])
+        k = max(1, min(endpoint_k, len(comparison_snaps) // 2))
+        early_w, early_price, early_shares, early_values, early_aum, early_meta = _endpoint_view(comparison_snaps[:k])
+        late_w, late_price, late_shares, late_values, late_aum, late_meta = _endpoint_view(comparison_snaps[-k:])
 
         for sym in set(early_w) | set(late_w):
             w0 = early_w.get(sym) or 0.0
@@ -161,8 +370,18 @@ def compute_symbol_trends(
             else:
                 weight_dir = "flat"
 
-            shares0 = estimate_shares(sym, w0, early_aum, early_price.get(sym)) if w0 else None
-            shares1 = estimate_shares(sym, w1, late_aum, late_price.get(sym)) if w1 else None
+            if sym not in early_w:
+                shares0 = 0
+            elif sym in early_shares:
+                shares0 = early_shares[sym]
+            else:
+                shares0 = estimate_shares(sym, w0, early_aum, early_price.get(sym))
+            if sym not in late_w:
+                shares1 = 0
+            elif sym in late_shares:
+                shares1 = late_shares[sym]
+            else:
+                shares1 = estimate_shares(sym, w1, late_aum, late_price.get(sym))
             share_delta = (shares1 - shares0) if (shares0 is not None and shares1 is not None) else None
 
             if share_delta is None:
@@ -174,36 +393,104 @@ def compute_symbol_trends(
             else:
                 share_dir = "flat"
 
-            # bug#00061 follow-up (user decision): only count a move as real
-            # accumulation/reduction when the real share-count signal AND the
-            # weight/AUM-proportion signal agree — a symbol rallying in price
-            # with zero trading would otherwise show up as "up" on weight_dir
-            # alone. Any disagreement, or missing share_dir (no real price yet),
-            # is "flat" — excluded from consensus/scale ranking rather than guessed.
-            if share_dir == "up" and weight_dir == "up":
-                direction = "up"
-            elif share_dir == "down" and weight_dir == "down":
-                direction = "down"
+            if reported_share_signal:
+                # bug#00123: the filer reports the exact share count, so the
+                # share delta *is* the trade. Weight agreement is deliberately
+                # not required — in a several-thousand-line 13F the per-position
+                # weight is a rounding error against `flat_threshold_pp`, and a
+                # position's weight also moves purely because the rest of the
+                # portfolio moved. Materiality comes from the relative size of
+                # the reported share change instead.
+                direction = _reported_share_direction(
+                    shares0, shares1, rel_share_threshold,
+                )
             else:
-                direction = "flat"
+                # bug#00061 follow-up (user decision): only count a move as real
+                # accumulation/reduction when the real share-count signal AND the
+                # weight/AUM-proportion signal agree — a symbol rallying in price
+                # with zero trading would otherwise show up as "up" on weight_dir
+                # alone. Any disagreement, or missing share_dir (no real price yet),
+                # is "flat" — excluded from consensus/scale ranking rather than guessed.
+                if share_dir == "up" and weight_dir == "up":
+                    direction = "up"
+                elif share_dir == "down" and weight_dir == "down":
+                    direction = "down"
+                else:
+                    direction = "flat"
 
+            # bug#00123: value_delta must stay None when *every* input it could
+            # be derived from is byte-identical at both endpoints. The AUM
+            # fallback below otherwise evaluates to exactly 0.0 whenever the
+            # provider republished the same AUM and the same weight — printing
+            # "$0 net change" for what is really "the source never updated".
+            # Same principle as bug#00119: a degenerate computation must not be
+            # presented as a completed measurement.
             value_delta = None
-            if early_aum is not None and late_aum is not None:
-                value_delta = late_aum * (w1 / 100.0) - early_aum * (w0 / 100.0)
+            value_basis = None
+            if sym in early_values or sym in late_values:
+                value_delta = (late_values.get(sym) or 0.0) - (early_values.get(sym) or 0.0)
+                value_basis = "reported_value"
+            elif early_aum is not None and late_aum is not None:
+                if early_aum == late_aum and w0 == w1:
+                    value_delta, value_basis = None, "source_unchanged"
+                else:
+                    value_delta = late_aum * (w1 / 100.0) - early_aum * (w0 / 100.0)
+                    value_basis = "aum_weight"
 
-            all_contributions.append({
+            # bug#00123: money actually traded, not exposure revalued.
+            # |value_delta| was being reported as 買入/賣出總額, but a position
+            # whose share count fell 30% while its price rallied has a POSITIVE
+            # value_delta — it was then printed as "賣出 $1.3B" next to a
+            # +$1.3B net. When both the reported share count and the reported
+            # market value exist, |share delta| x implied price is the real
+            # transacted amount and cannot disagree with the direction.
+            trade_value = None
+            price_ref = None
+            for values, shares in ((late_values, late_shares), (early_values, early_shares)):
+                value_at, shares_at = values.get(sym), shares.get(sym)
+                if value_at and shares_at:
+                    price_ref = float(value_at) / float(shares_at)
+                    break
+            if price_ref and share_delta is not None:
+                trade_value = abs(float(share_delta)) * price_ref
+
+            # bug#00124: allocation view — the *share of the book* this position
+            # occupies at each endpoint. Money moves with price; allocation is
+            # what the manager actually chose. Derived from the reported value
+            # when there is one, otherwise from AUM x weight (identical
+            # arithmetic, so the two sources aggregate together).
+            value_start = early_values.get(sym)
+            if value_start is None and early_aum is not None:
+                value_start = early_aum * (w0 / 100.0)
+            value_end = late_values.get(sym)
+            if value_end is None and late_aum is not None:
+                value_end = late_aum * (w1 / 100.0)
+
+            contribution = {
                 "etf": etf_sym,
                 "symbol": sym,
                 "direction": direction,
+                "weight_start": round(w0, 6),
+                "weight_end": round(w1, 6),
+                "value_start": value_start,
+                "value_end": value_end,
+                "aum_earliest": early_aum,
                 "weight_delta": round(weight_delta, 4),
                 "share_delta": share_delta,
                 "value_delta": value_delta,
+                "trade_value": trade_value,
+                "value_basis": value_basis,
+                "source_unchanged": value_basis == "source_unchanged",
                 "aum_latest": late_aum,
                 "first_date": earliest["date"],
                 "last_date": latest["date"],
-            })
+            }
+            contribution.update(early_meta.get(sym) or {})
+            contribution.update(late_meta.get(sym) or {})
+            all_contributions.append(contribution)
 
     etfs_ready = [e for e, c in etf_coverage.items() if c["ready"]]
+    etfs_comparable = [e for e, c in etf_coverage.items() if c["comparable"]]
 
     # ── 多數性 (multiplicity): aggregate per held symbol across ETFs ───────────
     by_symbol: dict[str, list[dict]] = {}
@@ -219,18 +506,14 @@ def compute_symbol_trends(
         if evaluated == 0:
             continue
 
+        consensus, consensus_pct = consensus_from_counts(
+            len(etfs_up), len(etfs_down), evaluated, consensus_threshold,
+        )
         pct_up = len(etfs_up) / evaluated
         pct_down = len(etfs_down) / evaluated
-
-        # bug#00107（使用者審查 #1）：需嚴格多於反向才算共識。舊版 `pct_up >= pct_down`
-        # 讓 2 上 2 下的平手一律判為「up」，注入系統性多頭偏誤並經跨模型放大；平手
-        # （pct_up == pct_down）現一律歸 mixed，多空對稱處理。
-        if pct_up >= consensus_threshold and pct_up > pct_down:
-            consensus, consensus_pct, consensus_etfs = "up", pct_up, etfs_up
-        elif pct_down >= consensus_threshold and pct_down > pct_up:
-            consensus, consensus_pct, consensus_etfs = "down", pct_down, etfs_down
-        else:
-            consensus, consensus_pct, consensus_etfs = "mixed", max(pct_up, pct_down), []
+        consensus_etfs = (
+            etfs_up if consensus == "up" else etfs_down if consensus == "down" else []
+        )
 
         est_total_share_delta = None
         est_total_value_delta = None
@@ -242,7 +525,30 @@ def compute_symbol_trends(
             if vd:
                 est_total_value_delta = sum(abs(d) for d in vd)
 
+        # bug#00123: separate "compared two real states and nothing moved"
+        # (flat) from "the provider never published a second state" (stale).
+        # The old UI rendered both as 持平, which reads as an analysis result.
+        source_unchanged = all(c.get("source_unchanged") for c in contribs)
+        if consensus in ("up", "down"):
+            status = "signal"
+        elif source_unchanged:
+            status = "source_unchanged"
+        elif consensus == "mixed":
+            status = "mixed"
+        else:
+            status = "flat"
+
+        allocation = _aggregate_allocation(contribs)
+
         symbols_report[sym] = {
+            "status": status,
+            "source_unchanged": source_unchanged,
+            # 配置權重：這檔部位佔「所有納入比較的基金／申報人合計資產」的百分比，
+            # 期初與期末各一個真值。缺 AUM 或缺市值時回 None，不以單一基金權重
+            # 冒充整體配置。
+            "allocation_start_pct": allocation["start_pct"],
+            "allocation_end_pct": allocation["end_pct"],
+            "allocation_delta_pp": allocation["delta_pp"],
             "etfs_up": etfs_up,
             "etfs_down": etfs_down,
             "etfs_flat": etfs_flat,
@@ -253,6 +559,79 @@ def compute_symbol_trends(
             "consensus_pct": round(consensus_pct * 100, 1),
             "est_total_share_delta": est_total_share_delta,
             "est_total_value_delta": est_total_value_delta,
+            "buy_value": sum(
+                abs(c["value_delta"]) for c in contribs
+                if c["direction"] == "up" and c["value_delta"] is not None
+            ),
+            "sell_value": sum(
+                abs(c["value_delta"]) for c in contribs
+                if c["direction"] == "down" and c["value_delta"] is not None
+            ),
+            # Raw signed exposure change remains useful context even when the
+            # strict share+weight rule classifies the position as flat. It is
+            # deliberately not labelled as a purchase or sale because price/AUM
+            # movement can contribute to this number.
+            "net_value_delta": (
+                sum(c["value_delta"] for c in contribs if c["value_delta"] is not None)
+                if any(c["value_delta"] is not None for c in contribs)
+                else None
+            ),
+            # bug#00123: net of the *confirmed* buys and sells only. The raw
+            # figure above also moves with price, so it can carry the opposite
+            # sign to the consensus label (a filer whose share count barely
+            # changed still revalues) — printing those two side by side reads
+            # as a contradiction. Callers showing a direction column next to a
+            # money column should use this one.
+            # Transacted amounts (see `trade_value` above). None when the source
+            # does not report share counts, in which case callers fall back to
+            # the exposure-based buy_value/sell_value.
+            "buy_trade_value": _sum_or_none(
+                c.get("trade_value") for c in contribs if c["direction"] == "up"
+            ),
+            "sell_trade_value": _sum_or_none(
+                c.get("trade_value") for c in contribs if c["direction"] == "down"
+            ),
+            "confirmed_net_trade_value": _sum_or_none(
+                (
+                    c["trade_value"] if c["direction"] == "up" else -c["trade_value"]
+                )
+                for c in contribs
+                if c["direction"] in ("up", "down") and c.get("trade_value") is not None
+            ),
+            "confirmed_net_value_delta": (
+                sum(
+                    c["value_delta"] for c in contribs
+                    if c["direction"] in ("up", "down") and c["value_delta"] is not None
+                )
+                if any(
+                    c["direction"] in ("up", "down") and c["value_delta"] is not None
+                    for c in contribs
+                )
+                else None
+            ),
+            "first_date": min(
+                (c["first_date"] for c in contribs if c.get("first_date")),
+                default=None,
+            ),
+            "last_date": max(
+                (c["last_date"] for c in contribs if c.get("last_date")),
+                default=None,
+            ),
+            "position": next((
+                {
+                    key: c.get(key)
+                    for key in (
+                        "name", "issuer", "cusip", "figi", "instrument_type",
+                        "option_type", "expiration", "strike",
+                    )
+                    if c.get(key) is not None
+                }
+                for c in reversed(contribs)
+                if any(c.get(key) is not None for key in (
+                    "name", "issuer", "cusip", "figi", "instrument_type",
+                    "option_type", "expiration", "strike",
+                ))
+            ), {}),
         }
 
     ac_trends = compute_asset_class_trends(
@@ -261,17 +640,504 @@ def compute_symbol_trends(
         consensus_threshold=consensus_threshold, as_of=as_of_date,
     )
 
+    directional = [c for c in all_contributions if c["direction"] in ("up", "down")]
+    stale_sources = [e for e, c in etf_coverage.items() if c.get("source_unchanged")]
+    stale_spans = [
+        c["state_unchanged_days"] for c in etf_coverage.values()
+        if c.get("state_unchanged_days") is not None
+    ]
     return {
         "window_days": window_days,
         "as_of": as_of_date,
         "etf_coverage": etf_coverage,
+        # bug#00123: source-freshness is a first-class output. When every
+        # provider republished an unchanged portfolio all window long there is
+        # nothing to analyse, and the caller must say that instead of drawing a
+        # table of zeroes.
+        "source_freshness": {
+            "sources_total": len(etf_coverage),
+            "sources_comparable": len(etfs_comparable),
+            "sources_state_changed": len(etfs_ready),
+            "sources_unchanged": len(stale_sources),
+            "unchanged_sources": sorted(stale_sources),
+            "max_unchanged_days": max(stale_spans) if stale_spans else None,
+            "oldest_state_since": min(
+                (
+                    c["state_since"] for c in etf_coverage.values()
+                    if c.get("state_since")
+                ),
+                default=None,
+            ),
+            "all_sources_unchanged": bool(etfs_comparable) and not etfs_ready,
+        },
         "etfs_ready_count": len(etfs_ready),
+        "etfs_comparable_count": len(etfs_comparable),
         "etfs_total_count": len(etf_coverage),
         "etfs_ready_pct": round(len(etfs_ready) / len(etf_coverage) * 100, 1) if etf_coverage else 0.0,
+        "etfs_comparable_pct": (
+            round(len(etfs_comparable) / len(etf_coverage) * 100, 1)
+            if etf_coverage else 0.0
+        ),
         "symbols": symbols_report,
         "raw_contributions": all_contributions,
+        "flow_totals": {
+            "positions_bought": sum(1 for c in directional if c["direction"] == "up"),
+            "positions_sold": sum(1 for c in directional if c["direction"] == "down"),
+            "buy_value": sum(
+                abs(c["value_delta"]) for c in directional
+                if c["direction"] == "up" and c["value_delta"] is not None
+            ),
+            "sell_value": sum(
+                abs(c["value_delta"]) for c in directional
+                if c["direction"] == "down" and c["value_delta"] is not None
+            ),
+            "net_value_delta": (
+                sum(
+                    c["value_delta"] for c in all_contributions
+                    if c["value_delta"] is not None
+                )
+                if any(c["value_delta"] is not None for c in all_contributions)
+                else None
+            ),
+        },
         "asset_classes": ac_trends,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SEC 13F institutional quarter-over-quarter analysis (bug#00123)
+# ─────────────────────────────────────────────────────────────────────────────
+# Yahoo's ETF top-holdings feed refreshes on each fund's *disclosure* cadence,
+# not daily, and never discloses share counts — so on a 14-day window it can
+# produce no directional signal at all. SEC 13F filings are the opposite: fewer
+# observations (quarterly), but every line carries an exactly reported share
+# count and market value, which is precisely what the buy/sell/net columns need.
+# These helpers run the same consensus engine over 13F snapshots.
+
+# bug#00124 — why the observation window is expressed in *report periods*, not days.
+#
+# Form 13F-HR is due 45 days after each calendar quarter end. So between one
+# filing deadline (Q+45) and the next (Q+136), the second-newest report period
+# is somewhere between 136 and 227 days old. A fixed calendar window therefore
+# drifts in and out of usefulness:
+#
+#   window        days with >= 2 report periods (2026 simulation)
+#   4 months 122d    0.0%  — below the 136-day floor, can NEVER hold two periods
+#   6 months 183d   52.3%  — four blackout stretches of ~43 days every year
+#   8 months 243d  100.0%  — but only 18% of days reach a third period
+#  12 months 365d  100.0%  — and 100% of days reach three
+#
+# Hence: retain 12 months (four report periods, which also matches
+# storage.ANALYSIS_CACHE_RETENTION_DAYS), and never key the window off "today".
+INSTITUTION_HISTORY_QUARTERS = 4
+# The comparison itself stays quarter-over-quarter. Widening the *comparison*
+# to the full retained window would silently turn a quarterly trade signal into
+# a year-over-year drift measurement — a different question with a different
+# meaning. The extra retained quarters exist to judge *consistency*, not to
+# stretch the endpoints.
+INSTITUTION_QUARTERS_COMPARED = 2
+# 13F-HR statutory filing deadline, in days after the report period end.
+INSTITUTION_FILING_DEADLINE_DAYS = 45
+# Wide enough to span any two consecutive 13F report periods after the caller
+# has already trimmed to the quarters being compared.
+_INSTITUTION_WINDOW_DAYS = 4000
+
+
+def _institution_join_key(holding: dict) -> Optional[str]:
+    """Cross-filer join key for one 13F position.
+
+    Institutional snapshots key positions on ``figi or cusip`` (see
+    ``institutional.parse_13f_information_table``). That is stable per filer but
+    NOT comparable across filers: one manager reports a FIGI for a security and
+    another reports only the CUSIP, so the same holding lands under two
+    different keys and cross-institution consensus silently never forms. CUSIP
+    is mandatory on every 13F line, so it is the only identifier guaranteed to
+    be shared — prefer it, and fall back to the existing key otherwise.
+    """
+    suffix = holding.get("option_type") or holding.get("amount_type") or "SH"
+    cusip = holding.get("cusip")
+    if cusip:
+        return f"{cusip}:{suffix}"
+    return holding.get("symbol")
+
+
+def normalize_institution_snapshots(snapshots: list[dict]) -> list[dict]:
+    """Re-key one filer's snapshots onto the cross-filer CUSIP join key.
+
+    Pure transformation of the in-memory copy — the stored history log keeps its
+    original per-filer identifiers untouched.
+    """
+    out: list[dict] = []
+    for snapshot in snapshots or []:
+        holdings = []
+        for holding in snapshot.get("holdings") or []:
+            key = _institution_join_key(holding)
+            if not key:
+                continue
+            item = dict(holding)
+            item["symbol"] = key
+            holdings.append(item)
+        new_snapshot = dict(snapshot)
+        new_snapshot["holdings"] = holdings
+        out.append(new_snapshot)
+    return out
+
+
+def _latest_quarters(snapshots: list[dict], quarters: int) -> list[dict]:
+    """The newest `quarters` distinct report dates, oldest first."""
+    ordered = sorted(
+        (s for s in (snapshots or []) if s.get("date")),
+        key=lambda s: s["date"],
+    )
+    seen: dict[str, dict] = {}
+    for snapshot in ordered:
+        seen[snapshot["date"]] = snapshot  # last write wins per report date
+    dates = sorted(seen)[-max(2, quarters):]
+    return [seen[d] for d in dates]
+
+
+def _next_quarter_end(after: _date_cls) -> _date_cls:
+    for month, day in ((3, 31), (6, 30), (9, 30), (12, 31)):
+        candidate = _date_cls(after.year, month, day)
+        if candidate > after:
+            return candidate
+    return _date_cls(after.year + 1, 3, 31)
+
+
+def institution_provenance(
+    snapshots_by_entity: dict[str, list[dict]],
+    compared: list[str],
+    today: Optional[str] = None,
+) -> dict:
+    """Answer "when is this data from, and when does it change?" — explicitly.
+
+    A 13F row describes a quarter that ended months ago and was published weeks
+    after that. Both dates matter and neither is guessable from the other, so
+    both are surfaced. `filing_date_estimated` marks periods stored before the
+    filing date was persisted (bug#00124): the statutory deadline is shown, and
+    labelled as the deadline rather than passed off as the real filing date.
+    """
+    as_of = _date_cls.fromisoformat(today) if today else taiwan_now().date()
+    filing_dates: dict[str, str] = {}
+    for snaps in (snapshots_by_entity or {}).values():
+        for snapshot in snaps or []:
+            date_str, filed = snapshot.get("date"), snapshot.get("filing_date")
+            if date_str and filed:
+                # The last filer to report this period sets the public date.
+                filing_dates[date_str] = max(filing_dates.get(date_str, ""), filed)
+
+    def deadline(period: str) -> str:
+        return (
+            _date_cls.fromisoformat(period)
+            + timedelta(days=INSTITUTION_FILING_DEADLINE_DAYS)
+        ).isoformat()
+
+    periods = []
+    for period in compared:
+        real = filing_dates.get(period)
+        periods.append({
+            "report_date": period,
+            "filing_date": real or deadline(period),
+            "filing_date_estimated": real is None,
+        })
+
+    latest = compared[-1] if compared else None
+    next_period = (
+        _next_quarter_end(_date_cls.fromisoformat(latest)) if latest else None
+    )
+    return {
+        "periods": periods,
+        "report_date_from": compared[0] if compared else None,
+        "report_date_to": latest,
+        "data_age_days": (
+            (as_of - _date_cls.fromisoformat(latest)).days if latest else None
+        ),
+        "filing_lag_days": INSTITUTION_FILING_DEADLINE_DAYS,
+        "next_report_date": next_period.isoformat() if next_period else None,
+        "next_filing_due": (
+            (next_period + timedelta(days=INSTITUTION_FILING_DEADLINE_DAYS)).isoformat()
+            if next_period else None
+        ),
+        # 13F discloses quarter-end snapshots only — never a trade date. The
+        # honest statement about timing is an interval, not a point.
+        "trade_window_from": compared[0] if compared else None,
+        "trade_window_to": latest,
+        "trade_date_disclosed": False,
+    }
+
+
+def _quarter_consistency(
+    snapshots_by_entity: dict[str, list[dict]],
+    latest_direction_by_symbol: dict[str, str],
+    consensus_threshold: float,
+    rel_share_threshold: float,
+    max_periods: int = INSTITUTION_HISTORY_QUARTERS,
+) -> dict[str, dict]:
+    """How many of the retained quarter-over-quarter transitions moved the same
+    way as the most recent one.
+
+    "Three consecutive quarters of accumulation" and "accumulated once, this
+    quarter" are different strength claims, and only the retained history can
+    tell them apart. This is why the window keeps four periods while the
+    headline comparison stays on the latest two.
+    """
+    periods = sorted({
+        s["date"] for snaps in (snapshots_by_entity or {}).values()
+        for s in (snaps or []) if s.get("date")
+    })[-max_periods:]
+    if len(periods) < 3:
+        return {}
+
+    def shares_at(snaps: list[dict], period: str) -> dict[str, float]:
+        for snapshot in snaps or []:
+            if snapshot.get("date") == period:
+                return {
+                    h["symbol"]: h.get("shares")
+                    for h in snapshot.get("holdings") or []
+                    if h.get("symbol")
+                }
+        return {}
+
+    transitions: list[dict[str, str]] = []
+    for older, newer in zip(periods, periods[1:]):
+        # Direction-only pass: consistency needs the consensus *label* per
+        # period, not allocation/trade-value maths. Re-running the full engine
+        # once per transition tripled the screen's load time for numbers that
+        # are then thrown away.
+        counts: dict[str, list[int]] = {}
+        for snaps in snapshots_by_entity.values():
+            before, after = shares_at(snaps, older), shares_at(snaps, newer)
+            if not before or not after:
+                continue
+            for symbol in set(before) | set(after):
+                direction = _reported_share_direction(
+                    before.get(symbol, 0), after.get(symbol, 0), rel_share_threshold,
+                )
+                tally = counts.setdefault(symbol, [0, 0, 0])
+                tally[2] += 1
+                if direction == "up":
+                    tally[0] += 1
+                elif direction == "down":
+                    tally[1] += 1
+        transitions.append({
+            symbol: consensus_from_counts(
+                up, down, evaluated, consensus_threshold,
+            )[0]
+            for symbol, (up, down, evaluated) in counts.items()
+        })
+
+    out: dict[str, dict] = {}
+    for symbol, latest in latest_direction_by_symbol.items():
+        if latest not in ("up", "down"):
+            continue
+        same = sum(1 for t in transitions if t.get(symbol) == latest)
+        out[symbol] = {
+            "same_direction_quarters": same,
+            "transitions_evaluated": len(transitions),
+        }
+    return out
+
+
+def compute_institution_trends(
+    snapshots_by_entity: dict[str, list[dict]],
+    quarters: int = INSTITUTION_QUARTERS_COMPARED,
+    consensus_threshold: float = 0.5,
+    rel_share_threshold: float = 0.05,
+    as_of: Optional[str] = None,
+    history_quarters: int = INSTITUTION_HISTORY_QUARTERS,
+    today: Optional[str] = None,
+) -> dict:
+    """Quarter-over-quarter 13F consensus across institutional filers.
+
+    Each filer is trimmed to its newest `quarters` report periods and compared
+    endpoint-to-endpoint (``endpoint_k=1`` — quarterly filings must not be
+    median-blended, the previous filing IS the baseline). Direction comes from
+    the exactly reported share count (``reported_share_signal=True``); the
+    weight-agreement rule that guards the estimated ETF path would reject every
+    real trade here, since a multi-thousand-line portfolio has no position
+    anywhere near the 0.5pp weight bar.
+
+    `history_quarters` (default 4 = 12 months) is retained *beyond* the compared
+    pair purely to compute directional consistency; see the module constants for
+    why a calendar-day window cannot do this job.
+    """
+    normalized = {
+        entity: normalize_institution_snapshots(snaps)
+        for entity, snaps in (snapshots_by_entity or {}).items()
+    }
+    retained = {
+        entity: _latest_quarters(snaps, history_quarters)
+        for entity, snaps in normalized.items()
+    }
+    trimmed = {
+        entity: _latest_quarters(snaps, quarters)
+        for entity, snaps in normalized.items()
+    }
+    trimmed = {e: w for e, w in trimmed.items() if len(w) >= 2}
+
+    if not trimmed:
+        return {
+            "window_days": 0, "as_of": as_of or taiwan_now().strftime("%Y-%m-%d"),
+            "etf_coverage": {}, "etfs_ready_count": 0, "etfs_comparable_count": 0,
+            "etfs_total_count": 0, "etfs_ready_pct": 0.0, "etfs_comparable_pct": 0.0,
+            "symbols": {}, "raw_contributions": [], "quarters_compared": quarters,
+            "report_dates": [], "consistency": {},
+            "provenance": institution_provenance({}, [], today=today),
+            "flow_totals": {
+                "positions_bought": 0, "positions_sold": 0,
+                "buy_value": 0, "sell_value": 0, "net_value_delta": None,
+            },
+            "source_freshness": {
+                "sources_total": 0, "sources_comparable": 0,
+                "sources_state_changed": 0, "sources_unchanged": 0,
+                "unchanged_sources": [], "max_unchanged_days": None,
+                "oldest_state_since": None, "all_sources_unchanged": False,
+            },
+            "asset_classes": {},
+        }
+
+    latest_date = max(s[-1]["date"] for s in trimmed.values())
+    report = compute_symbol_trends(
+        trimmed,
+        window_days=_INSTITUTION_WINDOW_DAYS,
+        flat_threshold_pp=0.0,
+        consensus_threshold=consensus_threshold,
+        as_of=as_of or latest_date,
+        endpoint_k=1,
+        reported_share_signal=True,
+        rel_share_threshold=rel_share_threshold,
+    )
+    report["quarters_compared"] = quarters
+    report["history_quarters"] = history_quarters
+    report["rel_share_threshold"] = rel_share_threshold
+    report["report_dates"] = sorted({
+        s["date"] for snaps in trimmed.values() for s in snaps
+    })
+    report["retained_report_dates"] = sorted({
+        s["date"] for snaps in retained.values() for s in snaps
+    })[-history_quarters:]
+    report["provenance"] = institution_provenance(
+        snapshots_by_entity, report["report_dates"], today=today,
+    )
+    report["consistency"] = _quarter_consistency(
+        retained,
+        {s: info["consensus"] for s, info in report["symbols"].items()},
+        consensus_threshold,
+        rel_share_threshold,
+        max_periods=history_quarters,
+    )
+    for symbol, info in report["symbols"].items():
+        info.update(report["consistency"].get(symbol) or {})
+    return report
+
+
+# ── Offline issuer-name → ticker resolution ──────────────────────────────────
+# 13F lines carry an issuer name, CUSIP and (sometimes) FIGI, but never a
+# ticker; the user's own positions and sector groups are keyed by ticker. The
+# ETF top-holdings snapshots already on disk carry BOTH (ticker + company name),
+# so they can seed an offline index. Anything the index cannot resolve keeps its
+# issuer name and is simply not claimed to be a known ticker.
+
+_NAME_NOISE_TOKENS = frozenset({
+    "INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY", "COMPANIES",
+    "LTD", "LIMITED", "PLC", "LP", "LLC", "SA", "NV", "AG", "SE",
+    "HOLDING", "HOLDINGS", "GROUP", "GRP", "THE", "NEW", "ORD", "SHS",
+    "CLASS", "CL", "A", "B", "C", "COM", "COMMON", "STOCK", "SHARES",
+    "ADR", "ADS", "SPON", "SPONSORED", "TR", "TRUST", "REIT", "&", "DEL",
+})
+
+# SEC filers abbreviate aggressively ("TAIWAN SEMICONDUCTOR MFG"), fund data
+# providers spell it out ("Taiwan Semiconductor Manufacturing"). Expanding a
+# short list of abbreviations is what makes the two sides comparable at all.
+_NAME_ABBREVIATIONS = {
+    "MFG": "MANUFACTURING",
+    "TECH": "TECHNOLOGY",
+    "TECHS": "TECHNOLOGIES",
+    "INTL": "INTERNATIONAL",
+    "NATL": "NATIONAL",
+    "PHARMS": "PHARMACEUTICALS",
+    "PHARM": "PHARMACEUTICAL",
+    "SYS": "SYSTEMS",
+    "COMM": "COMMUNICATIONS",
+    "COMMS": "COMMUNICATIONS",
+    "IND": "INDUSTRIES",
+    "INDS": "INDUSTRIES",
+    "SVCS": "SERVICES",
+    "RES": "RESOURCES",
+    "FINL": "FINANCIAL",
+    "ELEC": "ELECTRIC",
+    "MTRS": "MOTORS",
+    "LABS": "LABORATORIES",
+    "SEMICON": "SEMICONDUCTOR",
+}
+
+
+def normalize_company_name(name: Optional[str]) -> str:
+    """Comparable form of a company name: uppercase alphanumerics, common SEC
+    abbreviations expanded, legal-form and share-class noise words removed."""
+    import re
+    cleaned = re.sub(r"[^A-Z0-9 ]+", " ", (name or "").upper())
+    tokens = [
+        _NAME_ABBREVIATIONS.get(t, t)
+        for t in cleaned.split()
+        if t and t not in _NAME_NOISE_TOKENS
+    ]
+    return " ".join(t for t in tokens if t not in _NAME_NOISE_TOKENS)
+
+
+def build_ticker_name_index(snapshots_by_etf: dict[str, list[dict]]) -> dict[str, str]:
+    """{normalized company name: ticker} from real ETF holdings snapshots.
+
+    Both the full normalized name and its leading two tokens are indexed, so
+    "TAIWAN SEMICONDUCTOR MANUFACTURING" also answers to "TAIWAN SEMICONDUCTOR".
+    Ambiguous keys (two different tickers claiming the same string) are dropped
+    rather than resolved by guesswork — a wrong ticker here would mis-file a
+    position into the user's "positions I hold" tier.
+    """
+    full: dict[str, set] = {}
+    prefix: dict[str, set] = {}
+    for snaps in (snapshots_by_etf or {}).values():
+        for snapshot in snaps or []:
+            for holding in snapshot.get("holdings") or []:
+                ticker, name = holding.get("symbol"), holding.get("name")
+                if not ticker or not name or ":" in str(ticker):
+                    continue
+                key = normalize_company_name(name)
+                if not key:
+                    continue
+                upper = str(ticker).upper()
+                full.setdefault(key, set()).add(upper)
+                tokens = key.split()
+                if len(tokens) > 2:
+                    prefix.setdefault(" ".join(tokens[:2]), set()).add(upper)
+
+    index = {k: next(iter(v)) for k, v in prefix.items() if len(v) == 1}
+    index.update({k: next(iter(v)) for k, v in full.items() if len(v) == 1})
+    return index
+
+
+def resolve_position_ticker(position: dict, name_index: dict[str, str]) -> Optional[str]:
+    """Best-effort ticker for one analysed position, or None.
+
+    ETF-sourced positions already are tickers. 13F-sourced positions are matched
+    on their normalized issuer name (exact first, then the leading two tokens);
+    an unmatched issuer returns None so callers render the issuer name instead
+    of inventing a ticker.
+    """
+    symbol = str(position.get("symbol") or "")
+    if symbol and ":" not in symbol:
+        return symbol.upper()
+    index = name_index or {}
+    for field in ("issuer", "name"):
+        key = normalize_company_name(position.get(field))
+        if not key:
+            continue
+        if key in index:
+            return index[key]
+        tokens = key.split()
+        if len(tokens) > 2 and " ".join(tokens[:2]) in index:
+            return index[" ".join(tokens[:2])]
+    return None
 
 
 _ASSET_CLASS_NAMES = {
@@ -375,6 +1241,7 @@ def rank_symbol_trends(
     items = [
         (sym, info) for sym, info in report.get("symbols", {}).items()
         if info["etfs_evaluated"] >= min_etfs_evaluated
+        and (info.get("etfs_up") or info.get("etfs_down"))
     ]
     items.sort(
         key=lambda kv: (
@@ -433,21 +1300,28 @@ def _etf_backtest_section(direction: str, backtest: "Optional[dict]"):
                      "Bonferroni 多重比較調整）。可評估訊號 < 20 時誠實標『資料累積中』。"))
 
 
-def _etf_stance_section(sym: str, up: bool, stance: dict):
-    """與使用者部位方向一致性的第三層 section（bug#00117）。無部位資料則回 None。"""
-    from .shared import _section
+def _etf_position_note(sym: str, up: bool, stance: dict) -> "Optional[str]":
+    """與使用者部位方向一致性的一句話。無部位資料或賣出且未持有則回 None。"""
     if not stance:
         return None
     held = stance.get(sym.upper())
     signal_dir = "多" if up else "空"
     if held == "混合":
-        note = "你在此標的多空部位並存。"
-    elif held is not None:
-        note = (f"與你目前偏{held}的部位方向一致。" if held == signal_dir
-                else f"⚠️ 與你目前偏{held}的部位方向相反，留意是否調節。")
-    elif up:
-        note = "你尚未持有此標的，可留意是否符合進場條件。"
-    else:
+        return "你在此標的多空部位並存。"
+    if held is not None:
+        if held == signal_dir:
+            return f"與你目前偏{held}的部位方向一致。"
+        return f"與你目前偏{held}的部位方向相反，留意是否調節。"
+    if up:
+        return "你尚未持有此標的，可留意是否符合進場條件。"
+    return None
+
+
+def _etf_stance_section(sym: str, up: bool, stance: dict):
+    """與使用者部位方向一致性的第三層 section（bug#00117）。無部位資料則回 None。"""
+    from .shared import _section
+    note = _etf_position_note(sym, up, stance)
+    if not note:
         return None
     return _section("與你的部位比對", substitution=note,
                     explanation="以你目前持倉的淨多空立場（position_stance_by_symbol）與此訊號方向交叉比對，作為建設性提示，非加減碼指令。")
@@ -467,6 +1341,7 @@ def generate_etf_recommendations(
     stance = position_stance_by_symbol(positions) if positions else {}
     window = report.get("window_days", 14)
     recs: list = []
+    asset_recs: list = []
 
     # 1. 大類資產輪動共識 (Asset-Class Allocation Consensus)
     ac_data = (report.get("asset_classes") or {}).get("classes", {})
@@ -476,7 +1351,7 @@ def generate_etf_recommendations(
             verb = "增碼" if up else "減碼"
             n = len(info["etfs_up"] if up else info["etfs_down"])
             action_desc = "機構資金轉向風險配置/加碼" if (up and cls_key == "stock") else "機構資金防守/轉向避險資產" if (up and cls_key in ("cash", "bond")) else "機構適度減碼防守性資產" if (not up and cls_key in ("cash", "bond")) else "機構籌碼調整"
-            recs.append(Recommendation(
+            asset_recs.append(Recommendation(
                 rec_id=f"etf_ac:{cls_key}", category="etf",
                 direction="多" if up else "空",
                 verdict=(f"🌐 【大類資產輪動】{info['consensus_pct']:.0f}% 主動式 ETF 同步{verb}"
@@ -512,14 +1387,25 @@ def generate_etf_recommendations(
         if stance_sec:
             secs.append(stance_sec)
         secs.append(_etf_backtest_section("up" if up else "down", backtest))
+        basis = (f"跨基金多數性共識 {info['consensus_pct']:.0f}% 一致，且每檔皆為真實股數變化與權重變化"
+                 f"同向才計入。")
+        position_note = _etf_position_note(sym, up, stance)
+        if position_note:
+            basis = f"{basis} {position_note}"
+        period = _period_label(info.get("first_date"), info.get("last_date"))
+        period_s = f"（{period}）" if period != "—" else ""
         recs.append(Recommendation(
             rec_id=f"etf_sym:{sym}", category="etf",
             direction="多" if up else "空",
-            verdict=f"{emoji}{sym}：{n}/{info['etfs_evaluated']} 檔追蹤中的主動式 ETF {verb}",
-            basis=(f"跨基金多數性共識 {info['consensus_pct']:.0f}% 一致，且每檔皆為真實股數變化與權重變化"
-                   f"同向才計入。"),
+            verdict=f"{emoji}{sym}：{n}/{info['etfs_evaluated']} 檔追蹤中的主動式 ETF {verb}{period_s}",
+            basis=basis,
             detail_sections=secs,
         ))
+
+    # Asset-class rotation is context, not a substitute for a named position.
+    # Append it only after exact security-level buy/sell consensus so a generic
+    # stockPosition row cannot crowd the requested position breakdown out.
+    recs.extend(asset_recs)
 
     # 3. 規模性大額變動
     for c in rank_scale_events(report, top_n=top_n):
@@ -559,8 +1445,8 @@ def generate_etf_conclusions(
 # Per-ETF active stock-selection tilt + daily cross-fund breadth stance
 # ─────────────────────────────────────────────────────────────────────────────
 # 使用者需求（2026-07）：「透過各 ETF 主動選股，觀察出趨勢並且 by daily check 顯示
-# 多空建議」。現行 compute_symbol_trends 只有「個股跨基金共識」與「跨模型整體」兩端，
-# 缺少中間層——每一檔 ETF 自己這段視窗在主動加/減什麼、淨傾向偏多還偏空。此層補上
+# 多空建議」。現行 compute_symbol_trends 只有「個股跨基金共識」，缺少每一檔 ETF
+# 自己這段視窗在主動加/減什麼、淨傾向偏多還偏空。此層補上
 # 該視圖，並把各檔傾向聚合成一個「每日主動選股多空廣度」讀數。
 #
 # 紀律不變：不重算、不打網路——完全從 compute_symbol_trends() 已算好的同一份 report
@@ -604,7 +1490,7 @@ def compute_etf_selection_tilt(
         net_score = ((len(ups) - len(downs)) / evaluated) if evaluated else 0.0
         value_net = sum(
             (c["value_delta"] or 0.0)
-            * (1 if c["direction"] == "up" else -1 if c["direction"] == "down" else 0)
+            if c["direction"] in ("up", "down") else 0.0
             for c in cs
         )
         if moved == 0:
@@ -665,48 +1551,381 @@ def compute_etf_selection_tilt(
     }
 
 
+def _etf_window_label(tilt_or_report: dict | None) -> str:
+    days = (tilt_or_report or {}).get("window_days") or 14
+    return f"近 {days} 日"
+
+
 def etf_stance_recommendation(tilt: dict, backtest: "Optional[dict]" = None) -> "list":
-    """每日主動選股多空廣度 stance 的三層結構化建議（bug#00117）。回傳 list（0 或 1 則），
-    與 etf_stance_phrase 共用同一 tilt 輸出，維持首頁卡片與分析框讀數一致。"""
+    """主動選股廣度 stance 的三層結構化建議（bug#00117）。回傳 list（0 或 1 則），
+    與 etf_stance_phrase 共用同一 tilt 輸出，維持首頁卡片與建議頁讀數一致。"""
     from .shared import Recommendation, _section
     agg = (tilt or {}).get("aggregate", {})
     n = agg.get("etfs_evaluated", 0)
     st = agg.get("stance")
+    window = _etf_window_label(tilt)
     if not n or st == "insufficient":
         return [Recommendation(
             rec_id="etf_stance", category="etf_stance", direction=None,
-            verdict="📊 每日主動選股多空：資料累積中（就緒 ETF 不足，無法判斷方向）",
+            verdict=f"📊 {window}主動選股傾向：資料累積中（就緒 ETF 不足，無法判斷方向）",
             basis="", detail_sections=[_section(
-                "每日主動選股多空廣度公式",
+                "主動選股廣度公式",
                 formula="廣度 breadth = (偏多 ETF 數 − 偏空 ETF 數) ÷ 就緒 ETF 數；就緒 ETF = 0 時誠實回『資料累積中』",
-                explanation="每檔 ETF 先算主動選股淨傾向 net_score，再跨就緒 ETF 聚合成廣度；資料不足絕不臆造方向。")],
+                explanation="每檔 ETF 先算主動選股淨傾向 net_score，再跨就緒 ETF 聚合成廣度；資料不足絕不臆造方向。視窗是可比較的揭露區間，不是日頻成交。")],
         )]
     label = {"long": "🟢 偏多", "short": "🔴 偏空", "neutral": "⚪ 中性觀望"}.get(st, "⚪ 中性觀望")
     direction = "多" if st == "long" else "空" if st == "short" else "觀望"
     secs = [_section(
-        "每日主動選股多空廣度公式",
+        "主動選股廣度公式",
         formula=("每檔 ETF：net_score = (加碼數 − 減碼數) ÷ 評估數（分母含持平以稀釋雜訊、偏保守）；"
                  "偏多/偏空門檻 |net_score| > 0.1。整體廣度 breadth = (偏多 ETF − 偏空 ETF) ÷ 就緒 ETF"),
         substitution=(f"= ({agg['etfs_long']} − {agg['etfs_short']}) ÷ {agg['etfs_evaluated']} "
                       f"= {agg['breadth']:+.2f} → {label}"),
-        explanation="完全從 compute_symbol_trends 的 raw_contributions（雙真實訊號同向的加/減碼事件）衍生，不重算、不打網路——補上『個股共識』與『跨模型整體』之間缺少的每檔選股淨傾向中間層。")]
+        explanation="完全從 compute_symbol_trends 的 raw_contributions（雙真實訊號同向的加/減碼事件）衍生，不重算、不打網路。Yahoo 前十大常為月頻揭露，未更新不是「今日無交易」。")]
     if st in ("long", "short"):
         secs.append(_etf_backtest_section("up" if st == "long" else "down", backtest))
     return [Recommendation(
         rec_id="etf_stance", category="etf_stance", direction=direction,
-        verdict=f"📊 每日主動選股多空：{label}",
+        verdict=f"📊 {window}主動選股傾向：{label}",
         basis=(f"就緒 ETF 中 {agg['etfs_long']} 檔偏多／{agg['etfs_short']} 檔偏空／{agg['etfs_neutral']} 檔中性，"
-               f"廣度 {agg['breadth']:+.2f} 映射整體多空。"),
+               f"廣度 {agg['breadth']:+.2f} 映射整體傾向。"),
         detail_sections=secs,
     )]
 
 
 def etf_stance_phrase(tilt: dict) -> str:
     """薄 wrapper（bug#00117）：以 etf_stance_recommendation 為單一真理來源，投影為一句話
-    （首頁卡片截取＋ActiveETFsScreen 分析框共用，兩處讀數一致）。"""
+    （首頁卡片截取＋ActiveETFsScreen 建議頁共用，兩處讀數一致）。"""
     from .shared import dashboard_line
     recs = etf_stance_recommendation(tilt)
-    return dashboard_line(recs[0]) if recs else "📊 每日主動選股多空：資料累積中"
+    return dashboard_line(recs[0]) if recs else "📊 近 14 日主動選股傾向：資料累積中"
+
+
+def recommendation_symbol(rec) -> "Optional[str]":
+    """從 rec_id 取出個股代碼。etf_sym:NVDA、etf_scale:ARKK:NVDA；其餘回 None。"""
+    rec_id = getattr(rec, "rec_id", "") or ""
+    if rec_id.startswith("etf_sym:"):
+        symbol = rec_id.split(":", 1)[1]
+        return symbol.upper() or None
+    if rec_id.startswith("etf_scale:"):
+        parts = rec_id.split(":")
+        if len(parts) >= 3 and parts[-1]:
+            return parts[-1].upper()
+    return None
+
+
+def partition_etf_recommendations(
+    recs: list,
+    held: "Optional[set]" = None,
+    tracked: "Optional[set]" = None,
+) -> "tuple[list, list]":
+    """把個股／規模性建議分成『與你持倉或追蹤相關』與『其他』。
+
+    大類資產輪動沒有單一代碼，一律歸其他。stance 建議不應傳入（由呼叫端單獨渲染）。
+    """
+    related_syms = {str(s).upper() for s in (held or set()) | (tracked or set())}
+    related: list = []
+    other: list = []
+    for rec in recs or []:
+        symbol = recommendation_symbol(rec)
+        if symbol and symbol in related_syms:
+            related.append(rec)
+        else:
+            other.append(rec)
+    return related, other
+
+
+def normalize_etf_watchlist_symbol(raw: str) -> "Optional[str]":
+    """Normalize a user-entered observation ticker. Taiwan listings are rejected."""
+    token = (raw or "").strip().upper().lstrip("$")
+    if not token:
+        return None
+    if token.endswith(".TW") or token.endswith(".TWO"):
+        return None
+    letters = token.replace(".", "")
+    if not letters.isalpha() or len(token) > 10:
+        return None
+    return token
+
+
+def suggested_etf_watchlist(positions) -> list[str]:
+    """US stock / ETF / option-underlying symbols from the user's positions."""
+    from .shared import is_taiwan_position
+    seen: list[str] = []
+    for position in positions or []:
+        if is_taiwan_position(position):
+            continue
+        raw = (
+            getattr(position, "underlying", None)
+            if getattr(position, "instrument_type", None) == "option"
+            else getattr(position, "symbol", None)
+        )
+        symbol = normalize_etf_watchlist_symbol(str(raw or ""))
+        if symbol and symbol not in seen:
+            seen.append(symbol)
+    return seen
+
+
+def _period_label(first, last) -> str:
+    if first and last and first != last:
+        return f"{first}～{last}"
+    return first or last or "—"
+
+
+def holding_on_watchlist(
+    holding: dict,
+    watchlist,
+    name_index: "Optional[dict]" = None,
+) -> bool:
+    """True when a holdings / history row is one of the watched US tickers."""
+    wanted = {str(s).upper() for s in (watchlist or []) if str(s).strip()}
+    if not wanted:
+        return False
+    for key in ("symbol", "ticker"):
+        token = normalize_etf_watchlist_symbol(str(holding.get(key) or ""))
+        if token and token in wanted:
+            return True
+    if name_index:
+        ticker = resolve_position_ticker(holding, name_index)
+        if ticker and ticker.upper() in wanted:
+            return True
+    return False
+
+
+def holding_display_symbol(holding: dict, name_index: "Optional[dict]" = None) -> str:
+    """Ticker for the holdings-detail Symbol column.
+
+    ARK / 13F rows often carry CUSIP or FIGI. Those stay as fallbacks only —
+    the column is labeled Symbol, so a watched name must show TSLA not 88160R101.
+    """
+    for key in ("symbol", "ticker"):
+        token = normalize_etf_watchlist_symbol(str(holding.get(key) or ""))
+        if token:
+            return token
+    if name_index:
+        resolved = resolve_position_ticker(holding, name_index)
+        token = normalize_etf_watchlist_symbol(str(resolved or ""))
+        if token:
+            return token
+    return str(
+        holding.get("figi")
+        or holding.get("cusip")
+        or holding.get("symbol")
+        or holding.get("ticker")
+        or "—"
+    )
+
+
+def watchlist_etf_activity(report: dict, watchlist) -> list[dict]:
+    """One row per watched symbol: confirmed ETF buy/sell plus observation dates."""
+    ordered: list[str] = []
+    for raw in watchlist or []:
+        symbol = normalize_etf_watchlist_symbol(str(raw)) or str(raw).strip().upper()
+        if symbol and symbol not in ordered:
+            ordered.append(symbol)
+
+    by_upper = {
+        str(key).upper(): info for key, info in (report.get("symbols") or {}).items()
+    }
+    contribs = report.get("raw_contributions") or []
+    rows: list[dict] = []
+    for symbol in ordered:
+        info = by_upper.get(symbol) or {}
+        related = [
+            item for item in contribs
+            if str(item.get("symbol") or "").upper() == symbol
+        ]
+        ups = [item for item in related if item.get("direction") == "up"]
+        downs = [item for item in related if item.get("direction") == "down"]
+        etfs_up = list(dict.fromkeys(
+            list(info.get("etfs_up") or [])
+            + [item.get("etf") for item in ups if item.get("etf")]
+        ))
+        etfs_down = list(dict.fromkeys(
+            list(info.get("etfs_down") or [])
+            + [item.get("etf") for item in downs if item.get("etf")]
+        ))
+        dates = [
+            value for value in (
+                info.get("first_date"),
+                info.get("last_date"),
+                *[item.get("first_date") for item in related],
+                *[item.get("last_date") for item in related],
+            )
+            if value
+        ]
+        consensus = info.get("consensus")
+        rows.append({
+            "symbol": symbol,
+            "consensus": consensus,
+            "etfs_up": [etf for etf in etfs_up if etf],
+            "etfs_down": [etf for etf in etfs_down if etf],
+            "etfs_evaluated": info.get("etfs_evaluated") or len(related),
+            "consensus_pct": info.get("consensus_pct"),
+            "first_date": min(dates) if dates else None,
+            "last_date": max(dates) if dates else None,
+            "has_trade": consensus in ("up", "down") or bool(ups or downs),
+            "status": info.get("status"),
+        })
+    return rows
+
+
+def _watchlist_rule_section(substitution: str) -> dict:
+    from .shared import _section
+    return _section(
+        "觀察清單標的的 ETF 買賣",
+        formula="只列出觀察清單上的股票；買賣須真實股數變化與權重變化同向。期間＝可比較快照的最早～最晚日期。",
+        substitution=substitution,
+        explanation="未列入清單的持股不顯示。來源未更新不是「今日無交易」。",
+    )
+
+
+def _watchlist_activity_recommendation(row: dict, positions=None, backtest=None):
+    from .shared import Recommendation, position_stance_by_symbol
+    symbol = row["symbol"]
+    period = _period_label(row.get("first_date"), row.get("last_date"))
+    stance = position_stance_by_symbol(positions) if positions else {}
+    evaluated = row.get("etfs_evaluated") or 0
+    if row.get("status") == "source_unchanged" and not row.get("has_trade"):
+        return Recommendation(
+            rec_id=f"etf_watch:{symbol}", category="etf", direction=None,
+            verdict=f"⚪ {symbol}：來源持股揭露未更新（不是今日無交易）",
+            basis=f"最近可比較期間 {period}。",
+            detail_sections=[_watchlist_rule_section(
+                f"{symbol} {period} 來源未更新　0/{evaluated} 檔達雙真實訊號同向",
+            )],
+        )
+    if not row.get("has_trade"):
+        return Recommendation(
+            rec_id=f"etf_watch:{symbol}", category="etf", direction=None,
+            verdict=f"⚪ {symbol}：本視窗無確認的主動式 ETF 增減持",
+            basis=f"觀察期間 {period}。未達雙真實訊號同向，故不列買賣。" if period != "—" else "",
+            detail_sections=[_watchlist_rule_section(
+                f"{symbol} {period} 無確認買賣　0/{evaluated} 檔達雙真實訊號同向",
+            )],
+        )
+    up = row.get("consensus") == "up" or (
+        row.get("etfs_up") and not row.get("etfs_down")
+    )
+    down = row.get("consensus") == "down" or (
+        row.get("etfs_down") and not row.get("etfs_up")
+    )
+    if up and not down:
+        emoji, verb, direction = "🟢", "買入／增碼", "多"
+        funds = row.get("etfs_up") or []
+    elif down and not up:
+        emoji, verb, direction = "🔴", "賣出／減碼", "空"
+        funds = row.get("etfs_down") or []
+    else:
+        emoji, verb, direction = "⚪", "買賣同時出現", "觀望"
+        funds = list(dict.fromkeys((row.get("etfs_up") or []) + (row.get("etfs_down") or [])))
+    n = len(funds)
+    evaluated = row.get("etfs_evaluated") or n
+    pct = row.get("consensus_pct")
+    pct_s = f"，共識 {pct:.0f}%" if isinstance(pct, (int, float)) else ""
+    fund_s = "、".join(funds[:6]) + ("…" if len(funds) > 6 else "")
+    basis = f"期間 {period}。{n}/{evaluated} 檔主動式 ETF {verb}{pct_s}。"
+    if fund_s:
+        basis += f" 來源：{fund_s}。"
+    note = _etf_position_note(symbol, direction == "多", stance)
+    if note:
+        basis = f"{basis} {note}"
+    secs = [_watchlist_rule_section(
+        f"{symbol} {period} {verb}　{n}/{evaluated} 檔",
+    )]
+    if direction in ("多", "空"):
+        stance_sec = _etf_stance_section(symbol, direction == "多", stance)
+        if stance_sec:
+            secs.append(stance_sec)
+        secs.append(_etf_backtest_section("up" if direction == "多" else "down", backtest))
+    return Recommendation(
+        rec_id=f"etf_watch:{symbol}", category="etf", direction=direction,
+        verdict=f"{emoji} {symbol}：主動式 ETF {verb}（{period}）",
+        basis=basis,
+        detail_sections=secs,
+    )
+
+
+def etf_source_freshness_lines(report: dict) -> list[str]:
+    """資料新鮮度說明。來源未更新不得寫成持平或今日無交易。"""
+    window = report.get("window_days", 14)
+    ready = report.get("etfs_ready_count", 0)
+    total = report.get("etfs_total_count", 0)
+    freshness = report.get("source_freshness") or {}
+    unchanged = freshness.get("sources_unchanged", 0)
+    since = freshness.get("oldest_state_since")
+    days = freshness.get("max_unchanged_days")
+    lines = [
+        f"資料新鮮度：{ready}/{total} 檔 ETF 在近 {window} 日有新的持股狀態"
+        f"（{report.get('etfs_ready_pct', 0):.0f}%）　更新於 {report.get('as_of') or '—'}。"
+    ]
+    if freshness.get("all_sources_unchanged"):
+        span = f"（已 {days} 天）" if days else ""
+        since_s = since or "—"
+        lines.append(
+            f"來源持股揭露停滯：本視窗內沒有任何檔出現新的持股狀態，"
+            f"最早自 {since_s} 起內容未變{span}。無法產生可執行建議。"
+        )
+    elif unchanged:
+        span = f"（已 {days} 天）" if days else ""
+        since_s = f"自 {since} 起" if since else ""
+        lines.append(
+            f"{unchanged} 檔{since_s}揭露內容未變{span}。"
+            "Yahoo 前十大多為月頻，未更新不是今日無交易。"
+        )
+    return lines
+
+
+def render_etf_advice_view(
+    report: dict,
+    tilt: dict,
+    *,
+    positions=None,
+    watchlist=None,
+    held: "Optional[set]" = None,
+    tracked: "Optional[set]" = None,
+    backtest=None,
+    tilt_backtest=None,
+    min_etfs_evaluated: int = 4,
+) -> "tuple[str, dict]":
+    """建議頁：只列觀察清單標的的 ETF 買賣與期間。回傳 (markup, recs_by_id)。"""
+    from .shared import render_detail_recs
+
+    # held/tracked remain accepted so older callers do not break; display is
+    # watchlist-only when a list is provided.
+    del held, tracked, tilt_backtest, min_etfs_evaluated
+    mapping: dict = {}
+    sections: list[str] = []
+    freshness = "\n".join(
+        f"[dim]{line}[/dim]" for line in etf_source_freshness_lines(report)
+    )
+    if freshness:
+        sections.append(freshness)
+
+    ordered = [
+        normalize_etf_watchlist_symbol(str(raw)) or str(raw).strip().upper()
+        for raw in (watchlist or [])
+    ]
+    ordered = [symbol for symbol in dict.fromkeys(ordered) if symbol]
+    if not ordered:
+        sections.append(
+            "[bold yellow]觀察清單的 ETF 買賣[/bold yellow]\n"
+            "[dim]尚未設定觀察清單。按 [bold]w[/bold] 加入你在乎的美股標的；"
+            "之後只顯示這些股票的大型 ETF 買賣與時間。[/dim]"
+        )
+        return "\n\n".join(sections), mapping
+
+    recs = [
+        _watchlist_activity_recommendation(row, positions=positions, backtest=backtest)
+        for row in watchlist_etf_activity(report, ordered)
+    ]
+    body, mapping = render_detail_recs(
+        recs,
+        header="[bold yellow]觀察清單的 ETF 買賣[/bold yellow]",
+        start=0,
+    )
+    sections.append(body)
+    return "\n\n".join(sections), mapping
 
 
 # ─────────────────────────────────────────────────────────────────────────────

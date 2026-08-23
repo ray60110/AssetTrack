@@ -1,20 +1,33 @@
-[
-  {
-    "broker": "manual",
-    "symbol": "AAPL",
-    "instrument_type": "stock",
-    "quantity": 50,
-    "avg_cost": 185.0,
-    "currency": "USD",
-    "source": "manual"
-  },
-  {
-    "broker": "manual",
-    "symbol": "SPY",
-    "instrument_type": "etf",
-    "quantity": 20,
-    "avg_cost": 510.0,
-    "currency": "USD",
-    "source": "manual"
-  }
-]
+{
+  "positions": [
+    {
+      "broker": "manual",
+      "account": "default",
+      "symbol": "AAPL",
+      "instrument_type": "stock",
+      "quantity": 50,
+      "avg_cost": 185.0,
+      "currency": "USD",
+      "source": "manual"
+    },
+    {
+      "broker": "manual",
+      "account": "default",
+      "symbol": "SPY",
+      "instrument_type": "etf",
+      "quantity": 20,
+      "avg_cost": 510.0,
+      "currency": "USD",
+      "source": "manual"
+    }
+  ],
+  "cash_positions": [
+    {
+      "broker": "manual",
+      "account": "default",
+      "currency": "TWD",
+      "amount": 100000,
+      "notes": "待部署資金"
+    }
+  ]
+}
