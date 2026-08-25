@@ -270,6 +270,210 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
             self.assertEqual(positions, [])
             self.assertEqual(resulting_cash[0].amount, 1_050)
 
+    def test_buying_to_cover_an_exact_short_closes_it_and_spends_cash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            short = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="TSLA",
+                quantity=-10,
+                avg_cost=200,
+                currency="USD",
+            )
+            cash = [
+                CashPosition(
+                    broker="IBKR",
+                    account="MAIN",
+                    currency="USD",
+                    amount=3_000,
+                )
+            ]
+
+            positions, remaining_cash = tracker.apply_position_purchase(
+                positions=[short],
+                cash_positions=cash,
+                purchase=Position(
+                    broker="IBKR",
+                    account="MAIN",
+                    symbol="TSLA",
+                    quantity=10,
+                    avg_cost=150,
+                    currency="USD",
+                ),
+            )
+
+            self.assertEqual(positions, [])
+            self.assertEqual(remaining_cash[0].amount, 1_500)
+
+    def test_partial_short_cover_keeps_the_original_average_cost(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            short = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="TSLA",
+                quantity=-10,
+                avg_cost=200,
+                currency="USD",
+            )
+
+            positions, remaining_cash = tracker.apply_position_purchase(
+                positions=[short],
+                cash_positions=[
+                    CashPosition(
+                        broker="IBKR",
+                        account="MAIN",
+                        currency="USD",
+                        amount=3_000,
+                    )
+                ],
+                purchase=Position(
+                    broker="IBKR",
+                    account="MAIN",
+                    symbol="TSLA",
+                    quantity=4,
+                    avg_cost=150,
+                    currency="USD",
+                ),
+            )
+
+            self.assertEqual(len(positions), 1)
+            self.assertEqual(positions[0].quantity, -6)
+            self.assertEqual(positions[0].avg_cost, 200)
+            self.assertEqual(remaining_cash[0].amount, 2_400)
+
+    def test_covering_a_short_then_flipping_long_uses_the_new_entry_cost(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            short = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="TSLA",
+                quantity=-10,
+                avg_cost=200,
+                currency="USD",
+            )
+
+            positions, remaining_cash = tracker.apply_position_purchase(
+                positions=[short],
+                cash_positions=[
+                    CashPosition(
+                        broker="IBKR",
+                        account="MAIN",
+                        currency="USD",
+                        amount=5_000,
+                    )
+                ],
+                purchase=Position(
+                    broker="IBKR",
+                    account="MAIN",
+                    symbol="TSLA",
+                    quantity=15,
+                    avg_cost=180,
+                    currency="USD",
+                ),
+            )
+
+            self.assertEqual(len(positions), 1)
+            self.assertEqual(positions[0].quantity, 5)
+            self.assertEqual(positions[0].avg_cost, 180)
+            self.assertEqual(remaining_cash[0].amount, 2_300)
+
+    def test_closing_a_short_debits_cash_to_cover_instead_of_crediting_proceeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            short = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="TSLA",
+                quantity=-10,
+                avg_cost=200,
+                market_price=150,
+                currency="USD",
+            )
+            cash = [
+                CashPosition(
+                    broker="IBKR",
+                    account="MAIN",
+                    currency="USD",
+                    amount=3_000,
+                )
+            ]
+
+            positions, resulting_cash = tracker.apply_position_sale(
+                positions=[short],
+                cash_positions=cash,
+                position=short,
+                quantity=10,
+            )
+
+            self.assertEqual(positions, [])
+            self.assertEqual(resulting_cash[0].amount, 1_500)
+
+    def test_tracked_purchase_does_not_merge_stock_and_etf_with_the_same_symbol(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            stock = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="SPY",
+                instrument_type="stock",
+                quantity=2,
+                avg_cost=500,
+                currency="USD",
+            )
+            etf_buy = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="SPY",
+                instrument_type="etf",
+                quantity=1,
+                avg_cost=500,
+                currency="USD",
+                leverage_factor=1,
+            )
+
+            positions, remaining_cash = tracker.apply_position_purchase(
+                positions=[stock],
+                cash_positions=[
+                    CashPosition(
+                        broker="IBKR",
+                        account="MAIN",
+                        currency="USD",
+                        amount=1_000,
+                    )
+                ],
+                purchase=etf_buy,
+            )
+
+            self.assertEqual(len(positions), 2)
+            self.assertEqual(positions[0].instrument_type, "stock")
+            self.assertEqual(positions[0].quantity, 2)
+            self.assertEqual(positions[1].instrument_type, "etf")
+            self.assertEqual(positions[1].quantity, 1)
+            self.assertEqual(remaining_cash[0].amount, 500)
+
     def test_yfinance_adapter_uses_latest_market_close_before_sunday(self):
         history = pd.DataFrame(
             {"Close": [498.0, 500.0]},

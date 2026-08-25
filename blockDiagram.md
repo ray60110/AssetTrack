@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-23。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-08-25。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -274,7 +274,7 @@ flowchart TB
 | 16 | ark_holdings ↔ ARK | HTTPS | `GET https://assets.ark-funds.com/fund-documents/funds-etf-csv/…` | 官方持股 CSV |
 | 17 | Dashboard ↔ 門檻 | 唯讀 JSON 契約 | `{user}_champion_params.json` 的 `params`；失敗回退 calibration | ETF／類股／期權門檻 |
 | 18 | 背景補抓 ↔ 畫面 | 磁碟匯流排 | worker 寫 JSONL，畫面稍後讀同一路徑 | 不靠記憶體事件通知 |
-| 19 | 績效 ↔ 持倉管控 | 同一 process 的領域 API | `PortfolioPerformanceTracker.apply_position_purchase/sale` | 現金守恆 |
+| 19 | 績效 ↔ 持倉管控 | 同一 process 的領域 API | `PortfolioPerformanceTracker.apply_position_purchase/sale` | 現金守恆（多空對稱：回補扣現金） |
 
 ### 5.3 畫面導航協定（Textual callback）
 
@@ -543,8 +543,9 @@ flowchart LR
 
 績效追蹤開啟時，持倉不再是自由編輯：
 
-- 買證券：必須從同券商／帳戶／幣別現金扣款（`apply_position_purchase`）
-- 刪證券：視為賣出，現值轉回現金（`apply_position_sale`）
+- 買證券／回補空單：必須從同券商／帳戶／幣別現金扣款（`apply_position_purchase`）。合併時比對券商+帳戶+代碼+`instrument_type`；數量加總為 0 則移除該筆，不得除以零。反向未翻倉保留原平均成本，翻倉後採新進場成本。
+- 刪／平多單：視為賣出，現值轉回現金（`apply_position_sale`）
+- 刪／平空單：視為回補，現值從現金扣除（同一函式；現金不足則拒絕）
 - 現金只能走 `i`／`o` 出入金，並同步調整 QQQ／VT 影子單位數
 
 這是領域 API 約束，不是資料庫 trigger。

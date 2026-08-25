@@ -13,6 +13,41 @@ from .auth import read_protected_text, write_protected_text
 from .models import CashPosition, Position, merge_cash_position
 
 
+def _same_tracked_holding(left: Position, right: Position) -> bool:
+    """Match the TUI holding key: broker + account + symbol + instrument type."""
+    return (
+        left.broker.casefold() == right.broker.casefold()
+        and (left.account or "").casefold() == (right.account or "").casefold()
+        and left.symbol.upper() == right.symbol.upper()
+        and left.instrument_type == right.instrument_type
+    )
+
+
+def _contract_multiplier(position: Position) -> float:
+    if position.instrument_type == "option":
+        return position.multiplier or 100.0
+    return 1.0
+
+
+def _matching_cash(
+    cash_positions: list[CashPosition],
+    *,
+    broker: str,
+    account: str | None,
+    currency: str,
+) -> CashPosition | None:
+    return next(
+        (
+            item
+            for item in cash_positions
+            if item.broker.casefold() == broker.casefold()
+            and (item.account or "").casefold() == (account or "").casefold()
+            and item.currency == currency
+        ),
+        None,
+    )
+
+
 DEFAULT_BENCHMARKS = ("QQQ", "VT")
 
 
@@ -530,24 +565,15 @@ class PortfolioPerformanceTracker:
             raise ValueError("Performance Tracking is not enabled")
         if purchase.quantity <= 0 or purchase.avg_cost is None:
             raise ValueError("追蹤期間買進必須提供正數數量與成交價格")
-        multiplier = (
-            purchase.multiplier or 100
-            if purchase.instrument_type == "option"
-            else 1
-        )
+        multiplier = _contract_multiplier(purchase)
         required_cash = purchase.quantity * purchase.avg_cost * multiplier
         result_positions = [item.model_copy(deep=True) for item in positions]
         result_cash = [item.model_copy(deep=True) for item in cash_positions]
-        cash = next(
-            (
-                item
-                for item in result_cash
-                if item.broker.casefold() == purchase.broker.casefold()
-                and (item.account or "").casefold()
-                == (purchase.account or "").casefold()
-                and item.currency == purchase.currency
-            ),
-            None,
+        cash = _matching_cash(
+            result_cash,
+            broker=purchase.broker,
+            account=purchase.account,
+            currency=purchase.currency,
         )
         if cash is None or cash.amount < required_cash:
             raise ValueError(
@@ -561,26 +587,34 @@ class PortfolioPerformanceTracker:
             (
                 item
                 for item in result_positions
-                if item.broker.casefold() == purchase.broker.casefold()
-                and (item.account or "").casefold()
-                == (purchase.account or "").casefold()
-                and item.symbol.upper() == purchase.symbol.upper()
+                if _same_tracked_holding(item, purchase)
             ),
             None,
         )
         if existing is None:
             result_positions.append(purchase)
-        else:
-            old_quantity = existing.quantity
-            new_quantity = old_quantity + purchase.quantity
-            existing.avg_cost = (
-                old_quantity * (existing.avg_cost or 0)
-                + purchase.quantity * purchase.avg_cost
-            ) / new_quantity
-            existing.quantity = new_quantity
-            existing.market_price = None
-            existing.market_value = None
-            existing.prev_close = None
+            return result_positions, result_cash
+
+        old_quantity = existing.quantity
+        new_quantity = old_quantity + purchase.quantity
+        same_direction = (old_quantity >= 0) == (purchase.quantity >= 0)
+        if new_quantity == 0:
+            result_positions.remove(existing)
+            return result_positions, result_cash
+        if same_direction:
+            if existing.avg_cost is not None and purchase.avg_cost is not None:
+                existing.avg_cost = (
+                    existing.avg_cost * abs(old_quantity)
+                    + purchase.avg_cost * abs(purchase.quantity)
+                ) / abs(new_quantity)
+            else:
+                existing.avg_cost = purchase.avg_cost or existing.avg_cost
+        elif abs(purchase.quantity) > abs(old_quantity):
+            existing.avg_cost = purchase.avg_cost
+        existing.quantity = new_quantity
+        existing.market_price = None
+        existing.market_value = None
+        existing.prev_close = None
         return result_positions, result_cash
 
     def apply_position_sale(
@@ -599,42 +633,51 @@ class PortfolioPerformanceTracker:
         price = execution_price or position.market_price
         if price is None or price <= 0:
             raise ValueError("賣出前需要有效的成交價格")
-        multiplier = (
-            position.multiplier or 100
-            if position.instrument_type == "option"
-            else 1
-        )
-        proceeds = quantity * price * multiplier
+        multiplier = _contract_multiplier(position)
+        settlement = quantity * price * multiplier
         result_positions = [item.model_copy(deep=True) for item in positions]
         result_cash = [item.model_copy(deep=True) for item in cash_positions]
         target = next(
             (
                 item
                 for item in result_positions
-                if item.broker.casefold() == position.broker.casefold()
-                and (item.account or "").casefold()
-                == (position.account or "").casefold()
-                and item.symbol.upper() == position.symbol.upper()
+                if _same_tracked_holding(item, position)
             ),
             None,
         )
         if target is None:
             raise ValueError("找不到要賣出的追蹤部位")
+
+        if target.quantity < 0:
+            cash = _matching_cash(
+                result_cash,
+                broker=position.broker,
+                account=position.account,
+                currency=position.currency,
+            )
+            if cash is None or cash.amount < settlement:
+                raise ValueError(
+                    "可用現金不足；請先宣告入金，或選擇有足額現金的券商帳戶"
+                )
+            cash.amount -= settlement
+            if cash.amount == 0:
+                result_cash.remove(cash)
+        else:
+            merge_cash_position(
+                result_cash,
+                CashPosition(
+                    broker=position.broker,
+                    account=position.account,
+                    currency=position.currency,
+                    amount=settlement,
+                    notes=f"出售 {position.symbol}",
+                ),
+            )
+
         if quantity == abs(target.quantity):
             result_positions.remove(target)
         else:
             target.quantity -= quantity if target.quantity > 0 else -quantity
             target.market_value = None
             target.prev_close = None
-
-        merge_cash_position(
-            result_cash,
-            CashPosition(
-                broker=position.broker,
-                account=position.account,
-                currency=position.currency,
-                amount=proceeds,
-                notes=f"出售 {position.symbol}",
-            ),
-        )
         return result_positions, result_cash

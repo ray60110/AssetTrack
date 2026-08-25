@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-23（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：期權改為觀察、類股改為 2-of-3 十個交易日預測、ETF 主頁改走觀察清單、校準畫面已移除、QuantTrade Champion 契約唯讀）。
+最後依據：2026-08-25（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：績效追蹤期間回補／平空單從現金扣款，且加碼合併必須含 `instrument_type`）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -98,7 +98,7 @@
 | `PerformanceTrackingScreen` | 使用者績效比較頁 | 完整資產的現金流調整報酬，以及 QQQ／VT 影子基準等值、美元差額與領先／落後百分比。 |
 | `PerformanceTrackingCancelConfirmModal` | 取消績效追蹤確認視窗 | 停止目前追蹤區間但保留歷史；重新啟用時標示追蹤斷層。 |
 | `CashFlowModal` | 出入金宣告視窗 | 記錄入金來源或出金用途、管道、券商帳戶、幣別、金額與備註。 |
-| `PortfolioPerformanceTracker` | 投資組合績效追蹤 module | 管理 opt-in、追蹤斷層、JSON 帳本、週日估值、影子 benchmark 與追蹤期間的持倉資金守恆。 |
+| `PortfolioPerformanceTracker` | 投資組合績效追蹤 module | 管理 opt-in、追蹤斷層、JSON 帳本、週日估值、影子 benchmark 與追蹤期間的持倉資金守恆。買進與回補空單扣現金；平多單把現值轉回現金；平空單從現金扣回補成本。合併部位時比對券商+帳戶+代碼+`instrument_type`。 |
 | `action_performance_tracking` | 開啟績效比較（`9`） | 從 Dashboard 進入完整資產與 QQQ／VT 的比較頁。 |
 | `action_deposit` / `action_withdrawal` | 宣告入金／出金（`i`／`o`） | 調整現金並以相同資金流同步 benchmark。 |
 | `action_logout` | 安全登出 | 開啟確認視窗並結束目前登入。 |
@@ -112,7 +112,7 @@
 | `FieldEditModal` | 單一欄位編輯視窗 | 編輯一個文字或選項欄位。 |
 | `DeleteConfirmModal` | 刪除持倉確認視窗 | 要求使用者確認刪除動作。 |
 | `Holding` | 持倉聯合型別 | `Position \| CashPosition`。 |
-| `action_add_position` | 新增部位（`1`） | 開啟 `AddPositionModal` 批次新增。績效追蹤開啟時走 `apply_position_purchase`。 |
+| `action_add_position` | 新增部位（`1`） | 開啟 `AddPositionModal` 批次新增。績效追蹤開啟時走 `apply_position_purchase`（正數買進／回補；數量加總為 0 則移除該筆）。 |
 | Holdings 表格直接操作 | 就地編輯／刪除／多選 | `Enter` 就地編輯、`e` 編輯整筆、`x` 刪除、`space` 多選。 |
 | `_handle_field_edit` | 處理持倉欄位修改 | 驗證並更新代號、類型、數量、成本或市場。 |
 | `_apply_metadata_edit` | 套用持倉附加資料 | 寫入備註、類別、計價幣別與成本幣別。 |
