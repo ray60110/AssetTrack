@@ -1,0 +1,4 @@
+{
+  "name": "AssetTrack",
+  "install": "bash .cursor/install.sh"
+}
