@@ -61,6 +61,7 @@ from .quotes import (
     fetch_prices_batch, estimate_shares,
 )
 from .auth import (
+    AuthError,
     account_exists,
     lock_vault,
     register_account,
@@ -234,7 +235,13 @@ def _process_declared_cash_flow(
     )
     total_value = total_asset_value_usd(positions, result_cash, rate)
     if total_value is not None and total_value > 0:
-        tracker.record_valuation(total_value_usd=total_value)
+        try:
+            tracker.record_valuation(total_value_usd=total_value)
+        except Exception:
+            # QQQ/VT snapshot can catch up on the next refresh. The declared
+            # flow and cash holding are already persisted; failing here used
+            # to look like a failed deposit and caused a duplicate retry.
+            pass
     return positions, result_cash
 
 
@@ -978,8 +985,15 @@ class LoginScreen(Screen):
             self.query_one("#login-error-msg", Label).update("❌ 取消註冊。")
 
     def _login_success(self, user: str) -> None:
-        seal_user_files(user)
-        positions, cash_positions = load_manual_positions(user=user)
+        try:
+            seal_user_files(user)
+            positions, cash_positions = load_manual_positions(user=user)
+        except AuthError:
+            lock_vault()
+            self.query_one("#login-error-msg", Label).update(
+                "❌ 無法解密持倉檔。請用本機原先登入過的帳號，勿覆蓋現有資料。"
+            )
+            return
         result = (user, positions, cash_positions)
         if load_sec_identity(user) is None:
             self.app.push_screen(
