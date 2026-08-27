@@ -3255,6 +3255,12 @@ def _pos_key(p: Position) -> tuple[str, str, str, str]:
     return (p.broker.lower(), (p.account or "").lower(), p.symbol.upper(), p.instrument_type)
 
 
+def _find_matching_position(positions: list[Position], pos: Position) -> Position | None:
+    """Return the stored holding with the same identity as `pos`, or None."""
+    key = _pos_key(pos)
+    return next((item for item in positions if _pos_key(item) == key), None)
+
+
 def _cash_key(cash: CashPosition) -> tuple[str, str, str, str]:
     return (
         cash.broker.lower(),
@@ -3616,7 +3622,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             return
 
         positions, cash_positions = load_manual_positions(user=self._user)
-        target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
+        target = _find_matching_position(positions, pos)
         if not target:
             return
 
@@ -3666,33 +3672,10 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         except Exception:
             return
 
-        dup = next((
-            p for p in positions
-            if p is not target
-            and p.broker.lower() == target.broker.lower()
-            and (p.account or "").lower() == (target.account or "").lower()
-            and p.symbol.upper() == target.symbol.upper()
-        ), None)
-        if dup:
-            old_qty = dup.quantity
-            new_qty = old_qty + target.quantity
-            if dup.avg_cost is not None and target.avg_cost is not None:
-                if old_qty > 0 and target.quantity > 0:
-                    new_cost = (old_qty * dup.avg_cost + target.quantity * target.avg_cost) / new_qty
-                else:
-                    new_cost = target.avg_cost
-            else:
-                new_cost = target.avg_cost or dup.avg_cost
-            dup.quantity = new_qty
-            dup.avg_cost = new_cost
-            dup.market_price = None
-            dup.market_value = None
-            dup.prev_close = None
-            dup.last_updated = datetime.utcnow()
-            positions.remove(target)
+        DashboardScreen._collapse_if_duplicate(positions, target)
 
         save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
-        _drop_overlay_for_positions(self._user, [target] + ([dup] if dup else []))
+        _drop_overlay_for_positions(self._user, [target])
         self._do_refresh_worker()
 
     def _handle_position_action(self, pos: Position, action: Optional[str]) -> None:
@@ -3739,7 +3722,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             return
 
         positions, cash_positions = load_manual_positions(user=self._user)
-        target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
+        target = _find_matching_position(positions, pos)
         if not target:
             return
 
@@ -3791,7 +3774,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             acc_val = ""
 
         positions, cash_positions = load_manual_positions(user=self._user)
-        target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
+        target = _find_matching_position(positions, pos)
         if not target:
             return
 
@@ -3807,33 +3790,10 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         except Exception:
             return
 
-        dup = next((
-            p for p in positions
-            if p is not target
-            and p.broker.lower() == target.broker.lower()
-            and (p.account or "").lower() == (target.account or "").lower()
-            and p.symbol.upper() == target.symbol.upper()
-        ), None)
-        if dup:
-            old_qty = dup.quantity
-            new_qty = old_qty + target.quantity
-            if dup.avg_cost is not None and target.avg_cost is not None:
-                if old_qty > 0 and target.quantity > 0:
-                    new_cost = (old_qty * dup.avg_cost + target.quantity * target.avg_cost) / new_qty
-                else:
-                    new_cost = target.avg_cost
-            else:
-                new_cost = target.avg_cost or dup.avg_cost
-            dup.quantity = new_qty
-            dup.avg_cost = new_cost
-            dup.market_price = None
-            dup.market_value = None
-            dup.prev_close = None
-            dup.last_updated = datetime.utcnow()
-            positions.remove(target)
+        DashboardScreen._collapse_if_duplicate(positions, target)
 
         save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
-        _drop_overlay_for_positions(self._user, [target] + ([dup] if dup else []))
+        _drop_overlay_for_positions(self._user, [target])
         self._do_refresh_worker()
 
     def _handle_delete_confirm(self, pos: Position, confirmed: Optional[bool]) -> None:
@@ -3843,7 +3803,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             self._handle_batch_delete_confirm([pos], confirmed)
             return
         positions, cash_positions = load_manual_positions(user=self._user)
-        target = next((p for p in positions if p.broker == pos.broker and (p.account or "") == (pos.account or "") and p.symbol == pos.symbol), None)
+        target = _find_matching_position(positions, pos)
         if target:
             positions.remove(target)
             save_manual_positions(positions, cash_positions=cash_positions, user=self._user)
@@ -4773,6 +4733,22 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             [key for key in keys if len(key) == 4],
         )
         self._do_refresh_worker()
+
+    @staticmethod
+    def _collapse_if_duplicate(positions: list[Position], target: Position) -> None:
+        """If another holding now shares target's identity, merge with _merge_position rules."""
+        duplicate = next(
+            (
+                item
+                for item in positions
+                if item is not target and _pos_key(item) == _pos_key(target)
+            ),
+            None,
+        )
+        if duplicate is None:
+            return
+        positions.remove(target)
+        DashboardScreen._merge_position(positions, target)
 
     @staticmethod
     def _merge_position(positions: list[Position], pos: Position) -> None:

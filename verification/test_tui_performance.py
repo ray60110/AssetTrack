@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from assettrack import tui
 
 
@@ -440,4 +442,130 @@ def test_cached_beta_ignores_expired_disk(tmp_path, monkeypatch) -> None:
     with patch.object(quotes.yf, "Ticker") as ticker:
         assert quotes.cached_beta("NVDA") is None
         ticker.assert_not_called()
+
+
+def _qqq_stock(**updates) -> Position:
+    from datetime import datetime
+
+    from assettrack.models import Position
+
+    data = dict(
+        broker="ibkr",
+        account="MAIN",
+        symbol="QQQ",
+        instrument_type="stock",
+        quantity=10,
+        avg_cost=400,
+        currency="USD",
+        last_updated=datetime.utcnow(),
+    )
+    data.update(updates)
+    return Position(**data)
+
+
+def _qqq_etf(**updates) -> Position:
+    from datetime import datetime
+
+    from assettrack.models import Position
+
+    data = dict(
+        broker="ibkr",
+        account="MAIN",
+        symbol="QQQ",
+        instrument_type="etf",
+        quantity=100,
+        avg_cost=410,
+        currency="USD",
+        last_updated=datetime.utcnow(),
+    )
+    data.update(updates)
+    return Position(**data)
+
+
+def _holding_screen(user: str = "alice"):
+    return SimpleNamespace(
+        _user=user,
+        app=SimpleNamespace(notify=MagicMock()),
+        _do_refresh_worker=MagicMock(),
+    )
+
+
+def test_delete_etf_does_not_remove_same_symbol_stock(tmp_path, monkeypatch) -> None:
+    from assettrack import storage
+
+    monkeypatch.setattr(storage, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(tui, "get_data_dir", lambda: tmp_path)
+    stock = _qqq_stock()
+    etf = _qqq_etf()
+    storage.save_manual_positions([stock, etf], [], user="alice")
+
+    tui.DashboardScreen._handle_delete_confirm(_holding_screen(), etf, True)
+
+    remaining, _ = storage.load_manual_positions("alice")
+    assert [p.instrument_type for p in remaining] == ["stock"]
+    assert remaining[0].quantity == 10
+
+
+def test_quantity_edit_on_etf_does_not_rewrite_same_symbol_stock(
+    tmp_path, monkeypatch
+) -> None:
+    from assettrack import storage
+
+    monkeypatch.setattr(storage, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(tui, "get_data_dir", lambda: tmp_path)
+    stock = _qqq_stock()
+    etf = _qqq_etf()
+    storage.save_manual_positions([stock, etf], [], user="alice")
+
+    tui.DashboardScreen._handle_field_edit(
+        _holding_screen(), etf, "quantity", "50"
+    )
+
+    remaining, _ = storage.load_manual_positions("alice")
+    by_type = {p.instrument_type: p for p in remaining}
+    assert by_type["stock"].quantity == 10
+    assert by_type["etf"].quantity == 50
+
+
+def test_broker_edit_merges_same_type_shorts_with_absolute_cost(
+    tmp_path, monkeypatch
+) -> None:
+    from datetime import datetime
+
+    from assettrack import storage
+    from assettrack.models import Position
+
+    monkeypatch.setattr(storage, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(tui, "get_data_dir", lambda: tmp_path)
+    ibkr_short = Position(
+        broker="ibkr",
+        account="MAIN",
+        symbol="AAPL",
+        instrument_type="stock",
+        quantity=-10,
+        avg_cost=200,
+        currency="USD",
+        last_updated=datetime.utcnow(),
+    )
+    ft_short = Position(
+        broker="ft",
+        account="IRA",
+        symbol="AAPL",
+        instrument_type="stock",
+        quantity=-5,
+        avg_cost=180,
+        currency="USD",
+        last_updated=datetime.utcnow(),
+    )
+    storage.save_manual_positions([ibkr_short, ft_short], [], user="alice")
+
+    tui.DashboardScreen._apply_broker_account_edit(
+        _holding_screen(), ft_short, "ibkr", "MAIN"
+    )
+
+    remaining, _ = storage.load_manual_positions("alice")
+    assert len(remaining) == 1
+    assert remaining[0].quantity == -15
+    assert remaining[0].avg_cost == pytest.approx((200 * 10 + 180 * 5) / 15)
+
 
