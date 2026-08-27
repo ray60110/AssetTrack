@@ -62,6 +62,7 @@ from .quotes import (
 )
 from .auth import (
     account_exists,
+    current_vault_user,
     lock_vault,
     register_account,
     touchid_enrolled,
@@ -130,6 +131,16 @@ _SEC_BOX = RichBox(
     "    \n"        # foot
     "    \n"        # bottom
 )
+
+
+def _session_generation_matches(screen) -> bool:
+    """True unless this Screen was created for a session the App has already ended."""
+    mine = getattr(screen, "_session_id", None)
+    app = getattr(screen, "app", None)
+    app_sid = getattr(app, "_session_id", None) if app is not None else None
+    if mine is None or app_sid is None:
+        return True
+    return mine == app_sid
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2961,6 +2972,7 @@ class UpcomingEventsScreen(_FormulaDrillMixin, Screen):
                 )
 
     def on_mount(self) -> None:
+        self._session_id = getattr(self.app, "_session_id", 0)
         table = self.query_one("#events-holdings-table", DataTable)
         table.cursor_type = "row"
         table.add_columns(
@@ -3169,7 +3181,8 @@ class UpcomingEventsScreen(_FormulaDrillMixin, Screen):
             if occurred:
                 occurred_symbols.add(sym)
 
-        save_event_history(retained_history, self.user)
+        if _session_generation_matches(self):
+            save_event_history(retained_history, self.user)
 
         earnings_actuals = fetch_earnings_actuals_batch(sorted(occurred_symbols))
         for event_date, label, sym, occurred in earnings_events:
@@ -3206,7 +3219,8 @@ class UpcomingEventsScreen(_FormulaDrillMixin, Screen):
                 events.append((ev_date, label))
 
         # Update UI back on the event loop
-        self.app.call_from_thread(self._on_fetch_complete, events, today)
+        if _session_generation_matches(self):
+            self.app.call_from_thread(self._on_fetch_complete, events, today)
 
     def _on_fetch_complete(self, events: list[tuple], today) -> None:
         self._update_header("[green]✅ 行事曆資料更新成功！[/green]")
@@ -3477,6 +3491,7 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def on_mount(self) -> None:
+        self._session_id = getattr(self.app, "_session_id", 0)
         table = self.query_one("#holdings-table", DataTable)
         table.cursor_type = "cell"
         table.add_columns(
@@ -4131,7 +4146,8 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                     seen_beta.add(beta_key)
                     fetch_beta(p.symbol, p.instrument_type, p.underlying, p.currency)
                 if any(p.market_price is not None for p in self._positions):
-                    save_quote_overlay(self._user, self._positions)
+                    if _session_generation_matches(self):
+                        save_quote_overlay(self._user, self._positions)
             else:
                 self._underlying_prices = {}
             if not self._positions or any(
@@ -4139,22 +4155,24 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             ):
                 self._live_quotes_ready = True
                 self._overlay_quotes_active = False
-            self._maybe_record_performance_valuation()
+            if _session_generation_matches(self):
+                self._maybe_record_performance_valuation()
         except Exception:
             pass
         finally:
             self._loading = False
             self.app._clear_fetch_active('quotes')
             kickoff = getattr(self.app, "_kickoff_research_ingest_once", None)
-            if callable(kickoff):
+            if callable(kickoff) and _session_generation_matches(self):
                 try:
                     self.app.call_from_thread(kickoff)
                 except Exception:
                     pass
         # Schedule UI update back on the event loop
-        self.app.call_from_thread(self._render_all)
-        if load_from_disk and self._events_refresh_due():
-            self._fetch_upcoming_events_worker()
+        if _session_generation_matches(self):
+            self.app.call_from_thread(self._render_all)
+            if load_from_disk and self._events_refresh_due():
+                self._fetch_upcoming_events_worker()
 
     def _event_symbols(self) -> tuple[str, ...]:
         """Return the position signature that determines earnings-calendar data."""
@@ -4266,7 +4284,8 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                 events.append((ev_date, f"{event_name} ({time_str})"))
 
             events.sort(key=lambda x: x[0])
-            self.app.call_from_thread(self._on_events_fetched, events)
+            if _session_generation_matches(self):
+                self.app.call_from_thread(self._on_events_fetched, events)
         except Exception:
             pass
         finally:
@@ -4855,7 +4874,9 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
 
     def _handle_logout_confirm(self, confirmed: bool | None) -> None:
         if confirmed:
-            lock_vault()
+            self._positions = []
+            self._cash_positions = []
+            self.app.end_session()
             self.dismiss(True)
 
     def action_save_snapshot(self) -> None:
@@ -4871,6 +4892,8 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
         from .models import PortfolioSnapshot
         from datetime import datetime as _dt
         try:
+            if not _session_generation_matches(self):
+                return
             positions, _ = load_manual_positions(user=self._user)
             enriched = enrich_positions_with_quotes(positions)
             total_val = current_portfolio_value(enriched)
@@ -4885,6 +4908,8 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                 positions=enriched,
                 notes="tui_snapshot"
             )
+            if not _session_generation_matches(self):
+                return
             storage.save_snapshot(snap)
             self.app.call_from_thread(self.app.notify, "✅ 市值快照儲存成功！", title="快照")
         except Exception as e:
@@ -9038,6 +9063,7 @@ class AssetTrackApp(App):
         self._cash_positions = cash_positions if cash_positions is not None else []
         self._rate = rate
         self._fetch_activity: dict = {}  # bug#00096: 常駐狀態列的目前抓取項目
+        self._session_id = 0
 
     def on_mount(self) -> None:
         if self._positions or self._cash_positions:
@@ -9114,6 +9140,7 @@ class AssetTrackApp(App):
         self._rate = rate
         self._positions = positions
         self._cash_positions = cash_positions if cash_positions is not None else []
+        self._session_id = getattr(self, "_session_id", 0) + 1
 
         if not getattr(self, "_bg_refresh_timer_started", False):
             self._bg_refresh_timer_started = True
@@ -9164,8 +9191,11 @@ class AssetTrackApp(App):
                 _fetch_and_cache_etf_symbols(stale_etf)
                 self._clear_fetch_active('etf')
 
-            positions, _ = load_manual_positions(user=self._user)
-            underlyings, _, _ = _watchlist_underlyings(self._user, positions)
+            vault_user = current_vault_user()
+            if vault_user is None:
+                return
+            positions, _ = load_manual_positions(user=vault_user)
+            underlyings, _, _ = _watchlist_underlyings(vault_user, positions)
             stale_opt = [u for u in underlyings if not options_symbol_fresh(u)]
             if stale_opt:
                 self._set_fetch_active('options', f'期權鏈（{len(stale_opt)} 檔標的）')
@@ -9175,11 +9205,11 @@ class AssetTrackApp(App):
             # 類股板塊分析：依市場時段的快取新鮮度決定是否補抓（開盤中 60s、收盤後一次），
             # 讓 Dashboard 類股共識卡片即使未進入板塊頁也保持最新 (bug#00080)。
             from .storage import load_sector_groups, sector_cache_needs_refresh
-            sector_groups = load_sector_groups(self._user)
+            sector_groups = load_sector_groups(vault_user)
             if sector_groups:
-                if sector_cache_needs_refresh(self._user):
+                if sector_cache_needs_refresh(vault_user):
                     self._set_fetch_active('sector', '類股板塊成分股')
-                    _fetch_and_cache_sector_groups(self._user)
+                    _fetch_and_cache_sector_groups(vault_user)
                     self._clear_fetch_active('sector')
 
         except Exception:
@@ -9206,13 +9236,20 @@ class AssetTrackApp(App):
         except Exception:
             pass
 
+    def end_session(self) -> None:
+        """Invalidate leftover thread workers, drop in-memory holdings, and lock the vault."""
+        self._session_id = getattr(self, "_session_id", 0) + 1
+        self._positions = []
+        self._cash_positions = []
+        lock_vault()
+
     def _handle_dashboard_exit(self, should_logout: bool) -> None:
         if should_logout:
-            lock_vault()
+            self.end_session()
             self.notify("🚪 已安全登出！")
             self.push_screen(LoginScreen(default_user=self.default_user), self._handle_login_complete)
         else:
-            lock_vault()
+            self.end_session()
             self.exit()
 
 
