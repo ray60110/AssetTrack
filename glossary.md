@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-23（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：期權改為觀察、類股改為 2-of-3 十個交易日預測、ETF 主頁改走觀察清單、校準畫面已移除、QuantTrade Champion 契約唯讀）。
+最後依據：2026-08-27（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：受保護 I/O 綁定目前保險庫帳號；登出走 `end_session`；鎖定或帳號不符時拒絕寫入、不改寫明文）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -49,10 +49,12 @@
 | `AssetTrackApp` | AssetTrack 主應用程式 | 管理登入、初始導覽、Dashboard 進入／離開與跨畫面背景維護。 |
 | `_handle_login_complete` | 處理登入完成 | 登入後依持倉是否存在，導向 Dashboard 或新手導覽。 |
 | `_handle_onboarding_choice` | 處理新手導覽選擇 | 建立範例持倉、手動新增第一筆持倉，或直接進入空白看板。 |
-| `_start_dashboard` | 啟動主儀表板 | 讀取匯率、保存目前使用者與持倉狀態，推入 Dashboard；啟動 30 分鐘全域補抓。 |
-| `_background_data_refresh` | 全域背景資料更新 | 每 30 分鐘依新鮮度冪等補抓當日 ETF、期權與板塊快取。 |
+| `_start_dashboard` | 啟動主儀表板 | 遞增 `_session_id`、讀取匯率、保存目前使用者與持倉狀態，推入 Dashboard；啟動 30 分鐘全域補抓。 |
+| `_background_data_refresh` | 全域背景資料更新 | 每 30 分鐘依新鮮度冪等補抓當日 ETF；期權與板塊僅在 `current_vault_user()` 有值時補抓。 |
 | `_kickoff_research_ingest_once` | 首次研究資料補抓 | 第一次報價刷新成功後觸發一次全域補抓。 |
-| `_handle_dashboard_exit` | 處理儀表板離開 | 依登出或結束程式的結果，`lock_vault` 後回登入畫面或關閉 App。 |
+| `end_session` | 結束登入工作階段 | 遞增 `_session_id`、清空記憶體持倉、`lock_vault`；讓舊 `@work` 不再寫入或重繪。 |
+| `_session_generation_matches` | 工作階段世代檢查 | Screen 的 `_session_id` 必須仍等於 App 的世代，否則 worker 放棄寫檔與畫面更新。 |
+| `_handle_dashboard_exit` | 處理儀表板離開 | 呼叫 `end_session` 後回登入畫面或關閉 App。 |
 
 ## 2. 登入、帳號與保險庫
 
@@ -68,9 +70,11 @@
 | `SECIdentityModal` | SEC 身分視窗 | 依 Fair Access 收集名稱＋信箱並取得明示同意。 |
 | `SECIdentityDeleteConfirmModal` | 刪除 SEC 身分確認 | 二次確認後從 Keychain 刪除；該帳號停止自動更新 13F。 |
 | `account_exists` / `register_account` / `verify_password` | 帳號 API | `auth.py`：Keychain 存 PBKDF2 雜湊。 |
-| `unlock_vault` / `unlock_vault_with_touchid` / `lock_vault` | 開關保險庫 | 把 32-byte 資料金鑰載入或清出行程記憶體。 |
-| `seal_user_files` | 封存使用者檔 | 登入後把舊明文持倉／偏好／SQLite／績效帳本改寫成 Fernet。 |
-| `read_protected_text` / `write_protected_text` / `protected_sqlite` | 受保護 I/O | 保險庫已解鎖才加密寫入。 |
+| `unlock_vault` / `unlock_vault_with_touchid` / `lock_vault` | 開關保險庫 | 把 32-byte 資料金鑰載入或清出行程記憶體；並記錄 `_vault_user`。 |
+| `current_vault_user` | 目前保險庫帳號 | 回傳已解鎖帳號，鎖定時為 `None`。 |
+| `VaultLocked` / `VaultUserMismatch` | 受保護 I/O 錯誤 | 鎖定時寫入、或寫入／讀取帳號與 `_vault_user` 不符時拋出。 |
+| `seal_user_files` | 封存使用者檔 | 僅當 `current_vault_user()` 就是該帳號時，把舊明文持倉／偏好／SQLite／績效帳本改寫成 Fernet。 |
+| `read_protected_text` / `write_protected_text` / `protected_sqlite` | 受保護 I/O | 必須傳 `user=`；僅當保險庫已為該帳號解鎖才加解密。鎖定或帳號不符則拒絕寫入，絕不把 `ATENC1` 改寫成明文。 |
 
 ## 3. 主儀表板與投資組合總覽
 

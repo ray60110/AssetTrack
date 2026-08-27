@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-23。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-08-27。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -54,7 +54,7 @@ flowchart TB
 
     Auth -->|"keyring"| Keychain
     Auth -->|"subprocess argv + exit code"| TouchID
-    Store -->|"Fernet ATENC1 或明文"| Files
+    Store -->|"Fernet ATENC1（須為該 user 解鎖）"| Files
     Domain -->|"quotes / institutional / ark_holdings"| YF
     Domain --> FRED
     Domain --> SEC
@@ -135,7 +135,7 @@ Dashboard 快捷鍵與目的地：
 |---|---|---|
 | `1` | 新增部位 | `AddPositionModal` |
 | `2` / `r` | 立即重整報價 | `_do_refresh_worker` |
-| `3` / `q` | 安全登出 | `LogoutConfirmModal` → `lock_vault` |
+| `3` / `q` | 安全登出 | `LogoutConfirmModal` → `end_session`（fence worker、`lock_vault`） |
 | `4` | 近期重大事件 | `UpcomingEventsScreen` |
 | `5` | 儲存市值快照 | `Storage.save_snapshot` |
 | `6` | 主動式 ETF | `ActiveETFsScreen` |
@@ -260,12 +260,12 @@ flowchart TB
 | 2 | Screen ↔ Modal | Textual 畫面堆疊 | `push_screen(modal, callback)` + `dismiss(value)` | typed 回傳值（`bool`、`str`、`list[Holding]`、`dict`） |
 | 3 | 使用者 → Screen | Textual 綁定 | `BINDINGS` / `on_key` / `on_button_pressed` / `on_data_table_cell_selected` | 按鍵與 widget 事件 |
 | 4 | 建議卡 → 公式頁 | Rich markup 點選 | `[@click=screen.show_formula('rN')]` → `_FormulaDrillMixin.action_show_formula` | token → `Recommendation` |
-| 5 | UI thread ↔ worker | Textual worker | `@work(thread=True)` + `app.call_from_thread(fn, …)` | 不可在 worker 直接改 widget |
-| 6 | App ↔ Dashboard | 共享 App 狀態 | `AssetTrackApp._fetch_activity: dict[str, str]` | 狀態列文案 |
+| 5 | UI thread ↔ worker | Textual worker | `@work(thread=True)` + `app.call_from_thread(fn, …)`；寫檔前查 `_session_generation_matches` | 不可在 worker 直接改 widget；舊世代放棄寫入 |
+| 6 | App ↔ Dashboard | 共享 App 狀態 | `AssetTrackApp._fetch_activity`、`_session_id` | 狀態列文案；登出世代 |
 | 7 | 各畫面 ↔ 分析模組 | Python import | 同步函式呼叫，回傳 `dict` / `list[Recommendation]` | 無序列化、無 RPC |
 | 8 | 分析 ↔ 快取 | 檔案 I/O | UTF-8 JSON / JSONL（一行一個物件） | 逐日真實快照 |
-| 9 | TUI ↔ 持倉 | 受保護文字 | `read_protected_text` / `write_protected_text`；前綴 `ATENC1:` + Fernet | 加密 JSON |
-| 10 | TUI ↔ SQLite | 臨時解密檔 | `protected_sqlite`：`ATENC1\n` + Fernet → temp file → `sqlite3` | 市值快照 |
+| 9 | TUI ↔ 持倉 | 受保護文字 | `read_protected_text` / `write_protected_text(..., user=)`；前綴 `ATENC1:` + Fernet。`user` 必須等於 `_vault_user` | 加密 JSON；鎖定或帳號不符則不寫檔 |
+| 10 | TUI ↔ SQLite | 臨時解密檔 | `protected_sqlite(..., user=)`：`ATENC1\n` + Fernet → temp file → `sqlite3` | 市值快照；同樣綁定帳號 |
 | 11 | auth ↔ OS | keyring | service/account/password 三元組 | 密碼雜湊、資料金鑰、Touch ID 旗標、SEC 身分 |
 | 12 | Login ↔ Touch ID | 子行程 | `subprocess.run([touchid_helper, user], capture_output=True)`；只看 **exit code**（0 成功、1 失敗、2 不可用） | 無 stdin/stdout 協定 |
 | 13 | quotes ↔ Yahoo | HTTPS（yfinance 封裝） | Yahoo Finance HTTP；`ThreadPoolExecutor` 並行 | 報價、持股、期權鏈、財報日 |
@@ -362,12 +362,18 @@ Keychain
 行程內保險庫
   unlock_vault / unlock_vault_with_touchid
     → _vault_key + _vault_user（threading.Lock 保護，供 worker 共用）
-  lock_vault
-    → 清除記憶體金鑰；登出時呼叫
+  current_vault_user()
+    → 已解鎖帳號，否則 None
+  lock_vault / end_session
+    → 清除記憶體金鑰並遞增 App._session_id；登出時呼叫
+  受保護 I/O
+    → write/read/protected_sqlite 皆需 user=，且 user == _vault_user
+    → VaultLocked / VaultUserMismatch 時不碰磁碟（既有 ATENC1 密文保留）
 
 檔案
-  明文 JSON ──寫入時若 vault 已解鎖──► "ATENC1:" + Fernet token
+  明文 JSON ──僅當 vault 已為該 user 解鎖──► "ATENC1:" + Fernet token
   SQLite 整個檔 ──► b"ATENC1\n" + Fernet token
+  鎖定或帳號不符時禁止把密文改寫成明文，也禁止用別人的金鑰重封
 ```
 
 Touch ID **不**把密碼傳進 Swift。helper 只做 `LocalAuthentication` 裝置擁有者驗證；Python 看到 exit code 0 後，用 Keychain 裡既有的 data key 開保險庫。因此 Touch ID 只能解鎖「這台裝置曾經用密碼登入過」的帳號。
@@ -450,7 +456,7 @@ AssetTrack 只讀不寫 Champion。QuantTrade 在自己的 feedback cycle 結束
 
 資料根目錄：`Path.cwd() / "data"`（`storage.get_data_dir()`）。
 
-### 6.1 登入後加密（保險庫解鎖才用 Fernet 覆寫）
+### 6.1 登入後加密（須為該 user 解鎖才用 Fernet 覆寫）
 
 | 路徑 | 內容 |
 |---|---|
