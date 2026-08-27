@@ -214,6 +214,99 @@ class AuthSecurityTests(unittest.TestCase):
         self.assertTrue(auth.vault_is_unlocked())
         self.assertEqual(auth.decrypt_text(auth.encrypt_text("ok")), "ok")
 
+    def _quoted_holding(self) -> Position:
+        return Position(
+            broker="ft",
+            account="main",
+            symbol="AAPL",
+            instrument_type="stock",
+            quantity=100,
+            avg_cost=150,
+            currency="USD",
+            market_price=190.5,
+            prev_close=188.0,
+        )
+
+    def test_locked_vault_does_not_overwrite_ciphertext_with_plaintext(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(storage, "get_data_dir", return_value=Path(tmp)):
+                auth.register_account("alice", "correct-horse")
+                auth.unlock_vault("alice", "correct-horse")
+                storage.save_quote_overlay("alice", [self._quoted_holding()])
+                path = Path(tmp) / "alice_quote_overlay.json"
+                sealed = path.read_text(encoding="utf-8")
+                self.assertTrue(sealed.startswith(auth.TEXT_PREFIX))
+                self.assertNotIn("AAPL", sealed)
+
+                auth.lock_vault()
+                with self.assertRaises(auth.VaultLocked):
+                    auth.write_protected_text(
+                        path, '{"quotes":{"AAPL":1}}', user="alice"
+                    )
+                storage.save_quote_overlay("alice", [self._quoted_holding()])
+                still = path.read_text(encoding="utf-8")
+                self.assertEqual(still, sealed)
+                self.assertNotIn("AAPL", still)
+
+    def test_leftover_worker_cannot_reencrypt_previous_user_with_next_vault_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(storage, "get_data_dir", return_value=Path(tmp)):
+                auth.register_account("alice", "correct-horse")
+                auth.unlock_vault("alice", "correct-horse")
+                holding = self._quoted_holding()
+                storage.save_quote_overlay("alice", [holding])
+                path = Path(tmp) / "alice_quote_overlay.json"
+                sealed = path.read_text(encoding="utf-8")
+
+                hold = threading.Event()
+                done = threading.Event()
+                errors: list[BaseException] = []
+
+                def leftover_worker() -> None:
+                    try:
+                        hold.wait(timeout=5)
+                        storage.save_quote_overlay("alice", [holding])
+                    except BaseException as exc:
+                        errors.append(exc)
+                    finally:
+                        done.set()
+
+                thread = threading.Thread(target=leftover_worker)
+                thread.start()
+                auth.lock_vault()
+                auth.register_account("bob", "bob-secret-password")
+                auth.unlock_vault("bob", "bob-secret-password")
+                hold.set()
+                done.wait(timeout=5)
+                thread.join(timeout=2)
+                self.assertEqual(errors, [])
+
+                after = path.read_text(encoding="utf-8")
+                self.assertEqual(after, sealed)
+                with self.assertRaises(auth.AuthError):
+                    auth.decrypt_text(after)
+                with self.assertRaises(auth.VaultUserMismatch):
+                    auth.read_protected_text(path, user="alice")
+                with self.assertRaises(auth.AuthError):
+                    auth.read_protected_text(path, user="bob")
+
+                auth.lock_vault()
+                auth.unlock_vault("alice", "correct-horse")
+                payload = json.loads(auth.read_protected_text(path, user="alice"))
+                self.assertIn("AAPL", json.dumps(payload))
+                self.assertEqual(
+                    payload["quotes"]["ft\x1fmain\x1fAAPL\x1fstock"]["market_price"],
+                    190.5,
+                )
+
+    def test_current_vault_user_tracks_unlock_and_lock(self):
+        self.assertIsNone(auth.current_vault_user())
+        auth.register_account("alice", "correct-horse")
+        auth.unlock_vault("alice", "correct-horse")
+        self.assertEqual(auth.current_vault_user(), "alice")
+        auth.lock_vault()
+        self.assertIsNone(auth.current_vault_user())
+
 
 class SECUserAgentGuardTests(unittest.TestCase):
     def test_headless_sec_user_agent_requires_explicit_allow(self):

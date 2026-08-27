@@ -40,7 +40,52 @@ class ScheduledBenchmarkPrices:
         }
 
 
-class PortfolioPerformanceTrackingTests(unittest.TestCase):
+class _AliceVaultMixin:
+    def setUp(self):
+        super().setUp()
+        from assettrack import auth
+
+        class _MemoryKeyring:
+            def __init__(self) -> None:
+                self.secrets: dict[tuple[str, str], str] = {}
+
+            def get_password(self, service, account):
+                return self.secrets.get((service, account))
+
+            def set_password(self, service, account, value):
+                self.secrets[(service, account)] = value
+
+            def delete_password(self, service, account):
+                self.secrets.pop((service, account), None)
+
+        self._keyring = _MemoryKeyring()
+        self._auth_patches = [
+            patch.object(auth.keyring, "get_password", self._keyring.get_password),
+            patch.object(auth.keyring, "set_password", self._keyring.set_password),
+            patch.object(auth.keyring, "delete_password", self._keyring.delete_password),
+            patch.object(auth, "PBKDF2_ITERATIONS", 1000),
+        ]
+        for item in self._auth_patches:
+            item.start()
+        auth.lock_vault()
+        auth.register_account("alice", "correct-horse")
+        auth.unlock_vault("alice", "correct-horse")
+
+    def tearDown(self):
+        from assettrack import auth
+
+        auth.lock_vault()
+        for item in reversed(self._auth_patches):
+            item.stop()
+        super().tearDown()
+
+    def _ledger_document(self, path: Path) -> dict:
+        from assettrack.auth import read_protected_text
+
+        return json.loads(read_protected_text(path, user="alice"))
+
+
+class PortfolioPerformanceTrackingTests(_AliceVaultMixin, unittest.TestCase):
     def test_new_account_can_opt_in_without_a_tracking_gap(self):
         with tempfile.TemporaryDirectory() as tmp:
             tracker = PortfolioPerformanceTracker(
@@ -57,7 +102,7 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
             self.assertFalse(state.has_tracking_gap)
             self.assertEqual(state.benchmarks, ("QQQ", "VT"))
 
-            document = json.loads(tracker.path.read_text())
+            document = self._ledger_document(tracker.path)
             self.assertTrue(
                 document["userporfolioperf_trackingsys_toggle"]
             )
@@ -307,7 +352,7 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
             self.assertFalse(tracker.valuation_due(sunday))
 
 
-class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
+class PerformanceTrackingTUITests(_AliceVaultMixin, unittest.IsolatedAsyncioTestCase):
     async def test_registration_can_opt_in_to_performance_tracking(self):
         from textual.app import App
         from textual.widgets import Button, Checkbox, Input
@@ -435,7 +480,7 @@ class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("績效追蹤已取消", str(status.render()))
 
             state = tracker.state()
-            document = json.loads(tracker.path.read_text())
+            document = self._ledger_document(tracker.path)
 
         self.assertFalse(state.enabled)
         self.assertIsNotNone(

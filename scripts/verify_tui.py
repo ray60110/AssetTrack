@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
+from unittest.mock import patch
 
 from assettrack.models import Position
 from assettrack.tui import (
@@ -53,6 +56,40 @@ def _sample_positions() -> list[Position]:
             last_updated=datetime.utcnow(),
         ),
     ]
+
+
+class _MemoryKeyring:
+    def __init__(self) -> None:
+        self.secrets = {}
+
+    def get_password(self, service, account):
+        return self.secrets.get((service, account))
+
+    def set_password(self, service, account, value):
+        self.secrets[(service, account)] = value
+
+    def delete_password(self, service, account):
+        self.secrets.pop((service, account), None)
+
+
+@contextmanager
+def _unlocked_vault(user: str = "testuser"):
+    """Harness login: AssetTrackApp skips LoginScreen, so the vault must be opened."""
+    from assettrack import auth
+
+    keyring = _MemoryKeyring()
+    with patch.object(auth.keyring, "get_password", keyring.get_password), patch.object(
+        auth.keyring, "set_password", keyring.set_password
+    ), patch.object(
+        auth.keyring, "delete_password", keyring.delete_password
+    ), patch.object(auth, "PBKDF2_ITERATIONS", 1000):
+        auth.lock_vault()
+        auth.register_account(user, "correct-horse")
+        auth.unlock_vault(user, "correct-horse")
+        try:
+            yield
+        finally:
+            auth.lock_vault()
 
 
 def verify_imports() -> None:
@@ -237,7 +274,7 @@ def verify_event_actuals_and_timezones() -> None:
 
     with tempfile.TemporaryDirectory() as temp_dir, patch(
         "assettrack.storage.get_data_dir", return_value=Path(temp_dir)
-    ):
+    ), _unlocked_vault("testuser"):
         save_user_preferences({"event_timezone": "America/New_York"}, "testuser")
         assert load_user_preferences("testuser")["event_timezone"] == "America/New_York"
 
@@ -438,32 +475,37 @@ async def verify_modal_editing() -> None:
 
 async def verify_add_position_modal() -> None:
     """測試新增部位對話框：按 1 直接開啟、批次累積（儲存並繼續）、完成儲存。"""
+    import tempfile
+
     positions = _sample_positions()
-    app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("1")
-        await pilot.pause(0.2)
-        assert isinstance(pilot.app.screen, AddPositionModal)
+    with tempfile.TemporaryDirectory() as temp_dir, patch(
+        "assettrack.storage.get_data_dir", return_value=Path(temp_dir)
+    ), _unlocked_vault("testuser"):
+        app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("1")
+            await pilot.pause(0.2)
+            assert isinstance(pilot.app.screen, AddPositionModal)
 
-        modal = pilot.app.screen
-        # 第一筆：MSFT → 儲存並繼續（加入待存清單，表單重置）
-        modal.query_one("#add-symbol").value = "MSFT"
-        modal.query_one("#add-qty").value = "15"
-        modal.query_one("#add-cost").value = "420.0"
-        modal.query_one("#confirm-next").focus()
-        await pilot.press("enter")
-        await pilot.pause(0.1)
-        assert len(modal._pending) == 1
-        assert modal._pending[0].symbol == "MSFT"
-        assert modal.query_one("#add-symbol").value == ""
+            modal = pilot.app.screen
+            # 第一筆：MSFT → 儲存並繼續（加入待存清單，表單重置）
+            modal.query_one("#add-symbol").value = "MSFT"
+            modal.query_one("#add-qty").value = "15"
+            modal.query_one("#add-cost").value = "420.0"
+            modal.query_one("#confirm-next").focus()
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert len(modal._pending) == 1
+            assert modal._pending[0].symbol == "MSFT"
+            assert modal.query_one("#add-symbol").value == ""
 
-        # 第二筆：NVDA → 完成儲存（整批回傳）
-        modal.query_one("#add-symbol").value = "NVDA"
-        modal.query_one("#add-qty").value = "5"
-        modal.query_one("#confirm").focus()
-        await pilot.press("enter")
-        await pilot.pause(0.2)
-        assert isinstance(pilot.app.screen, DashboardScreen)
+            # 第二筆：NVDA → 完成儲存（整批回傳）
+            modal.query_one("#add-symbol").value = "NVDA"
+            modal.query_one("#add-qty").value = "5"
+            modal.query_one("#confirm").focus()
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+            assert isinstance(pilot.app.screen, DashboardScreen)
 
 
 async def verify_symbol_auto_inference() -> None:

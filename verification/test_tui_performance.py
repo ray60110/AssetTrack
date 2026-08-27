@@ -360,6 +360,29 @@ def test_quote_overlay_recomputes_value_from_current_quantity(tmp_path, monkeypa
     from assettrack import storage
 
     monkeypatch.setattr(storage, "get_data_dir", lambda: tmp_path)
+    from assettrack import auth
+
+    class _MemoryKeyring:
+        def __init__(self) -> None:
+            self.secrets = {}
+
+        def get_password(self, service, account):
+            return self.secrets.get((service, account))
+
+        def set_password(self, service, account, value):
+            self.secrets[(service, account)] = value
+
+        def delete_password(self, service, account):
+            self.secrets.pop((service, account), None)
+
+    keyring = _MemoryKeyring()
+    monkeypatch.setattr(auth.keyring, "get_password", keyring.get_password)
+    monkeypatch.setattr(auth.keyring, "set_password", keyring.set_password)
+    monkeypatch.setattr(auth.keyring, "delete_password", keyring.delete_password)
+    monkeypatch.setattr(auth, "PBKDF2_ITERATIONS", 1000)
+    auth.lock_vault()
+    auth.register_account("alice", "correct-horse")
+    auth.unlock_vault("alice", "correct-horse")
     live = Position(
         broker="ft",
         account="ira",
@@ -382,10 +405,13 @@ def test_quote_overlay_recomputes_value_from_current_quantity(tmp_path, monkeypa
         }
     )
     overlay, as_of = storage.apply_quote_overlay("alice", [edited])
-    assert as_of
-    assert overlay[0].market_price == 100
-    assert overlay[0].market_value == 2000
-    assert overlay[0].prev_close == 90
+    try:
+        assert as_of
+        assert overlay[0].market_price == 100
+        assert overlay[0].market_value == 2000
+        assert overlay[0].prev_close == 90
+    finally:
+        auth.lock_vault()
 
 
 def test_quote_overlay_drop_prevents_stale_first_paint(tmp_path, monkeypatch) -> None:
@@ -395,6 +421,29 @@ def test_quote_overlay_drop_prevents_stale_first_paint(tmp_path, monkeypatch) ->
     from assettrack import storage
 
     monkeypatch.setattr(storage, "get_data_dir", lambda: tmp_path)
+    from assettrack import auth
+
+    class _MemoryKeyring:
+        def __init__(self) -> None:
+            self.secrets = {}
+
+        def get_password(self, service, account):
+            return self.secrets.get((service, account))
+
+        def set_password(self, service, account, value):
+            self.secrets[(service, account)] = value
+
+        def delete_password(self, service, account):
+            self.secrets.pop((service, account), None)
+
+    keyring = _MemoryKeyring()
+    monkeypatch.setattr(auth.keyring, "get_password", keyring.get_password)
+    monkeypatch.setattr(auth.keyring, "set_password", keyring.set_password)
+    monkeypatch.setattr(auth.keyring, "delete_password", keyring.delete_password)
+    monkeypatch.setattr(auth, "PBKDF2_ITERATIONS", 1000)
+    auth.lock_vault()
+    auth.register_account("alice", "correct-horse")
+    auth.unlock_vault("alice", "correct-horse")
     live = Position(
         broker="ft",
         symbol="MU",
@@ -408,8 +457,11 @@ def test_quote_overlay_drop_prevents_stale_first_paint(tmp_path, monkeypatch) ->
     storage.drop_quote_overlay_keys("alice", [tui._pos_key(live)])
     bare = live.model_copy(update={"market_price": None, "market_value": None})
     overlay, as_of = storage.apply_quote_overlay("alice", [bare])
-    assert as_of is None
-    assert overlay[0].market_price is None
+    try:
+        assert as_of is None
+        assert overlay[0].market_price is None
+    finally:
+        auth.lock_vault()
 
 
 def test_cached_usdtwd_rate_uses_disk_without_network(tmp_path, monkeypatch) -> None:

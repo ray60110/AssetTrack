@@ -7,6 +7,7 @@ account has already authenticated with a password on this device.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import os
@@ -38,6 +39,14 @@ _vault_user: Optional[str] = None
 
 class AuthError(RuntimeError):
     """Raised when an account cannot be unlocked or created."""
+
+
+class VaultLocked(AuthError):
+    """Raised when protected I/O runs without an unlocked vault."""
+
+
+class VaultUserMismatch(AuthError):
+    """Raised when protected I/O is for a different account than the unlocked vault."""
 
 
 def _normalize_user(user: str) -> str:
@@ -132,20 +141,39 @@ def _ensure_data_key(user: str) -> bytes:
     return raw
 
 
+def _fernet_from_key(key: bytes) -> Fernet:
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
 def _current_fernet() -> Fernet:
     with _vault_lock:
         key = _vault_key
     if key is None:
-        raise AuthError("資料保險庫尚未解鎖")
-    # Fernet requires a url-safe base64-encoded 32-byte key.
-    import base64
+        raise VaultLocked("資料保險庫尚未解鎖")
+    return _fernet_from_key(key)
 
-    return Fernet(base64.urlsafe_b64encode(key))
+
+def _vault_key_for(user: str) -> bytes:
+    """Return the in-memory data key only when it belongs to ``user``."""
+    account = _normalize_user(user)
+    with _vault_lock:
+        key = _vault_key
+        vault_user = _vault_user
+    if key is None or vault_user is None:
+        raise VaultLocked("資料保險庫尚未解鎖")
+    if vault_user != account:
+        raise VaultUserMismatch("資料保險庫已由其他帳號解鎖")
+    return key
 
 
 def vault_is_unlocked() -> bool:
     with _vault_lock:
         return _vault_key is not None
+
+
+def current_vault_user() -> Optional[str]:
+    with _vault_lock:
+        return _vault_user
 
 
 def _set_vault(user: str, key: bytes) -> None:
@@ -228,23 +256,36 @@ def _chmod_private(path: Path) -> None:
         pass
 
 
-def read_protected_text(path: Path) -> str:
+def read_protected_text(path: Path, *, user: str) -> str:
     raw = path.read_text(encoding="utf-8")
-    if is_encrypted_text(raw):
-        return decrypt_text(raw)
-    return raw
+    if not is_encrypted_text(raw):
+        return raw
+    key = _vault_key_for(user)
+    try:
+        return (
+            _fernet_from_key(key)
+            .decrypt(raw[len(TEXT_PREFIX):].encode("ascii"))
+            .decode("utf-8")
+        )
+    except InvalidToken as exc:
+        raise AuthError("無法解密資料檔") from exc
 
 
-def write_protected_text(path: Path, text: str) -> None:
+def write_protected_text(path: Path, text: str, *, user: str) -> None:
+    """Encrypt ``text`` for ``user`` and replace ``path``. Never writes plaintext."""
+    key = _vault_key_for(user)
+    token = _fernet_from_key(key).encrypt(text.encode("utf-8"))
+    payload = TEXT_PREFIX + token.decode("ascii")
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = encrypt_text(text) if vault_is_unlocked() else text
     path.write_text(payload, encoding="utf-8")
     _chmod_private(path)
 
 
 @contextmanager
-def protected_sqlite(path: Path) -> Iterator[sqlite3.Connection]:
-    """Open a SQLite file, decrypting at rest when the vault is unlocked."""
+def protected_sqlite(path: Path, *, user: str) -> Iterator[sqlite3.Connection]:
+    """Open a SQLite file, decrypting and re-encrypting with ``user``'s vault key."""
+    key = _vault_key_for(user)
+    fernet = _fernet_from_key(key)
     handle, tmp_name = tempfile.mkstemp(suffix=".db")
     os.close(handle)
     working = Path(tmp_name)
@@ -252,7 +293,10 @@ def protected_sqlite(path: Path) -> Iterator[sqlite3.Connection]:
         if path.exists():
             data = path.read_bytes()
             if data.startswith(BINARY_PREFIX):
-                data = decrypt_bytes(data)
+                try:
+                    data = fernet.decrypt(data[len(BINARY_PREFIX):])
+                except InvalidToken as exc:
+                    raise AuthError("無法解密資料庫") from exc
             working.write_bytes(data)
         _chmod_private(working)
         con = sqlite3.connect(str(working))
@@ -263,7 +307,7 @@ def protected_sqlite(path: Path) -> Iterator[sqlite3.Connection]:
             con.close()
         out = working.read_bytes() if working.exists() else b""
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(encrypt_bytes(out) if vault_is_unlocked() else out)
+        path.write_bytes(BINARY_PREFIX + fernet.encrypt(out))
         _chmod_private(path)
     finally:
         working.unlink(missing_ok=True)

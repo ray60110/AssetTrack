@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import yfinance as yf
 
-from .auth import read_protected_text, write_protected_text
+from .auth import AuthError, read_protected_text, write_protected_text
 from .models import CashPosition, Position, merge_cash_position
 
 
@@ -151,8 +151,8 @@ class PortfolioPerformanceTracker:
         if not self.path.exists():
             return self._empty_document()
         try:
-            document = json.loads(read_protected_text(self.path))
-        except (OSError, json.JSONDecodeError):
+            document = json.loads(read_protected_text(self.path, user=self.user))
+        except (OSError, json.JSONDecodeError, AuthError):
             return self._empty_document()
         if not isinstance(document, dict):
             return self._empty_document()
@@ -181,6 +181,7 @@ class PortfolioPerformanceTracker:
         write_protected_text(
             self.path,
             json.dumps(document, ensure_ascii=False, indent=2),
+            user=self.user,
         )
 
     def state(self) -> TrackingState:

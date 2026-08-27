@@ -101,7 +101,7 @@ def load_user_preferences(user: str = "default") -> dict:
     if not path.exists():
         return defaults
     try:
-        raw = json.loads(read_protected_text(path))
+        raw = json.loads(read_protected_text(path, user=user))
         if isinstance(raw, dict):
             defaults.update(raw)
     except Exception:
@@ -112,7 +112,9 @@ def load_user_preferences(user: str = "default") -> dict:
 def save_user_preferences(preferences: dict, user: str = "default") -> None:
     """Persist per-user UI preferences as UTF-8 JSON."""
     path = get_preferences_path(user)
-    write_protected_text(path, json.dumps(preferences, ensure_ascii=False, indent=2))
+    write_protected_text(
+        path, json.dumps(preferences, ensure_ascii=False, indent=2), user=user
+    )
 
 
 def get_event_history_path(user: str = "default") -> Path:
@@ -126,7 +128,7 @@ def load_event_history(user: str = "default") -> list[dict]:
     if not path.exists():
         return []
     try:
-        raw = json.loads(read_protected_text(path))
+        raw = json.loads(read_protected_text(path, user=user))
         return raw if isinstance(raw, list) else []
     except Exception:
         return []
@@ -137,16 +139,18 @@ def save_event_history(events: list[dict], user: str = "default") -> None:
     write_protected_text(
         get_event_history_path(user),
         json.dumps(events, ensure_ascii=False, indent=2),
+        user=user,
     )
 
 
 class Storage:
     def __init__(self, db_path: Optional[Path] = None, user: str = "default"):
+        self.user = user
         self.db_path = db_path or get_db_path(user)
         self._init_db()
 
     def _init_db(self):
-        with protected_sqlite(self.db_path) as con:
+        with protected_sqlite(self.db_path, user=self.user) as con:
             cur = con.cursor()
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS snapshots (
@@ -183,7 +187,7 @@ class Storage:
             """)
 
     def save_snapshot(self, snap: PortfolioSnapshot) -> int:
-        with protected_sqlite(self.db_path) as con:
+        with protected_sqlite(self.db_path, user=self.user) as con:
             cur = con.cursor()
             by_broker_json = json.dumps(snap.by_broker)
             cur.execute(
@@ -208,7 +212,7 @@ class Storage:
         return snap_id
 
     def get_latest_snapshot(self) -> Optional[PortfolioSnapshot]:
-        with protected_sqlite(self.db_path) as con:
+        with protected_sqlite(self.db_path, user=self.user) as con:
             cur = con.cursor()
             cur.execute(
                 "SELECT id, timestamp, total_value, cash, by_broker, notes FROM snapshots ORDER BY timestamp DESC LIMIT 1"
@@ -231,7 +235,7 @@ class Storage:
         )
 
     def get_snapshots_since(self, since: datetime) -> list[PortfolioSnapshot]:
-        with protected_sqlite(self.db_path) as con:
+        with protected_sqlite(self.db_path, user=self.user) as con:
             cur = con.cursor()
             cur.execute(
                 """
@@ -262,7 +266,7 @@ class Storage:
         return results
 
     def save_transaction(self, timestamp: datetime, broker: str, symbol: str, action: str, quantity: float, price: float, currency: str, commission: Optional[float] = None, realized_pnl: Optional[float] = None, notes: Optional[str] = None) -> int:
-        with protected_sqlite(self.db_path) as con:
+        with protected_sqlite(self.db_path, user=self.user) as con:
             cur = con.cursor()
             cur.execute(
                 """
@@ -286,7 +290,7 @@ class Storage:
         return tx_id
 
     def get_all_transactions(self) -> list[dict]:
-        with protected_sqlite(self.db_path) as con:
+        with protected_sqlite(self.db_path, user=self.user) as con:
             cur = con.cursor()
             cur.execute(
                 """
@@ -323,7 +327,7 @@ def load_manual_positions(user: str = "default") -> tuple[list[Position], list[C
     if not path.exists():
         return [], []
     try:
-        data = json.loads(read_protected_text(path))
+        data = json.loads(read_protected_text(path, user=user))
         if isinstance(data, dict) and "positions" in data:
             positions = [Position.model_validate(p) for p in data["positions"]]
             cash_raw = data.get("cash_positions", [])
@@ -348,15 +352,15 @@ def save_manual_positions(
         "cash_positions": [c.to_dict() for c in (cash_positions or [])],
         "last_manual_update": datetime.utcnow().isoformat(),
     }
-    write_protected_text(path, json.dumps(data, indent=2))
+    write_protected_text(path, json.dumps(data, indent=2), user=user)
 
 
 def seal_user_files(user: str) -> None:
     """Rewrite personal files under the unlocked vault so legacy plaintext is sealed."""
-    from .auth import BINARY_PREFIX, is_encrypted_text, vault_is_unlocked
+    from .auth import BINARY_PREFIX, current_vault_user, is_encrypted_text
     from .performance import PortfolioPerformanceTracker
 
-    if not vault_is_unlocked():
+    if current_vault_user() != user:
         return
     positions, cash_positions = load_manual_positions(user)
     positions_path = get_positions_path(user)
@@ -403,7 +407,7 @@ def _quote_overlay_key(position: Position) -> str:
 def load_quote_overlay(user: str) -> dict:
     """Load last live quotes for first paint. Returns {} if missing/corrupt."""
     try:
-        data = json.loads(read_protected_text(_quote_overlay_path(user)))
+        data = json.loads(read_protected_text(_quote_overlay_path(user), user=user))
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
@@ -428,6 +432,7 @@ def save_quote_overlay(user: str, positions: Iterable[Position]) -> None:
         write_protected_text(
             _quote_overlay_path(user),
             json.dumps(payload, indent=2, ensure_ascii=False),
+            user=user,
         )
     except Exception:
         pass
@@ -453,6 +458,7 @@ def drop_quote_overlay_keys(user: str, keys: Iterable[tuple[str, str, str, str]]
         write_protected_text(
             _quote_overlay_path(user),
             json.dumps(data, indent=2, ensure_ascii=False),
+            user=user,
         )
     except Exception:
         pass
