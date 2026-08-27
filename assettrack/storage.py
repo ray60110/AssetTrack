@@ -5,7 +5,13 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .auth import protected_sqlite, read_protected_text, write_protected_text
+from .auth import (
+    AuthError,
+    is_encrypted_text,
+    protected_sqlite,
+    read_protected_text,
+    write_protected_text,
+)
 from .market_sessions import NYSESessionCalendar
 from .models import PortfolioSnapshot, Position, CashPosition
 
@@ -322,6 +328,8 @@ def load_manual_positions(user: str = "default") -> tuple[list[Position], list[C
     path = get_positions_path(user)
     if not path.exists():
         return [], []
+    raw = path.read_text(encoding="utf-8")
+    protected = is_encrypted_text(raw)
     try:
         data = json.loads(read_protected_text(path))
         if isinstance(data, dict) and "positions" in data:
@@ -331,8 +339,14 @@ def load_manual_positions(user: str = "default") -> tuple[list[Position], list[C
             return positions, cash_positions
         if isinstance(data, list):
             return [Position.model_validate(p) for p in data], []
+    except AuthError:
+        raise
     except Exception:
+        if protected:
+            raise AuthError("無法解析受保護的持倉檔")
         return [], []
+    if protected:
+        raise AuthError("無法解析受保護的持倉檔")
     return [], []
 
 

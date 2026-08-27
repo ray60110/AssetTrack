@@ -237,6 +237,12 @@ def read_protected_text(path: Path) -> str:
 
 def write_protected_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if is_encrypted_text(existing):
+            # Refuse to replace ciphertext the current vault key cannot read,
+            # and never downgrade an encrypted file to plaintext after logout.
+            decrypt_text(existing)
     payload = encrypt_text(text) if vault_is_unlocked() else text
     path.write_text(payload, encoding="utf-8")
     _chmod_private(path)
@@ -248,10 +254,12 @@ def protected_sqlite(path: Path) -> Iterator[sqlite3.Connection]:
     handle, tmp_name = tempfile.mkstemp(suffix=".db")
     os.close(handle)
     working = Path(tmp_name)
+    started_encrypted = False
     try:
         if path.exists():
             data = path.read_bytes()
-            if data.startswith(BINARY_PREFIX):
+            started_encrypted = data.startswith(BINARY_PREFIX)
+            if started_encrypted:
                 data = decrypt_bytes(data)
             working.write_bytes(data)
         _chmod_private(working)
@@ -263,7 +271,12 @@ def protected_sqlite(path: Path) -> Iterator[sqlite3.Connection]:
             con.close()
         out = working.read_bytes() if working.exists() else b""
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(encrypt_bytes(out) if vault_is_unlocked() else out)
+        if vault_is_unlocked():
+            path.write_bytes(encrypt_bytes(out))
+        elif started_encrypted:
+            raise AuthError("資料保險庫尚未解鎖")
+        else:
+            path.write_bytes(out)
         _chmod_private(path)
     finally:
         working.unlink(missing_ok=True)

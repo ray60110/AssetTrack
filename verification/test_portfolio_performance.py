@@ -699,5 +699,69 @@ class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
                 auth.lock_vault()
 
 
+class DeclaredCashFlowPersistenceTests(unittest.TestCase):
+    def test_follow_up_valuation_failure_does_not_fail_or_duplicate_a_deposit(self):
+        from assettrack import storage, tui
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            cash = [
+                CashPosition(
+                    broker="IBKR",
+                    account="MAIN",
+                    currency="USD",
+                    amount=1_000,
+                )
+            ]
+            with patch.object(tui, "get_data_dir", return_value=data_dir), patch.object(
+                storage, "get_data_dir", return_value=data_dir
+            ), patch.object(
+                tui, "YFinanceBenchmarkPrices", FixedBenchmarkPrices
+            ), patch.object(
+                tui, "total_asset_value_usd", return_value=1_500.0
+            ):
+                tracker = PortfolioPerformanceTracker(
+                    user="alice",
+                    data_dir=data_dir,
+                    benchmark_prices=FixedBenchmarkPrices(),
+                )
+                tracker.enable(new_account=True)
+                storage.save_manual_positions([], cash, user="alice")
+                declaration = {
+                    "direction": "deposit",
+                    "amount": 500,
+                    "currency": "USD",
+                    "broker": "IBKR",
+                    "account": "MAIN",
+                    "category": "salary",
+                    "channel": "bank_transfer",
+                }
+
+                def boom(self, **kwargs):
+                    raise ValueError("missing benchmark closing prices: QQQ")
+
+                with patch.object(
+                    PortfolioPerformanceTracker, "record_valuation", boom
+                ):
+                    _positions, updated_cash = tui._process_declared_cash_flow(
+                        user="alice",
+                        positions=[],
+                        cash_positions=cash,
+                        rate=32,
+                        declaration=declaration,
+                    )
+
+                restored_positions, restored_cash = storage.load_manual_positions(
+                    "alice"
+                )
+                restored_flows = tracker.cash_flows()
+
+        self.assertEqual(updated_cash[0].amount, 1_500)
+        self.assertEqual(restored_positions, [])
+        self.assertEqual(restored_cash[0].amount, 1_500)
+        self.assertEqual(len(restored_flows), 1)
+        self.assertEqual(restored_flows[0].amount, 500)
+
+
 if __name__ == "__main__":
     unittest.main()

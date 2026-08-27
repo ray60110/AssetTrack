@@ -214,6 +214,68 @@ class AuthSecurityTests(unittest.TestCase):
         self.assertTrue(auth.vault_is_unlocked())
         self.assertEqual(auth.decrypt_text(auth.encrypt_text("ok")), "ok")
 
+    def test_lost_data_key_does_not_look_like_an_empty_portfolio(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(storage, "get_data_dir", return_value=Path(tmp)):
+                auth.register_account("alice", "correct-horse")
+                auth.unlock_vault("alice", "correct-horse")
+                storage.save_manual_positions(
+                    [
+                        Position(
+                            broker="manual",
+                            symbol="AAPL",
+                            instrument_type="stock",
+                            quantity=10,
+                            avg_cost=100,
+                            currency="USD",
+                        )
+                    ],
+                    [CashPosition(broker="manual", currency="USD", amount=50)],
+                    user="alice",
+                )
+                path = Path(tmp) / "alice_positions.json"
+                original = path.read_text()
+
+                self.keyring.secrets.pop((auth.DATA_KEY_SERVICE, "alice"))
+                auth.lock_vault()
+                auth.unlock_vault("alice", "correct-horse")
+
+                with self.assertRaises(auth.AuthError):
+                    storage.load_manual_positions("alice")
+                with self.assertRaises(auth.AuthError):
+                    storage.save_manual_positions([], [], user="alice")
+                self.assertEqual(path.read_text(), original)
+
+    def test_locking_the_vault_does_not_downgrade_encrypted_files_to_plaintext(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "alice_positions.json"
+            auth.register_account("alice", "correct-horse")
+            auth.unlock_vault("alice", "correct-horse")
+            auth.write_protected_text(path, '{"positions":[]}')
+            ciphertext = path.read_text()
+            self.assertTrue(ciphertext.startswith(auth.TEXT_PREFIX))
+
+            auth.lock_vault()
+            with self.assertRaises(auth.AuthError):
+                auth.write_protected_text(path, '{"positions":[{"symbol":"WIPE"}]}')
+            self.assertEqual(path.read_text(), ciphertext)
+            self.assertNotIn("WIPE", path.read_text())
+
+    def test_locking_the_vault_does_not_write_sqlite_plaintext_over_ciphertext(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "alice_assettrack.db"
+            auth.register_account("alice", "correct-horse")
+            auth.unlock_vault("alice", "correct-horse")
+            storage.Storage(db_path=db_path, user="alice")
+            ciphertext = db_path.read_bytes()
+            self.assertTrue(ciphertext.startswith(auth.BINARY_PREFIX))
+
+            auth.lock_vault()
+            with self.assertRaises(auth.AuthError):
+                with auth.protected_sqlite(db_path) as con:
+                    con.execute("create table if not exists t (x int)")
+            self.assertEqual(db_path.read_bytes(), ciphertext)
+
 
 class SECUserAgentGuardTests(unittest.TestCase):
     def test_headless_sec_user_agent_requires_explicit_allow(self):
@@ -237,6 +299,73 @@ class SECUserAgentGuardTests(unittest.TestCase):
         ):
             headers = institutional._sec_headers()
         self.assertEqual(headers["User-Agent"], "Name email@example.com")
+
+
+class LoginDecryptFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_login_does_not_onboard_over_undecryptable_positions(self):
+        from textual.app import App
+        from textual.widgets import Label
+
+        from assettrack import tui
+
+        keyring = _MemoryKeyring()
+
+        class HostApp(App):
+            def on_mount(self):
+                self.push_screen(tui.LoginScreen("alice"))
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            auth.keyring, "get_password", keyring.get_password
+        ), patch.object(
+            auth.keyring, "set_password", keyring.set_password
+        ), patch.object(
+            auth.keyring, "delete_password", keyring.delete_password
+        ), patch.object(
+            auth, "PBKDF2_ITERATIONS", 1000
+        ), patch.object(
+            storage, "get_data_dir", return_value=Path(tmp)
+        ), patch.object(
+            tui, "get_data_dir", return_value=Path(tmp)
+        ), patch.object(
+            tui, "load_sec_identity", return_value={"name": "Ada"}
+        ):
+            auth.lock_vault()
+            auth.register_account("alice", "correct-horse")
+            auth.unlock_vault("alice", "correct-horse")
+            storage.save_manual_positions(
+                [
+                    Position(
+                        broker="manual",
+                        symbol="AAPL",
+                        instrument_type="stock",
+                        quantity=10,
+                        avg_cost=100,
+                        currency="USD",
+                    )
+                ],
+                [],
+                user="alice",
+            )
+            ciphertext = Path(tmp, "alice_positions.json").read_text()
+            keyring.secrets.pop((auth.DATA_KEY_SERVICE, "alice"))
+            auth.lock_vault()
+            auth.unlock_vault("alice", "correct-horse")
+
+            app = HostApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.screen._login_success("alice")
+                await pilot.pause()
+
+                self.assertIsInstance(app.screen, tui.LoginScreen)
+                error = str(app.screen.query_one("#login-error-msg", Label).render())
+                self.assertIn("無法解密", error)
+
+            self.assertEqual(
+                Path(tmp, "alice_positions.json").read_text(),
+                ciphertext,
+            )
+            auth.lock_vault()
 
 
 if __name__ == "__main__":
