@@ -762,6 +762,88 @@ class DeclaredCashFlowPersistenceTests(unittest.TestCase):
         self.assertEqual(len(restored_flows), 1)
         self.assertEqual(restored_flows[0].amount, 500)
 
+    def test_declared_deposit_keeps_holdings_saved_during_benchmark_fetch(self):
+        """A QQQ/VT round-trip can last seconds. Saving the pre-fetch position
+        list would wipe a holding the user added while the deposit worker ran.
+        """
+        from assettrack import storage, tui
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            cash = [
+                CashPosition(
+                    broker="IBKR",
+                    account="MAIN",
+                    currency="USD",
+                    amount=1_000,
+                )
+            ]
+            concurrent_holding = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="AAPL",
+                instrument_type="stock",
+                quantity=4,
+                avg_cost=190,
+                currency="USD",
+            )
+            with patch.object(tui, "get_data_dir", return_value=data_dir), patch.object(
+                storage, "get_data_dir", return_value=data_dir
+            ), patch.object(
+                tui, "YFinanceBenchmarkPrices", FixedBenchmarkPrices
+            ), patch.object(
+                tui, "total_asset_value_usd", return_value=2_260.0
+            ):
+                tracker = PortfolioPerformanceTracker(
+                    user="alice",
+                    data_dir=data_dir,
+                    benchmark_prices=FixedBenchmarkPrices(),
+                )
+                tracker.enable(new_account=True)
+                storage.save_manual_positions([], cash, user="alice")
+                declaration = {
+                    "direction": "deposit",
+                    "amount": 500,
+                    "currency": "USD",
+                    "broker": "IBKR",
+                    "account": "MAIN",
+                    "category": "salary",
+                    "channel": "bank_transfer",
+                }
+
+                original_declare = PortfolioPerformanceTracker.declare_cash_flow
+
+                def declare_then_add_holding(self, **kwargs):
+                    flow = original_declare(self, **kwargs)
+                    storage.save_manual_positions(
+                        [concurrent_holding], cash, user="alice"
+                    )
+                    return flow
+
+                with patch.object(
+                    PortfolioPerformanceTracker,
+                    "declare_cash_flow",
+                    declare_then_add_holding,
+                ):
+                    updated_positions, updated_cash = tui._process_declared_cash_flow(
+                        user="alice",
+                        positions=[],
+                        cash_positions=cash,
+                        rate=32,
+                        declaration=declaration,
+                    )
+
+                restored_positions, restored_cash = storage.load_manual_positions(
+                    "alice"
+                )
+
+        self.assertEqual([p.symbol for p in updated_positions], ["AAPL"])
+        self.assertEqual(updated_positions[0].quantity, 4)
+        self.assertEqual(updated_cash[0].amount, 1_500)
+        self.assertEqual([p.symbol for p in restored_positions], ["AAPL"])
+        self.assertEqual(restored_positions[0].quantity, 4)
+        self.assertEqual(restored_cash[0].amount, 1_500)
+
 
 if __name__ == "__main__":
     unittest.main()
