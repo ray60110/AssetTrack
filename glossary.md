@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-23（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：期權改為觀察、類股改為 2-of-3 十個交易日預測、ETF 主頁改走觀察清單、校準畫面已移除、QuantTrade Champion 契約唯讀）。
+最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -34,7 +34,7 @@
 | `_fetch_activity` | 抓取狀態列文案 | `AssetTrackApp` 記憶體 dict；`_tick_header` 每秒讀取。 |
 | `_FormulaDrillMixin` | 公式細節點選混入 | Rich `[@click=screen.show_formula('rN')]` → `RecommendationDetailScreen`。 |
 | `_active_params` | 生效門檻參數 | 優先讀 `{user}_champion_params.json`，否則 legacy 校準，再否則預設。 |
-| `_DashboardAnalysisInputs` | 主頁分析一次載入包 | 同一輪渲染共用 ETF／期權／板塊快照，避免三張卡各讀三次。 |
+| `_DashboardAnalysisInputs` | 主頁分析一次載入包 | 同一輪渲染共用 ETF／期權／板塊快照，避免觀察三欄各讀三次。 |
 | Champion 契約 | QuantTrade 參數檔 | `data/{user}_champion_params.json` 的 `params`。AssetTrack 只讀不寫。 |
 | 磁碟匯流排 | 快照共享 | 背景 worker 寫 `history/*.jsonl`，各畫面稍後用同一 `load_*` 讀取。 |
 | `ATENC1:` / `ATENC1\n` | 保險庫密文前綴 | 文字檔與 SQLite 的 Fernet 包裝。 |
@@ -76,32 +76,34 @@
 
 | 英文名稱 | 中文對應 | 實際功能 |
 |---|---|---|
-| `DashboardScreen` | 投資組合主儀表板 | 顯示持倉、總資產、損益、券商分布、近期事件及三張分析卡。 |
+| `DashboardScreen` | 投資組合主儀表板 | 總資產塊（NAV／種類市值％／幣別／今日／未實現／Beta）、曝險塊（總／淨倍數與金額、股票／倍數 ETF／期權 Δ、券商）、持倉表、右側事件、底部觀察三欄（6 類股／7 期權／8 ETF）。 |
 | `_get_cached_usdtwd_rate` | 取得快取美元／台幣匯率 | 以一小時快取減少重複查詢匯率；渲染路徑不打網路。 |
 | `_calc_weights` | 計算持倉權重 | 依美元等值計算每個持倉在投資組合的比例。 |
-| `_build_metrics_panel` | 建立投資組合總覽卡 | 呈現資產總值、未實現損益與 Portfolio Beta 三格（已移除持倉數／券商數）。 |
-| `_build_holdings_table` | 建立持倉表格 | 依券商整理標的、數量、成本、報價、市值、損益；支援表格內直接操作。 |
-| `_build_broker_panel` | 建立券商分布卡 | 呈現各券商／帳戶分布、`cash_ratio`、總／淨曝險與槓桿。 |
-| `_build_recent_events_panel` | 建立近期事件摘要卡 | Holdings 右側常駐，未來 30 天最多 8 筆（另見第 5 節）。 |
-| `_build_etf_conclusions_panel` | 建立 ETF 趨勢結論卡 | **只顯示觀察清單**上、本視窗有確認買賣的標的（最多 3 行）。未設定清單則提示去鍵 `6`。不再呼叫 `generate_etf_conclusions`。 |
-| `_build_options_flow_panel` | 建立期權觀察卡 | 已觀察市場階段 + ATM 貴賤檔數。**不輸出股價漲跌預測。** |
-| `_build_sector_consensus_panel` | 建立類股預測卡 | 與板塊頁共用 `generate_sector_recommendations`：2-of-3 多方或 breadth+SMA5/20 空方，預測未來 10 個交易日。 |
+| `_chrome_line` / `_chrome_header` | 共用表頭 | 無裝飾符號、暗線框；綠紅不拿來刷整塊。 |
+| `_build_metrics_panel` | 建立總資產塊 | NAV、股票／ETF／期權／現金市值與％、筆數、USD／TWD 比、今日、未實現、Beta vs SPY。 |
+| `_asset_composition` | 計算資產組成 | 四類市值、筆數、美元／台幣等值。 |
+| `_build_holdings_table` | 建立持倉表格 | 八欄：代碼／種類／數量／成本／現價／市值／今日／未實現；券商頂格、部位縮 2 格。 |
+| `_build_broker_panel` | 建立曝險塊 | 總／淨曝險倍數與金額、股票／普通 ETF、倍數 ETF、期權 Δ、券商％與金額。不再寫進攻／防守。 |
+| `_build_recent_events_panel` | 建立事件摘要 | 持倉右側窄欄，未來 30 天最多 8 筆（另見第 5 節）。 |
+| `_build_etf_conclusions_panel` | 建立 ETF 觀察格 | 觀察條右欄（鍵 `8`）。**只顯示觀察清單**上、本視窗有確認買賣的標的。未設定清單則提示鍵 `8`。 |
+| `_build_options_flow_panel` | 建立期權樣態格 | 觀察條中欄（鍵 `7`）。已觀察階段短語 + 貴／便宜／公允檔數。**不輸出股價漲跌預測。** |
+| `_build_sector_consensus_panel` | 建立類股 10 日格 | 觀察條左欄（鍵 `6`）。與板塊頁共用 `generate_sector_recommendations`；主頁只投影「板塊  偏多／偏空」。 |
 | `_load_dashboard_analysis_inputs` | 一次載入三卡資料 | 離線讀 Champion 參數與三套 JSONL。 |
 | `_refresh_analysis_panels` | 節流重算分析卡 | 持倉簽名不變且 5 分鐘內不重算。 |
 | `_marked` | 表格多選標記集合 | Holdings 表格 `space` 多選、`e` 編輯、`x` 刪除。 |
 | `_render_all` | 重繪整個儀表板 | 依目前記憶體資料更新 Dashboard 所有表格與卡片。 |
 | `_tick_header` | 更新頁首時鐘與常駐狀態列 | 每秒更新時間、刷新狀態並重繪 `#status-bar`。 |
 | `_do_refresh_worker` | 背景更新投資組合 | 讀取持倉、匯率、無風險利率與即時報價，完成後重繪；可觸發日曆與首次研究補抓。 |
-| `action_refresh_now` | 立即更新 | 使用者主動觸發報價與看板更新。 |
+| `action_refresh_now` | 重整 | 使用者主動觸發報價與看板更新。 |
 | `action_save_snapshot` / `run_save_snapshot` | 儲存投資組合快照 | 在背景將目前投資組合保存為每日歷史快照。 |
 | `action_calibration` | （已移除）投資建議校準 | 2026-08-06 隨策略實驗室搬到 QuantTrade；Dashboard 不再有 `k`。 |
 | `PerformanceTrackingScreen` | 使用者績效比較頁 | 完整資產的現金流調整報酬，以及 QQQ／VT 影子基準等值、美元差額與領先／落後百分比。 |
 | `PerformanceTrackingCancelConfirmModal` | 取消績效追蹤確認視窗 | 停止目前追蹤區間但保留歷史；重新啟用時標示追蹤斷層。 |
 | `CashFlowModal` | 出入金宣告視窗 | 記錄入金來源或出金用途、管道、券商帳戶、幣別、金額與備註。 |
 | `PortfolioPerformanceTracker` | 投資組合績效追蹤 module | 管理 opt-in、追蹤斷層、JSON 帳本、週日估值、影子 benchmark 與追蹤期間的持倉資金守恆。 |
-| `action_performance_tracking` | 開啟績效比較（`9`） | 從 Dashboard 進入完整資產與 QQQ／VT 的比較頁。 |
+| `action_performance_tracking` | 開啟對標（`9`） | 從 Dashboard 進入完整資產與 QQQ／VT 的比較頁。 |
 | `action_deposit` / `action_withdrawal` | 宣告入金／出金（`i`／`o`） | 調整現金並以相同資金流同步 benchmark。 |
-| `action_logout` | 安全登出 | 開啟確認視窗並結束目前登入。 |
+| `action_logout` | 登出 | 開啟確認視窗並結束目前登入。 |
 
 ## 4. 持倉管理
 
@@ -112,7 +114,7 @@
 | `FieldEditModal` | 單一欄位編輯視窗 | 編輯一個文字或選項欄位。 |
 | `DeleteConfirmModal` | 刪除持倉確認視窗 | 要求使用者確認刪除動作。 |
 | `Holding` | 持倉聯合型別 | `Position \| CashPosition`。 |
-| `action_add_position` | 新增部位（`1`） | 開啟 `AddPositionModal` 批次新增。績效追蹤開啟時走 `apply_position_purchase`。 |
+| `action_add_position` | 新增（`1`） | 開啟 `AddPositionModal` 批次新增。績效追蹤開啟時走 `apply_position_purchase`。 |
 | Holdings 表格直接操作 | 就地編輯／刪除／多選 | `Enter` 就地編輯、`e` 編輯整筆、`x` 刪除、`space` 多選。 |
 | `_handle_field_edit` | 處理持倉欄位修改 | 驗證並更新代號、類型、數量、成本或市場。 |
 | `_apply_metadata_edit` | 套用持倉附加資料 | 寫入備註、類別、計價幣別與成本幣別。 |
@@ -123,18 +125,29 @@
 
 | 英文名稱 | 中文對應 | 實際功能 |
 |---|---|---|
-| `UpcomingEventsScreen` | 近期重大事件畫面 | 持倉／SOX 財報與 FED/NFP/CPI 月曆；已發生事件帶實際值。 |
+| `UpcomingEventsScreen` | 近期重大事件畫面 | 持倉／SOX 財報與 FED/NFP/CPI。每月一個 Collapsible（當月展開、他月收合；標題 `YYYY年M月 · N 件事`）。展開時左月曆、右行事曆，收合一併收起。格子週一起、類型色不因整天已發生而變灰、今日底線。已發生財報單行：EPS 擊敗／不如／符合與 +3 個交易日收盤（含迄日）；缺值不寫。表頭只留標題與時區，FRED 讀數不重複列。總經解析在月曆下方，只投影結論＋公式連結。 |
 | `TimezoneInputModal` | 事件時區輸入視窗 | 鍵 `T`：任意 IANA 時區，預設 `Asia/Taipei`，寫入使用者偏好。 |
 | `RecommendationDetailScreen` | 公式細節畫面 | 投影一則 `Recommendation` 的第三層公式／帶入數字／說明。 |
 | `_fetch_upcoming_events_worker` | 背景抓取近期事件摘要 | 為 Dashboard 抓未來財報與總經事件（6 小時新鮮、失敗 15 分鐘重試）。 |
-| `run_calendar_fetch` | 抓取完整事件日曆 | 過去 30 天至未來 90 天的財報與總經；歷史只留當月與上月。 |
-| `run_macro_readings_fetch` | 抓取總經實際值 | FRED：核心 CPI／PCE、NFP、失業率、聯邦資金利率。 |
-| `macro_recommendations` | 總經資訊性建議 | `direction=None`，不投多空票。 |
-| `_format_cpi_conclusion` | 格式化 CPI 結論 | 已公布 CPI 及下次 Fed 會議機率。 |
-| `_format_fed_conclusion` | 格式化 Fed 決策結論 | 已發生的 Fed 利率決策。 |
-| `_format_earnings_conclusion` | 格式化財報結論 | 已公布財報的營收、CAPEX、EBIT、FCF 與 YoY。 |
-| `_render_monthly_calendar` | 繪製月曆事件表 | 將事件依月份排成 Rich 月曆表格。 |
-| `action_upcoming_events` | 開啟近期重大事件 | 從 Dashboard 進入完整事件日曆。 |
+| `run_calendar_fetch` | 抓取完整事件日曆 | 過去一個月至未來 90 天的財報與總經；歷史只留當月與上月。已發生財報另抓 EPS 驚喜與 +3 個交易日收盤。 |
+| `run_macro_readings_fetch` | 抓取總經實際值 | FRED：核心 CPI／PCE、NFP、失業率、聯邦資金利率。只餵給下方解析，不寫進表頭。 |
+| `macro_recommendations` | 總經資訊性建議 | `direction=None`，不投多空票。事件畫面以 `render_detail_recs(..., compact=True)` 只投影結論。 |
+| `fetch_earnings_reaction` | 抓取財報後市場反應 | Yahoo：該檔 EPS 對預期、以及基準收盤後第 3 個交易日收盤漲跌。缺值不編造。 |
+| `fetch_earnings_reactions_batch` | 批次抓取財報後反應 | 已發生財報並行呼叫 `fetch_earnings_reaction`，worker 上限與財報日曆相同。 |
+| `_format_cpi_event_actuals` | 格式化 CPI 事件列 | 總指數 CPI 短句（月份、YoY／MoM 與期對期 Δ）。 |
+| `_format_nfp_event_actuals` | 格式化 NFP 事件列 | NFP 新增人數與失業率短句。 |
+| `_format_fed_event_actuals` | 格式化 FED 事件列 | 目標利率區間與 Δbp。 |
+| `_format_earnings_reaction` | 格式化已發生財報 | 單行：`EPS 擊敗／不如／符合`（有 Surprise% 則附上）與 `+x.x% →MM-DD`。缺值回空字串。 |
+| `_format_earnings_actuals` | 格式化財報數字 | （函式庫，畫面不呼叫）營收、CAPEX、EBIT、FCF 與 YoY。 |
+| `format_macro_readings` | 總經讀數單行 | （函式庫，畫面不呼叫）曾在表頭重複投影 FRED。 |
+| `format_macro_analysis_lines` | 總經兩層 bullet | （函式庫，畫面不呼叫）畫面改 compact 投影。 |
+| `_CalEvent` | 日曆事件列 | 日期、標題、持倉／SOX 標記、時間、是否已發生、結論、類型。 |
+| `_month_heading` | 月份摺疊標題 | `YYYY年M月 · N 件事`，給 Collapsible title。 |
+| `_grid_day_markup` | 月曆格子著色 | 依持倉／SOX／總經類型著色；已發生只在清單用 ✓，格子不變灰。 |
+| `_render_monthly_calendar` | 繪製月曆事件表 | 展開內容：左月曆、右行事曆。月份標題由 Collapsible 負責；收合時左右一併收起。 |
+| `#events-months` | 事件月份容器 | 掛每月 Collapsible；展開內容為 `.month-split`（左 `.month-cal`、右 `.month-detail`）。 |
+| `_compact_headline` | 總經單行投影 | 結論＋公式連結；不投影第二層依據。 |
+| `action_upcoming_events` | 開啟事件 | 從 Dashboard 進入完整事件日曆。 |
 
 ## 6. 主動式 ETF 分析與 13F
 
@@ -224,9 +237,9 @@
 | `YFinanceBenchmarkPrices` | 基準報價提供者 | 14 日回看收盤，供影子單位數。 |
 | `calculate_portfolio_exposure` | 計算投資組合曝險 | 股票 1x、槓桿 ETF 倍數、期權 Δ 等值；缺報價不輸出假比例。 |
 | `PortfolioExposure` | 曝險結果 | 總／淨曝險、槓桿、標準／槓桿 ETF／期權分桶。 |
-| `calculate_cash_ratio` | 現金比例 | <5% 進攻、>20% 防守、其間中性。 |
+| `calculate_cash_ratio` | 現金比例 | 現金佔總資產％。主頁只顯示數字，不再標進攻／防守。 |
 | `Recommendation` | 結構化建議 | `rec_id`／`category`／`direction`／`verdict`／`basis`／`detail_sections`。 |
-| `dashboard_line` / `detail_headline` / `render_detail_recs` | 三層投影 | 主頁一句話、分析頁兩層＋連結、公式頁完整第三層。 |
+| `dashboard_line` / `detail_headline` / `render_detail_recs` | 三層投影 | 主頁一句話、分析頁兩層＋連結、事件畫面 compact 結論＋連結、公式頁完整第三層。 |
 | `is_taiwan_position` | 台股判定 | 投資建議排除台股的唯一來源。 |
 | `position_stance_by_symbol` | 持倉淨多空 | 與訊號方向交叉提示，非加減碼指令。 |
 
@@ -250,15 +263,15 @@
 
 | Dashboard 動作 | 使用者看見的中文功能 | 目的地 |
 |---|---|---|
-| `action_add_position` | 新增部位（`1`） | `AddPositionModal`（Holdings 表格另支援 `e`/`x`/`space`）。 |
-| `action_refresh_now` | 立即重整（`2`／`r`） | Dashboard 報價與資料刷新。 |
-| `action_logout` | 安全登出（`3`／`q`） | 登出確認視窗。 |
-| `action_upcoming_events` | 近期重大事件（`4`） | `UpcomingEventsScreen`。 |
-| `action_save_snapshot` | 儲存快照（`5`） | 背景保存投資組合快照。 |
-| `action_active_etfs` | 主動式 ETF 排行（`6`） | `ActiveETFsScreen`（`j` 建議、`w` 觀察清單、`a` 研究全表、`s` SEC 身分）。 |
-| `action_options_watchlist` | 期權觀察清單（`7`） | `OptionsWatchlistScreen`。 |
-| `action_sector_analysis` | 類股板塊分析（`8`） | `SectorAnalysisScreen`。 |
-| `action_performance_tracking` | 使用者績效比較（`9`） | `PerformanceTrackingScreen`。 |
+| `action_add_position` | 新增（`1`） | `AddPositionModal`（持倉表另支援 `e`/`x`/`space`）。 |
+| `action_refresh_now` | 重整（`2`／`r`） | Dashboard 報價與資料刷新。 |
+| `action_logout` | 登出（`3`／`q`） | 登出確認視窗。 |
+| `action_upcoming_events` | 事件（`4`） | `UpcomingEventsScreen`。 |
+| `action_save_snapshot` | 快照（`5`） | 背景保存投資組合快照。 |
+| `action_sector_analysis` | 類股（`6`） | `SectorAnalysisScreen`。 |
+| `action_options_watchlist` | 期權（`7`） | `OptionsWatchlistScreen`。 |
+| `action_active_etfs` | ETF（`8`） | `ActiveETFsScreen`（`j` 建議、`w` 觀察清單、`a` 研究全表、`s` SEC 身分）。 |
+| `action_performance_tracking` | 對標（`9`） | `PerformanceTrackingScreen`。 |
 | `action_disable_tracking` | 取消績效追蹤（績效頁 `d`） | 經確認後停止目前追蹤區間、保留資料並解除持股管理限制。 |
 | `action_deposit` / `action_withdrawal` | 宣告入金／出金（`i`／`o`） | `CashFlowModal`。 |
 | `action_calibration` | （已移除）投資建議校準 | 不再綁 Dashboard `k`；參數改讀 Champion 契約。 |
@@ -268,10 +281,15 @@
 
 | 舊名稱 | 現況 |
 |---|---|
-| `cross_model.py` / 跨模型摘要卡 | 已刪除。主頁只剩類股、期權觀察、ETF 觀察清單三卡。 |
+| `cross_model.py` / 跨模型摘要卡 | 已刪除。主頁觀察條為類股 · 10 日、期權樣態、ETF 觀察。 |
 | `Experiment*` / `FeedbackCycle` / 鍵 `0` | 已搬到 QuantTrade。 |
 | `CalibrationScreen` / `CalibrationModal` / 鍵 `k` | 已移除。 |
 | `AdjustPositionsModal` / `ChoosePositionModal` | 已由 Holdings 表格直接操作取代。 |
 | 期權「看多／看空」正式建議 | 畫面改為已觀察樣態；方向引擎留在函式庫。 |
 | 類股「5 日中 3 日廣度同向」作為正式預測 | 歷史驗證 FAIL。現行改 2-of-3／風險警示，窗為 10 個交易日。 |
 | `INVESTMENT_LOGIC.md` | 工作樹已刪。現行建議邏輯以 `blockDiagram.md` 第 11 章為準。 |
+| `_format_earnings_conclusion` | 舊名。畫面改用 `_format_earnings_reaction`；財報數字格式化留在 `_format_earnings_actuals`（畫面不呼叫）。 |
+| `UpcomingEventsScreen` 持有部位表 | 已移除。鍵 `4` 不再重複列出持倉。 |
+| `_event_card` | 已移除。事件改由 `_CalEvent`＋滿寬清單列呈現。 |
+| `#events-static` | 已移除。月份改掛在 `#events-months` 的 Collapsible。 |
+| `_format_cpi_conclusion` / `_format_fed_conclusion` | 舊名。事件列改 `_format_cpi_event_actuals`／`_format_fed_event_actuals`。 |

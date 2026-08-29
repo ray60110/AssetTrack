@@ -1446,6 +1446,234 @@ def fetch_earnings_actuals_batch(symbols: list[str]) -> dict:
     return result
 
 
+def _clean_number(value) -> Optional[float]:
+    try:
+        cleaned = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(cleaned):
+        return None
+    return cleaned
+
+
+def _to_date(value):
+    from datetime import date as date_type, datetime as dt_cls
+
+    if isinstance(value, date_type) and not isinstance(value, dt_cls):
+        return value
+    try:
+        ts = value.tz_convert("America/New_York") if getattr(value, "tzinfo", None) else value
+    except (TypeError, ValueError, AttributeError):
+        ts = value
+    try:
+        return ts.date()
+    except AttributeError:
+        return None
+
+
+def _earnings_et_date(event_date, event_dt):
+    if event_dt is None or _TZ_US is None:
+        return event_date
+    try:
+        localized = event_dt
+        if localized.tzinfo is None:
+            localized = localized.replace(tzinfo=_TZ_US)
+        return localized.astimezone(_TZ_US).date()
+    except Exception:
+        return event_date
+
+
+def _is_pre_market(period: Optional[str], event_dt) -> bool:
+    if period == "盤前":
+        return True
+    if period == "盤後":
+        return False
+    if event_dt is None or _TZ_US is None:
+        return False
+    try:
+        localized = event_dt if event_dt.tzinfo is not None else event_dt.replace(tzinfo=_TZ_US)
+        return localized.astimezone(_TZ_US).hour < 12
+    except Exception:
+        return False
+
+
+def _series_value(row, *needles: str) -> Optional[float]:
+    index = getattr(row, "index", [])
+    for needle in needles:
+        needle_l = needle.lower()
+        for col in index:
+            if needle_l in str(col).lower():
+                return _clean_number(row[col])
+    if hasattr(row, "get"):
+        for needle in needles:
+            found = _clean_number(row.get(needle))
+            if found is not None:
+                return found
+    return None
+
+
+def _verdict_from_earnings_row(row) -> Optional[str]:
+    reported = _series_value(row, "Reported EPS", "reportedEPS")
+    estimate = _series_value(row, "EPS Estimate", "epsEstimate")
+    surprise = _series_value(row, "Surprise(%)", "surprisePercent")
+    if reported is not None and estimate is not None:
+        if reported > estimate:
+            return "beat"
+        if reported < estimate:
+            return "miss"
+        return "meet"
+    if surprise is not None:
+        if surprise > 0:
+            return "beat"
+        if surprise < 0:
+            return "miss"
+        return "meet"
+    return None
+
+
+def _match_earnings_row(dates_df, event_date, event_dt):
+    if dates_df is None or getattr(dates_df, "empty", True):
+        return None
+    et_date = _earnings_et_date(event_date, event_dt)
+    best = None
+    best_delta = None
+    for idx, row in dates_df.iterrows():
+        row_date = _to_date(idx)
+        if row_date is None:
+            continue
+        delta = abs((row_date - et_date).days)
+        if delta <= 1 and (best_delta is None or delta < best_delta):
+            best = row
+            best_delta = delta
+    return best
+
+
+def _bar_close(bars, session):
+    for session_date, close in bars:
+        if session_date == session:
+            return close
+    return None
+
+
+def _post_earnings_price_change(bars, event_date, event_dt, period: Optional[str]):
+    """Close-to-close move from the pre-release session to +3 NYSE sessions.
+
+    After-hours: start at the announcement session close. Pre-market: start at
+    the previous session close. The end session is always three trading
+    sessions after that baseline — Friday after-hours therefore lands on
+    Wednesday, not Monday. Missing bars stay None.
+    """
+    from datetime import timedelta
+
+    from .market_sessions import NYSESessionCalendar
+
+    if not bars:
+        return None, None
+    et_date = _earnings_et_date(event_date, event_dt)
+    pre_market = _is_pre_market(period, event_dt)
+    cal = NYSESessionCalendar()
+    if pre_market:
+        start_session = cal.latest_session_on_or_before(et_date - timedelta(days=1))
+    elif cal.is_session(et_date):
+        start_session = et_date
+    else:
+        start_session = cal.latest_session_on_or_before(et_date)
+    try:
+        end_session = cal.shift(start_session, 3)
+    except ValueError:
+        return None, None
+    start = _bar_close(bars, start_session)
+    end = _bar_close(bars, end_session)
+    if start in (None, 0) or end is None:
+        return None, None
+    return (end / start - 1.0) * 100.0, end_session
+
+
+def fetch_earnings_reaction(
+    symbol: str,
+    event_date,
+    event_dt=None,
+    period: Optional[str] = None,
+) -> Optional[dict]:
+    """EPS vs estimate plus the close-to-close move over +3 NYSE sessions.
+
+    After-hours: start from the announcement session close (still pre-release).
+    Pre-market: start from the previous session close. The end close is the
+    third trading session after that baseline. Missing EPS or an incomplete
+    price window stays None — never invented.
+    """
+    from datetime import timedelta
+
+    dates_df = None
+    try:
+        with silence_output():
+            ticker = yf.Ticker(symbol)
+            getter = getattr(ticker, "get_earnings_dates", None)
+            if callable(getter):
+                dates_df = getter(limit=12)
+            elif getattr(ticker, "earnings_dates", None) is not None:
+                dates_df = ticker.earnings_dates
+    except Exception:
+        dates_df = None
+
+    row = _match_earnings_row(dates_df, event_date, event_dt)
+    verdict = _verdict_from_earnings_row(row) if row is not None else None
+    surprise = (
+        _series_value(row, "Surprise(%)", "surprisePercent") if row is not None else None
+    )
+
+    et_date = _earnings_et_date(event_date, event_dt)
+    bars = fetch_benchmark_history(
+        symbol,
+        et_date - timedelta(days=10),
+        et_date + timedelta(days=21),
+    )
+    price_change_pct, price_end_date = _post_earnings_price_change(
+        bars, event_date, event_dt, period
+    )
+    if verdict is None and price_change_pct is None:
+        return None
+    return {
+        "verdict": verdict,
+        "price_change_pct": price_change_pct,
+        "price_end_date": price_end_date,
+        "surprise_pct": surprise,
+    }
+
+
+def fetch_earnings_reactions_batch(items: list[tuple]) -> dict:
+    """並行抓取已發生財報的 EPS 驚喜與 +3 個交易日股價變化。
+
+    每筆為 ``(symbol, event_date, event_dt, period)``。回傳 key 為
+    ``(symbol, event_date)``。
+    """
+    import concurrent.futures
+
+    result: dict = {}
+    if not items:
+        return result
+
+    def _one(item: tuple):
+        symbol, event_date, event_dt, period = item[0], item[1], item[2], item[3]
+        return (symbol, event_date), fetch_earnings_reaction(
+            symbol, event_date, event_dt=event_dt, period=period
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=earnings_calendar_workers(len(items))
+    ) as ex:
+        futs = {ex.submit(_one, item): item for item in items}
+        for fut in concurrent.futures.as_completed(futs):
+            item = futs[fut]
+            key = (item[0], item[1])
+            try:
+                key, payload = fut.result()
+                result[key] = payload
+            except Exception:
+                result[key] = None
+    return result
+
+
 def _empty_perf(symbols: Iterable[str]) -> dict[str, dict]:
     return {
         s: {"price": None, "change_pct": None, "return_ytd": None, "return_1y": None}

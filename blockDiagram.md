@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-23。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-08-29。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -11,7 +11,7 @@ AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HT
 | 本套件做 | 本套件不做 |
 |---|---|
 | 多券商手動持倉、報價、匯率、曝險、績效追蹤 | 券商 API 自動匯入、下單、券商同步 |
-| 四大分析畫面與主頁結論卡 | 策略實驗室（Forecast Ledger、Promotion、鍵 `0`／`k`） |
+| 四大分析畫面與主頁觀察條 | 策略實驗室（Forecast Ledger、Promotion、鍵 `0`／`k`） |
 | 讀取 QuantTrade 匯出的 Champion 門檻 | 寫入或晉升 Recommendation Policy |
 | 本機真實快照的離線重算與 walk-forward 回測函式庫 | 把未通過驗證的方向預測當成可執行投資建議 |
 
@@ -133,15 +133,15 @@ Dashboard 快捷鍵與目的地：
 
 | 鍵 | 動作 | 目的地 |
 |---|---|---|
-| `1` | 新增部位 | `AddPositionModal` |
-| `2` / `r` | 立即重整報價 | `_do_refresh_worker` |
-| `3` / `q` | 安全登出 | `LogoutConfirmModal` → `lock_vault` |
-| `4` | 近期重大事件 | `UpcomingEventsScreen` |
-| `5` | 儲存市值快照 | `Storage.save_snapshot` |
-| `6` | 主動式 ETF | `ActiveETFsScreen` |
-| `7` | 期權觀察 | `OptionsWatchlistScreen` |
-| `8` | 類股板塊 | `SectorAnalysisScreen` |
-| `9` | 績效比較 | `PerformanceTrackingScreen` |
+| `1` | 新增 | `AddPositionModal` |
+| `2` / `r` | 重整 | `_do_refresh_worker` |
+| `3` / `q` | 登出 | `LogoutConfirmModal` → `lock_vault` |
+| `4` | 事件 | `UpcomingEventsScreen` |
+| `5` | 快照 | `Storage.save_snapshot` |
+| `6` | 類股 | `SectorAnalysisScreen` |
+| `7` | 期權 | `OptionsWatchlistScreen` |
+| `8` | ETF | `ActiveETFsScreen` |
+| `9` | 對標 | `PerformanceTrackingScreen` |
 | `i` / `o` | 入金／出金 | `CashFlowModal` |
 
 畫面之間**沒有** Textual 自訂 `Message` / `post_message`。導航一律是 `app.push_screen(screen, callback)`，結果用 `dismiss(value)` 回到 callback。
@@ -158,8 +158,8 @@ Dashboard 快捷鍵與目的地：
 |---|---|---|
 | 主應用 | `AssetTrackApp` | 登入生命週期、30 分鐘全域補抓、跨畫面 `_fetch_activity` 狀態列 |
 | 登入 | `LoginScreen` + 認證 Modal | 帳號、密碼、Touch ID、註冊、SEC 身分、新手導覽 |
-| 主看板 | `DashboardScreen` | 持倉、指標、券商分布、三張結論卡、近期事件摘要 |
-| 事件 | `UpcomingEventsScreen` | 財報／FED／NFP／CPI 月曆與總經解讀 |
+| 主看板 | `DashboardScreen` | 總資產塊、曝險塊、持倉表、右側事件、底部觀察三欄（6 類股／7 期權／8 ETF） |
+| 事件 | `UpcomingEventsScreen` | 財報／FED／NFP／CPI：每月 Collapsible（當月展開、他月收合）。展開時左月曆、右行事曆，收合一併收起。格子依類型著色，不因整天已發生而變灰。已發生財報單行 EPS 擊敗／不如／符合與 +3 個交易日收盤；缺值不寫。表頭無 FRED 讀數。總經解析在月曆下方。 |
 | ETF | `ActiveETFsScreen` / `AdvancedAnalysisScreen` | 觀察清單建議、研究全表、13F |
 | 期權 | `OptionsWatchlistScreen` / `OptionRichnessHistoryScreen` | 已觀察樣態、IV−RV、Greeks；不輸出股價方向 |
 | 類股 | `SectorAnalysisScreen` | 2-of-3 十個交易日預測與板塊 CRUD |
@@ -268,7 +268,7 @@ flowchart TB
 | 10 | TUI ↔ SQLite | 臨時解密檔 | `protected_sqlite`：`ATENC1\n` + Fernet → temp file → `sqlite3` | 市值快照 |
 | 11 | auth ↔ OS | keyring | service/account/password 三元組 | 密碼雜湊、資料金鑰、Touch ID 旗標、SEC 身分 |
 | 12 | Login ↔ Touch ID | 子行程 | `subprocess.run([touchid_helper, user], capture_output=True)`；只看 **exit code**（0 成功、1 失敗、2 不可用） | 無 stdin/stdout 協定 |
-| 13 | quotes ↔ Yahoo | HTTPS（yfinance 封裝） | Yahoo Finance HTTP；`ThreadPoolExecutor` 並行 | 報價、持股、期權鏈、財報日 |
+| 13 | quotes ↔ Yahoo | HTTPS（yfinance 封裝） | Yahoo Finance HTTP；`ThreadPoolExecutor` 並行 | 報價、持股、期權鏈、財報日、EPS 驚喜、+3 個交易日收盤 |
 | 14 | quotes ↔ FRED | HTTPS REST | `GET https://api.stlouisfed.org/fred/series/observations?file_type=json` + `FRED_API_KEY` | 通膨／就業／利率序列 |
 | 15 | institutional ↔ SEC | HTTPS + Fair Access | `User-Agent: "{name} {email}"`；全域鎖、請求間隔 ≥ 130 ms | 13F-HR JSON／XML |
 | 16 | ark_holdings ↔ ARK | HTTPS | `GET https://assets.ark-funds.com/fund-documents/funds-etf-csv/…` | 官方持股 CSV |
@@ -328,14 +328,14 @@ DashboardScreen._tick_header() 每秒讀 _fetch_activity 重繪 #status-bar
 
 ### 5.5 磁碟匯流排（畫面之間的真正資料通道）
 
-Dashboard 結論卡與各分析頁**不互相呼叫**。它們讀同一批本機快照。
+Dashboard 觀察條與各分析頁**不互相呼叫**。它們讀同一批本機快照。
 
 ```mermaid
 sequenceDiagram
     participant BG as AssetTrackApp._background_data_refresh
     participant Q as quotes / institutional
     participant FS as history/*.jsonl
-    participant Dash as Dashboard 結論卡
+    participant Dash as Dashboard 觀察條
     participant ETF as ActiveETFsScreen
 
     BG->>Q: HTTPS 抓今日持股／期權鏈／板塊報價
@@ -376,7 +376,7 @@ Touch ID **不**把密碼傳進 Swift。helper 只做 `LocalAuthentication` 裝�
 
 **Yahoo Finance（yfinance）**
 
-- 函式：`fetch_price`、`fetch_prices_batch`、`fetch_etf_holdings`、`fetch_options_snapshot`、`fetch_earnings_calendar`、`yf.screen`（主動式 ETF universe）等。
+- 函式：`fetch_price`、`fetch_prices_batch`、`fetch_etf_holdings`、`fetch_options_snapshot`、`fetch_earnings_calendar`、`fetch_earnings_reaction`、`yf.screen`（主動式 ETF universe）等。
 - 傳輸：函式庫對 Yahoo 的 HTTPS。TUI 不組 URL。
 - 批次：報價 `chunk_size=20`；ETF 績效 `chunk_size=15` 並間隔 0.3s。
 - 記憶體 TTL：匯率 1 小時；beta／無風險利率 6 小時。另有 `data/quote_warmup_cache.json`。
@@ -430,8 +430,9 @@ AssetTrack 只讀不寫 Champion。QuantTrade 在自己的 feedback cycle 結束
 
 | 投影 | 函式 | 用在 |
 |---|---|---|
-| 一句話 | `dashboard_line(rec)` | 主頁卡片 |
-| 兩層＋連結 | `render_detail_recs` / `detail_headline` | 各分析頁 |
+| 一句話 | `dashboard_line(rec)` | 分析頁；主頁觀察條改投影更短的方向／樣態 |
+| 兩層＋連結 | `render_detail_recs` / `detail_headline` | ETF／類股分析頁 |
+| 結論＋連結 | `render_detail_recs(..., compact=True)` | 近期重大事件總經區 |
 | 完整公式 | `RecommendationDetailScreen` | 點選 🔍 |
 
 ```text
@@ -560,14 +561,21 @@ flowchart LR
     → quotes.fetch_earnings_calendar（並行 HTTPS）
 硬編碼 FED/NFP/CPI 日程
     → shared.get_upcoming_macro_events（時區轉 Asia/Taipei 或使用者偏好）
+已公布財報
+    → quotes.fetch_earnings_reaction（EPS 對預期；基準收盤後第 3 個 NYSE 交易日收盤）
+    → 畫面單行：EPS 擊敗／不如／符合（可附 Surprise%）；漲跌寫 `+x.x% →MM-DD`。缺值不接這句
 已公布總經
     → quotes.fetch_latest_macro_readings（FRED HTTPS）
     → shared.macro_recommendations（direction=None，資訊性）
+畫面
+    → UpcomingEventsScreen 不列出持有部位。每月一個 Collapsible（當月展開、他月收合）
+    → 展開時左月曆（週一起、類型色保留）、右行事曆依日分組；收合時左右一併收起
+    → 總經解析在月曆下方，compact 投影；表頭不再列 FRED。事件列 CPI 標總指數、FED 標目標區間
 Dashboard 摘要
     → 只抓未來 30 天、最多 8 筆；與完整日曆 worker 分開，避免把實際值契約塞進首頁快取
 ```
 
-### 9.2 主動式 ETF（鍵 `6`）
+### 9.2 主動式 ETF（鍵 `8`）
 
 ```text
 institutional.ensure_active_etf_universe
@@ -601,7 +609,7 @@ institutional.ensure_active_etf_universe
     → options_forecasting.assess_option_forecast
 ```
 
-### 9.4 類股板塊（鍵 `8`）
+### 9.4 類股板塊（鍵 `6`）
 
 ```text
 使用者板塊成員
@@ -677,13 +685,13 @@ flowchart LR
 
 **回測：** 無。這不是預測家族。
 
-**畫面：** `UpcomingEventsScreen` 用 `render_detail_recs`；Dashboard 右側只列未來事件，不做總經建議。
+**畫面：** `UpcomingEventsScreen` 用 `render_detail_recs(..., compact=True)`（結論＋公式連結，依據進公式頁）。事件列的 CPI 標「總指數」、FED 標「目標區間」，與下方解析的核心 CPI／有效聯邦資金利率分開。表頭不重複列 FRED。Dashboard 右側只列未來事件，不做總經建議。
 
 ---
 
 ### 11.3 主動式 ETF — 觀察清單上的真實買賣
 
-主頁與鍵 `6` 預設頁**不是**完整的 `generate_etf_recommendations`（大類輪動＋規模性大額）。使用者看見的是觀察清單過濾後的活動。
+主頁與鍵 `8` 預設頁**不是**完整的 `generate_etf_recommendations`（大類輪動＋規模性大額）。使用者看見的是觀察清單過濾後的活動。
 
 #### 單檔 ETF、單一持股如何判定增／減碼
 
@@ -718,7 +726,7 @@ pct_up = n_up / evaluated
 | 只有賣出側 | 🔴 賣出／減碼 | `空` |
 | 兩側同時有 | ⚪ 買賣同時出現 | `觀望` |
 
-主頁卡再把有交易的列截成最多 3 行。未設定觀察清單時，主頁明確要求先按 `6` 設定，不拿全宇宙當建議。
+主頁卡再把有交易的列截成最多 3 行。未設定觀察清單時，主頁明確要求先按 `8` 設定，不拿全宇宙當建議。
 
 #### 完整引擎（函式庫，進階研究表不用 Recommendation 卡）
 
@@ -764,7 +772,7 @@ pct_up = n_up / evaluated
 3. 達 60% 廣度**且**中位報酬同向 → 標示上漲或下跌階段；否則震盪／分化。
 4. 近價平 IV 中位變化 ≥ +0.03 或 ≤ −0.03 標示 IV 升／降。
 
-同時用 `richness_from_history` 數有幾檔 ATM 權利金相對 20 日已實現波動偏貴／便宜／合理。文案固定：「這是選擇權貴賤，不是股價漲跌預測。」
+同時用 `richness_from_history` 數有幾檔 ATM 相對 20 日 RV 貴／便宜／公允。主頁只寫「非股價預測」；細節按 `7`。
 
 #### 觀察清單頁
 
@@ -858,15 +866,16 @@ Performance Gap % = (使用者總值 − 基準等值) / 基準等值 × 100
 
 ### 11.8 持倉曝險與現金比例 — 風險描述
 
-券商分布卡另外顯示結構，不是預測：
+總資產塊與曝險塊顯示結構，不是預測：
 
 | 指標 | 規則 |
 |---|---|
-| `cash_ratio` | <5% 進攻、>20% 防守、其間中性 |
+| 總資產組成 | 股票／ETF／期權／現金各列市值與佔比；另列筆數與 USD／TWD 比 |
+| `cash_ratio` | 現金列在組成裡；不再標進攻／防守 |
 | 股票／普通 ETF | 曝險 = 市值（1x） |
 | 槓桿／反向 ETF | `infer_etf_leverage_factor` 或使用者覆寫 |
 | 期權 | Δ × 張數 × 乘數 × 標的現價 |
-| 總／淨曝險、槓桿 | 總曝險 ÷ 總資產；任一必要報價缺失則不輸出假比例 |
+| 總／淨曝險、槓桿 | 總與淨各列倍數與美元；任一必要報價缺失則不輸出假比例 |
 
 ---
 

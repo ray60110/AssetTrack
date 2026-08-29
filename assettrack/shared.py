@@ -64,16 +64,25 @@ def detail_headline(rec: "Recommendation", token: str) -> str:
     basis = (rec.basis or "").strip()
     if basis:
         lines.append(f"   [dim]依據：[/dim]{basis}")
-    lines.append(f"   [@click=screen.show_formula('{token}')]🔍 查看公式細節 ›[/]")
+    lines.append(f"   [@click=screen.show_formula('{token}')]查看公式細節 ›[/]")
     return "\n".join(lines)
 
 
+def _compact_headline(rec: "Recommendation", token: str) -> str:
+    """事件日曆用的單行投影：只留結論與公式連結，依據進公式頁。"""
+    return (
+        f"{rec.verdict}\n"
+        f"   [@click=screen.show_formula('{token}')]🔍 公式細節 ›[/]"
+    )
+
+
 def render_detail_recs(recs: "list[Recommendation]", header: Optional[str] = None,
-                       start: int = 0) -> "tuple[str, dict]":
+                       start: int = 0, compact: bool = False) -> "tuple[str, dict]":
     """把一串 Recommendation render 成 detail 畫面用的 markup 字串，並回傳
     {token: rec} 對照（供 action_show_formula 查詢）。token 為 'r0','r1',…（ASCII
     安全，避開 Chinese/引號破壞 @click markup 解析與 hotkey 佔用問題，bug#00118）。
-    `start` 供同一畫面多段 render 時延續編號避免碰撞。"""
+    `start` 供同一畫面多段 render 時延續編號避免碰撞。
+    `compact=True` 時不投影第二層依據（近期重大事件畫面）。"""
     mapping: dict = {}
     blocks: list[str] = []
     if header:
@@ -81,7 +90,9 @@ def render_detail_recs(recs: "list[Recommendation]", header: Optional[str] = Non
     for i, rec in enumerate(recs):
         tok = f"r{start + i}"
         mapping[tok] = rec
-        blocks.append(detail_headline(rec, tok))
+        blocks.append(
+            _compact_headline(rec, tok) if compact else detail_headline(rec, tok)
+        )
     return "\n\n".join(blocks), mapping
 
 
@@ -191,12 +202,11 @@ def _fmt_signed_pct(v: float, decimals: int = 1) -> str:
 
 
 def format_macro_readings(readings: "Optional[dict]") -> Optional[str]:
-    """將 fetch_latest_macro_readings() 的結果格式化為單行 Rich markup，供
-    UpcomingEventsScreen 顯示各總經指標「最新一期已公佈數值」。
+    """將 fetch_latest_macro_readings() 的結果格式化為單行 Rich markup。
 
-    每項資料若為 None（缺 FRED_API_KEY／API 失敗／資料不足）則跳過該項，不以
-    預設值填補（比照全專案「不臆測」慣例）。全部皆缺時回傳 None，呼叫端可據此
-    顯示「尚未取得」而非空白。日期以 (as_of) 標註資料所屬月份。"""
+    畫面不呼叫：UpcomingEventsScreen 表頭不再重複投影這行，改由下方 compact
+    總經解析顯示。函式保留給測試與其他呼叫端。缺值跳過該項，不以預設值填補。
+    全部皆缺時回傳 None。"""
     if not readings:
         return None
 
@@ -247,7 +257,7 @@ def macro_recommendations(readings: "Optional[dict]") -> "list[Recommendation]":
     """把 fetch_latest_macro_readings() 的重點總經指標組成三層結構化建議（bug#00117）。
     此類為「資訊性」——不投多空方向票（direction=None）：第一層＝指標＋期對期變動、
     第二層＝經濟意涵如何解讀、第三層＝期對期變動公式＋帶入上期/本期實際值＋來源說明。
-    UpcomingEventsScreen 以此為單一真理來源，format_macro_analysis_lines 為其薄 wrapper。"""
+    UpcomingEventsScreen 以此為單一真理來源，用 compact 投影結論＋公式連結。"""
     if not readings:
         return []
 
@@ -357,9 +367,10 @@ def macro_recommendations(readings: "Optional[dict]") -> "list[Recommendation]":
 
 
 def format_macro_analysis_lines(readings: "Optional[dict]") -> list[str]:
-    """將重點經濟指標格式化為期對期比較與經濟意涵解析 bullet 清單。薄 wrapper：以
-    macro_recommendations() 為單一真理來源，投影為原本的「📌 指標 / 💡 意涵」兩行格式，
-    維持既有呼叫端輸出不變（bug#00117）。"""
+    """將重點經濟指標格式化為期對期比較與經濟意涵解析 bullet 清單。
+
+    畫面不呼叫：UpcomingEventsScreen 改用 compact 投影。薄 wrapper，以
+    macro_recommendations() 為單一真理來源。"""
     lines: list[str] = []
     for rec in macro_recommendations(readings):
         lines.append(rec.verdict)

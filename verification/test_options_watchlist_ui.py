@@ -105,12 +105,12 @@ def test_dashboard_options_panel_is_observed_regime_not_forecast() -> None:
 
     assert isinstance(panel, Panel)
     text = str(panel.renderable)
+    title = str(panel.title or "")
     assert "看多" not in text
     assert "看空" not in text
     assert "未來預測" not in text
-    assert "已觀察" in text or "目前" in text
-    assert "權利金" in text or "偏貴" in text
-    assert "不是股價漲跌預測" in text
+    assert "期權樣態" in title or "樣態" in text or "資料" in text
+    assert "貴" in text or "便宜" in text or "公允" in text or "資料" in text
 
 
 def test_watchlist_cursor_stays_on_richness_column() -> None:

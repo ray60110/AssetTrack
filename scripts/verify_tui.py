@@ -128,11 +128,12 @@ def verify_event_actuals_and_timezones() -> None:
     from assettrack.shared import get_upcoming_macro_events
     from assettrack.storage import load_user_preferences, save_user_preferences
     from assettrack.tui import (
-        _event_card,
+        _CalEvent,
         _event_history_start,
         _format_cpi_event_actuals,
         _format_earnings_actuals,
         _format_nfp_event_actuals,
+        _render_monthly_calendar,
         _retain_event_history,
     )
 
@@ -168,25 +169,56 @@ def verify_event_actuals_and_timezones() -> None:
     for metric in ("Revenue", "CAPEX", "EBIT", "FCF", "去年同期"):
         assert metric in rendered
 
-    completed_card = _event_card(
-        dt(2026, 7, 23).date(),
-        "💻 INTC[bold red](已發生)[/bold red] 財報公佈",
-        dt(2026, 7, 24).date(),
-        "SOX",
-    )
-    completed_panel = completed_card.renderable
-    assert completed_panel.style == "black on #d1d5db"
-    assert completed_panel.border_style == "#9ca3af"
-    assert [column.width for column in completed_panel.renderable.columns[:2]] == [15, 10]
+    from rich.console import Console
 
-    upcoming_card = _event_card(
-        dt(2026, 7, 30).date(),
-        "▼ FED 利率決議 (02:00 UTC+08:00)",
-        dt(2026, 7, 24).date(),
-        "MACRO",
+    today = dt(2026, 8, 27).date()
+    completed_body = Console(record=True, width=120, color_system=None)
+    completed_body.print(
+        _render_monthly_calendar(
+            2026,
+            8,
+            [
+                _CalEvent(
+                    date=dt(2026, 8, 1).date(),
+                    title="INTC",
+                    badge="SOX",
+                    when="盤後 16:00",
+                    completed=True,
+                    summary="EPS 擊敗 +4.2% →08-06",
+                    event_type="SOX",
+                ),
+            ],
+            today,
+        )
     )
-    assert upcoming_card.renderable.style == "white on #161b22"
-    assert upcoming_card.renderable.border_style == "#58a6ff"
+    completed_text = completed_body.export_text()
+    assert "一 二 三 四 五 六 日" in completed_text
+    assert "行事曆" in completed_text
+    assert "INTC" in completed_text
+    assert "EPS 擊敗" in completed_text
+    assert "UTC+" not in completed_text
+    assert completed_text.count("08-01") == 1
+
+    upcoming_body = Console(record=True, width=120, color_system=None)
+    upcoming_body.print(
+        _render_monthly_calendar(
+            2026,
+            8,
+            [
+                _CalEvent(
+                    date=dt(2026, 8, 29).date(),
+                    title="FED",
+                    when="02:00",
+                    completed=False,
+                    event_type="MACRO",
+                ),
+            ],
+            today,
+        )
+    )
+    upcoming_text = upcoming_body.export_text()
+    assert "FED" in upcoming_text
+    assert "○" in upcoming_text
 
     assert _event_history_start(dt(2026, 7, 24).date()) == dt(2026, 6, 1).date()
     assert _event_history_start(dt(2026, 1, 5).date()) == dt(2025, 12, 1).date()
@@ -255,11 +287,11 @@ async def verify_dashboard_mounts() -> None:
 
 
 async def verify_dashboard_scroll_layout() -> None:
-    """Dashboard keeps ten holdings rows visible and scrolls recommendations separately."""
+    """Holdings is the hero pane and scrolls independently of the signals strip."""
     template = _sample_positions()[0]
     positions = [
         template.model_copy(update={"symbol": f"TEST{index:02d}"})
-        for index in range(12)
+        for index in range(40)
     ]
     app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -267,36 +299,19 @@ async def verify_dashboard_scroll_layout() -> None:
         screen = pilot.app.screen
         holdings_scroll = screen.query_one("#holdings-scroll")
         holdings_table = screen.query_one("#holdings-table")
-        recommendations_scroll = screen.query_one("#recommendations-scroll")
+        signals = screen.query_one("#recommendations-scroll")
 
-        # One header row plus ten holding rows must remain visible at the default size.
-        assert (
-            holdings_table.scrollable_content_region.height
-            == holdings_table.header_height + 10
-        )
         assert holdings_table.row_count > 10
         assert holdings_table.max_scroll_y > 0
         assert holdings_table.show_vertical_scrollbar
+        assert signals.content_region.height > 0
+        assert signals.region.y >= holdings_scroll.region.bottom
 
-        # The recommendation cards stay on-screen below holdings and own their scrollbar.
-        assert recommendations_scroll.content_region.height > 0
-        assert recommendations_scroll.max_scroll_y > 0
-        assert recommendations_scroll.show_vertical_scrollbar
-        assert recommendations_scroll.region.y >= holdings_scroll.region.bottom
-
-        # Moving either scrollbar must not move the other viewport.
-        recommendations_scroll.scroll_to(
-            y=recommendations_scroll.max_scroll_y,
-            animate=False,
-        )
-        await pilot.pause()
-        assert recommendations_scroll.scroll_y == recommendations_scroll.max_scroll_y
-        assert holdings_table.scroll_y == 0
-
+        start_signals_y = signals.scroll_y
         holdings_table.scroll_to(y=holdings_table.max_scroll_y, animate=False)
         await pilot.pause()
         assert holdings_table.scroll_y == holdings_table.max_scroll_y
-        assert recommendations_scroll.scroll_y == recommendations_scroll.max_scroll_y
+        assert signals.scroll_y == start_signals_y
 
 
 async def verify_bindings() -> None:
@@ -537,8 +552,48 @@ async def verify_upcoming_events_screen() -> None:
         assert isinstance(pilot.app.screen, UpcomingEventsScreen)
         
         screen = pilot.app.screen
-        assert screen.query_one("#events-static")
+        assert screen.query_one("#events-months")
         assert "t" in {binding.key for binding in screen.BINDINGS}
+        from textual.css.query import NoMatches
+        try:
+            screen.query_one("#events-holdings-table")
+            raise AssertionError("calendar screen must not show holdings")
+        except NoMatches:
+            pass
+        try:
+            screen.query_one("#events-calendar-label")
+            raise AssertionError("calendar screen must not repeat the page title")
+        except NoMatches:
+            pass
+        assert screen.query_one("#events-macro")
+
+        from datetime import date as date_cls
+        from assettrack.tui import _CalEvent
+
+        screen._on_fetch_complete(
+            [
+                _CalEvent(
+                    date=date_cls(2026, 7, 23),
+                    title="INTC",
+                    badge="SOX",
+                    completed=True,
+                    event_type="SOX",
+                ),
+                _CalEvent(
+                    date=date_cls(2026, 8, 1),
+                    title="CPI",
+                    completed=True,
+                    event_type="MACRO",
+                ),
+            ],
+            date_cls(2026, 8, 27),
+        )
+        await pilot.pause(0.4)
+        collapsibles = list(screen.query("Collapsible"))
+        assert len(collapsibles) == 2
+        by_title = {item.title: item for item in collapsibles}
+        assert by_title["2026年7月 · 1 件事"].collapsed
+        assert not by_title["2026年8月 · 1 件事"].collapsed
 
         await pilot.press("escape")
         await pilot.pause(0.1)
@@ -551,7 +606,7 @@ async def verify_active_etfs_screen() -> None:
     positions = _sample_positions()
     app = AssetTrackApp(user="testuser", positions=positions, rate=32.5)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("6")
+        await pilot.press("8")
         await pilot.pause(0.5)
         assert isinstance(pilot.app.screen, ActiveETFsScreen)
         
@@ -591,6 +646,7 @@ def patch_workers() -> None:
     # Stub out slow background network workers to avoid background thread race conditions
     from assettrack.tui import AssetTrackApp
     UpcomingEventsScreen.run_calendar_fetch = MagicMock()
+    UpcomingEventsScreen.run_macro_readings_fetch = MagicMock()
     # bug#00096: login now kicks off analysis fetch immediately — stub it so the
     # headless harness stays hermetic (no network on mount).
     AssetTrackApp._background_data_refresh = MagicMock()

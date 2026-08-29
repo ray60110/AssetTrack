@@ -386,7 +386,8 @@ class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsInstance(app.screen, tui.PerformanceTrackingScreen)
                 copy = app.screen.query_one("#performance-copy", Static)
-                self.assertIn("真正跑贏市場", str(copy.render()))
+                self.assertIn("對標", str(copy.render()))
+                self.assertIn("QQQ", str(copy.render()))
 
     async def test_performance_page_can_confirm_cancelling_tracking(self):
         from textual.app import App

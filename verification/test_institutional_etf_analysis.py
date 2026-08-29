@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -863,6 +864,9 @@ class AdvancedAnalysisScreenTests(unittest.IsolatedAsyncioTestCase):
             tui, "hedge_fund_records", return_value=[],
         ), patch.object(
             tui, "_active_params", return_value={"etf": {}},
+        ), patch(
+            "assettrack.analysis.taiwan_now",
+            return_value=datetime(2026, 7, 24, 12, 0, 0),
         ):
             app = HostApp()
             async with app.run_test(size=(160, 45)) as pilot:

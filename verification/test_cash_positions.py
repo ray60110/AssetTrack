@@ -311,17 +311,16 @@ class DashboardCashPositionTests(unittest.IsolatedAsyncioTestCase):
                 )
                 console = Console(record=True, width=120)
                 console.print(
-                    app.screen.query_one("#broker-dist", Static).content
+                    app.screen.query_one("#metrics-row", Static).content
                 )
-                broker_panel = console.export_text()
+                metrics = console.export_text()
 
         self.assertIn("CASH TWD", rendered_rows)
-        self.assertIn("cash", rendered_rows)
-        self.assertIn("100.0%", rendered_rows)
+        self.assertIn("現金", rendered_rows)
         self.assertEqual(str(cash_row[2]), "64,000.00")
         self.assertEqual(str(cash_row[5]), "[bold]$2,000.00[/bold]")
-        self.assertIn("現金比例", broker_panel)
-        self.assertIn("防守狀態", broker_panel)
+        self.assertIn("現金", metrics)
+        self.assertIn("100.0%", metrics)
 
     def test_broker_panel_displays_leverage_ratio_and_total_exposure(self):
         from rich.console import Console
@@ -348,10 +347,39 @@ class DashboardCashPositionTests(unittest.IsolatedAsyncioTestCase):
         console.print(tui._build_broker_panel(positions, 32))
         rendered = console.export_text()
 
-        self.assertIn("槓桿比例（總曝險／資產）：200.0%｜2.00x", rendered)
-        self.assertIn("總曝險：$4,000", rendered)
-        self.assertIn("淨曝險：+$4,000 (+200.0%)", rendered)
-        self.assertIn("槓桿曝險拆分：倍數 ETF $3,000｜期權 $0", rendered)
+        self.assertIn("總曝險 2.00x", rendered)
+        self.assertIn("倍數 ETF $3,000", rendered)
+        self.assertIn("期權 Δ $0", rendered)
+        self.assertIn("股票／普通 ETF $1,000", rendered)
+        self.assertIn("淨 +2.00x", rendered)
+
+    def test_metrics_panel_shows_asset_mix(self):
+        from rich.console import Console
+
+        from assettrack import tui
+
+        positions = [
+            Position(
+                broker="IBKR",
+                symbol="AAPL",
+                quantity=10,
+                market_price=100,
+                avg_cost=90,
+            ),
+        ]
+        cash = [
+            CashPosition(broker="IBKR", currency="USD", amount=2000),
+        ]
+        console = Console(record=True, width=120)
+        console.print(tui._build_metrics_panel(positions, 32, cash))
+        rendered = console.export_text()
+
+        self.assertIn("總資產", rendered)
+        self.assertIn("$3,000.00", rendered)
+        self.assertIn("股票 $1,000  33.3%", rendered)
+        self.assertIn("現金 $2,000  66.7%", rendered)
+        self.assertIn("1 股票", rendered)
+        self.assertIn("1 現金", rendered)
 
 
 if __name__ == "__main__":
