@@ -157,7 +157,7 @@ Dashboard 快捷鍵與目的地：
 | 區塊 | 類別 | 職責 |
 |---|---|---|
 | 主應用 | `AssetTrackApp` | 登入生命週期、30 分鐘全域補抓、跨畫面 `_fetch_activity` 狀態列 |
-| 登入 | `LoginScreen` + 認證 Modal | 帳號、密碼、Touch ID、註冊、SEC 身分、新手導覽 |
+| 登入 | `LoginScreen` + 認證 Modal | 米白圓角卡片（圓框）＋幾何 `▸`（右望）＋ AssetTrack 字標，**不渲染 PNG**。帳號、密碼、Touch ID、註冊、SEC 身分、新手導覽。密碼／註冊 Modal 用同一套海軍藍／青綠。進入 Dashboard 後才是 GitHub 暗線 chrome。 |
 | 主看板 | `DashboardScreen` | 總資產塊、曝險塊、持倉表、右側事件、底部觀察三欄（6 類股／7 期權／8 ETF） |
 | 事件 | `UpcomingEventsScreen` | 財報／FED／NFP／CPI：每月 Collapsible（當月展開、他月收合）。展開時左月曆、右行事曆，收合一併收起。格子依類型著色，不因整天已發生而變灰。已發生財報單行 EPS 擊敗／不如／符合與 +3 個交易日收盤；缺值不寫。表頭無 FRED 讀數。總經解析在月曆下方。 |
 | ETF | `ActiveETFsScreen` / `AdvancedAnalysisScreen` | 觀察清單建議、研究全表、13F |
@@ -899,6 +899,7 @@ Performance Gap % = (使用者總值 − 基準等值) / 基準等值 × 100
 | 想改的行為 | 先看 |
 |---|---|
 | 畫面、快捷鍵、worker | `assettrack/tui.py` |
+| 登入品牌色與字標 | `assettrack/login_logo.py`（`AssetTrack_logo/` 僅設計原檔，TUI 不讀） |
 | 建議文句格式 | `assettrack/shared.py` 的 `Recommendation` |
 | ETF 買賣判定 | `assettrack/analysis.py` |
 | 13F／universe | `assettrack/institutional.py` |

@@ -70,6 +70,7 @@ from .auth import (
     unlock_vault_with_touchid,
     verify_password,
 )
+from .login_logo import brand_mark, wordmark
 from .storage import (
     load_manual_positions, save_manual_positions, get_data_dir, seal_user_files,
     load_etf_symbol_cache, save_etf_symbol_cache, etf_symbol_cache_fresh,
@@ -950,87 +951,115 @@ class LogoutConfirmModal(ModalScreen[bool]):
                 confirm_btn.focus()
 
 
-def get_ascii_logo() -> str:
-    for name in ("assesttrack_logo.txt", "assettrack_logo.txt"):
-        logo_path = Path("AssetTrack_logo") / name
-        if logo_path.exists():
-            try:
-                lines = logo_path.read_text(encoding="utf-8").splitlines()
-                art_lines = [l for l in lines if l.strip()]
-                if art_lines:
-                    min_leading = min(len(l) - len(l.lstrip()) for l in art_lines)
-                    cropped_lines = [l[min_leading:].rstrip() for l in lines]
-                    start = 0
-                    while start < len(cropped_lines) and not cropped_lines[start]:
-                        start += 1
-                    end = len(cropped_lines)
-                    while end > start and not cropped_lines[end - 1]:
-                        end -= 1
-                    return "\n".join(cropped_lines[start:end])
-            except Exception:
-                pass
-
-    return ""
-
-
 class LoginScreen(Screen):
-    """登入畫面：全螢幕 GitHub 暗色系，含 ASCII 鷹頭 Logo、User ID 輸入框及密碼/Touch ID 驗證。"""
-    
+    """登入畫面：海軍藍畫布、米白圓角卡片、幾何 ▸ 字標與帳號驗證。不渲染 PNG。"""
+
     DEFAULT_CSS = """
     LoginScreen {
         align: center middle;
-        background: #0d1117;
+        background: #071018;
         overflow: auto;
     }
-    
+
     #login-container {
-        width: 60;
+        width: 48;
         height: auto;
-        border: thick #21262d;
-        background: #161b22;
+        border: round #0e7484;
+        background: #f2f5ee;
         padding: 2 4;
         align: center middle;
     }
-    
+
+    #login-mark {
+        width: 100%;
+        height: 1;
+        text-align: center;
+        color: #0e7484;
+        margin-bottom: 1;
+    }
+
     #login-title {
-        color: #58a6ff;
+        color: #0a3550;
         text-align: center;
         text-style: bold;
         height: 1;
-        margin-top: 1;
+        margin-top: 0;
         margin-bottom: 0;
     }
-    
-    #login-subtitle {
-        color: #8b949e;
+
+    #login-tagline {
+        color: #0e7484;
         text-align: center;
-        text-style: italic;
+        text-style: bold;
         height: 1;
-        margin-bottom: 2;
+        margin-bottom: 0;
     }
-    
+
+    #login-subtitle {
+        color: #4d6d78;
+        text-align: center;
+        height: 1;
+        margin-bottom: 0;
+    }
+
+    #login-rule {
+        color: #0e7484;
+        text-align: center;
+        height: 1;
+        margin: 1 0;
+    }
+
     #login-input-label {
-        color: #8b949e;
-        margin-bottom: 1;
+        color: #0a3550;
+        width: 100%;
+        margin-bottom: 0;
     }
-    
+
     #user-input {
-        margin-bottom: 2;
-        border: solid #30363d;
-        background: #0d1117;
-        color: #f0f6fc;
+        margin-bottom: 1;
+        border: tall #8aa3a8;
+        background: #ffffff;
+        color: #164563;
     }
-    
+
+    #user-input:focus {
+        border: tall #0e7484;
+    }
+
     #login-btn-row {
         height: auto;
         align: center middle;
+        margin-top: 0;
     }
-    
+
+    #login-btn {
+        min-width: 18;
+        background: #0e7484;
+        color: #f2f5ee;
+        text-style: bold;
+        border: none;
+    }
+
+    #login-btn:hover,
+    #login-btn:focus {
+        background: #1a9aaa;
+        color: #f2f5ee;
+        text-style: bold;
+    }
+
     #login-error-msg {
-        color: #ff7b72;
+        color: #b42318;
         text-align: center;
         margin-top: 1;
-        height: 1;
+        height: auto;
+        min-height: 1;
+    }
+
+    #login-hint {
+        color: #4d6d78;
+        text-align: center;
+        height: auto;
+        margin-top: 1;
     }
     """
     
@@ -1040,13 +1069,20 @@ class LoginScreen(Screen):
     
     def compose(self) -> ComposeResult:
         with Vertical(id="login-container"):
-            yield Static("AssetTrack", id="login-title")
+            yield Static(brand_mark(), id="login-mark")
+            yield Static(wordmark(), id="login-title")
+            yield Static("SMART ASSET MANAGEMENT", id="login-tagline")
             yield Static("投資組合與期權觀察", id="login-subtitle")
+            yield Static("─" * 22, id="login-rule")
             yield Label("帳號", id="login-input-label")
-            yield Input(value=self.default_user, placeholder="default", id="user-input")
+            yield Input(value=self.default_user, placeholder="帳號", id="user-input")
             yield Label("", id="login-error-msg")
             with Horizontal(id="login-btn-row"):
                 yield Button("登入", variant="primary", id="login-btn")
+            yield Static(
+                "既有帳號：Touch ID 或密碼  ·  新帳號將引導設定密碼",
+                id="login-hint",
+            )
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
@@ -1144,18 +1180,23 @@ class PasswordModal(ModalScreen[bool]):
     #pwd-dialog {
         width: 44;
         height: auto;
-        border: thick #21262d;
-        background: #161b22;
+        border: round #0e7484;
+        background: #0c1e2c;
         padding: 1 2;
     }
     #pwd-msg {
         margin-bottom: 1;
         text-style: bold;
+        color: #f2f5ee;
     }
     #pwd-input {
         margin-bottom: 1;
-        border: solid #30363d;
-        background: #0d1117;
+        border: tall #1a4a58;
+        background: #071018;
+        color: #f2f5ee;
+    }
+    #pwd-input:focus {
+        border: tall #0e7484;
     }
     #pwd-error {
         color: #ff7b72;
@@ -1168,6 +1209,11 @@ class PasswordModal(ModalScreen[bool]):
     }
     #pwd-buttons Button {
         margin-left: 1;
+    }
+    #pwd-buttons #confirm {
+        background: #0e7484;
+        color: #f2f5ee;
+        border: none;
     }
     """
     
@@ -1228,23 +1274,24 @@ class RegisterModal(ModalScreen[bool]):
     #reg-dialog {
         width: 46;
         height: auto;
-        border: thick #e3b341;
-        background: #161b22;
+        border: round #0e7484;
+        background: #0c1e2c;
         padding: 1 2;
     }
     #reg-title {
         text-style: bold;
-        color: #e3b341;
+        color: #1a9aaa;
         margin-bottom: 1;
     }
     #reg-desc {
-        color: #8b949e;
+        color: #9bb3b8;
         margin-bottom: 1;
     }
     .reg-field {
         margin-bottom: 1;
-        border: solid #30363d;
-        background: #0d1117;
+        border: tall #1a4a58;
+        background: #071018;
+        color: #f2f5ee;
     }
     #reg-error {
         color: #ff7b72;
@@ -1252,13 +1299,14 @@ class RegisterModal(ModalScreen[bool]):
         height: 1;
     }
     #performance-tracking-copy {
-        color: #8b949e;
+        color: #9bb3b8;
         height: auto;
         margin: 1 0;
     }
     #performance-tracking-toggle {
         height: auto;
         margin-bottom: 1;
+        color: #f2f5ee;
     }
     #reg-buttons {
         height: auto;
@@ -1266,6 +1314,11 @@ class RegisterModal(ModalScreen[bool]):
     }
     #reg-buttons Button {
         margin-left: 1;
+    }
+    #reg-buttons #confirm {
+        background: #0e7484;
+        color: #f2f5ee;
+        border: none;
     }
     """
     

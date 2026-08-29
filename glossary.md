@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
+最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -58,7 +58,9 @@
 
 | 英文名稱 | 中文對應 | 實際功能 |
 |---|---|---|
-| `LoginScreen` | 登入畫面 | 顯示帳號登入入口，支援 Touch ID、密碼登入與註冊。 |
+| `LoginScreen` | 登入畫面 | 海軍藍畫布上的米白圓角卡片：幾何 ▸ 鎖、AssetTrack 字標（Asset 海軍藍／Track 青綠）、SMART ASSET MANAGEMENT、帳號輸入；Touch ID、密碼或註冊。不把 logo PNG 畫進終端機。 |
+| `brand_mark` / `wordmark` | 登入幾何鎖／字標 | `login_logo.py` 的 Rich 字串。圓框由卡片 `border: round` 承擔，右望由 `▸` 承擔。 |
+| `login_logo` | 登入品牌色 | 從 PNG **取樣色碼**（米白／海軍藍／青綠），不載入點陣。 |
 | `run_touchid_auth` | Touch ID 背景驗證 | 在背景執行 `touchid_helper`，避免阻塞介面。 |
 | `_login_success` | 登入成功處理 | `seal_user_files`、載入持倉；必要時開 SEC 身分視窗。 |
 | `PasswordModal` | 密碼驗證視窗 | 輸入並驗證既有帳號密碼（最多 3 次）。 |
@@ -293,3 +295,5 @@
 | `_event_card` | 已移除。事件改由 `_CalEvent`＋滿寬清單列呈現。 |
 | `#events-static` | 已移除。月份改掛在 `#events-months` 的 Collapsible。 |
 | `_format_cpi_conclusion` / `_format_fed_conclusion` | 舊名。事件列改 `_format_cpi_event_actuals`／`_format_fed_event_actuals`。 |
+| `get_ascii_logo` / `load_eagle_art` / `#login-logo` | 已移除。half-block PNG 在 TUI 呈馬賽克；改 `brand_mark`／`wordmark`。 |
+| `AssetTrack_logo/assettrack_logo.txt` | 已移除。登入不再讀 truecolor ASCII 檔。 |
