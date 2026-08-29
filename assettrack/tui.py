@@ -179,15 +179,14 @@ def _process_declared_cash_flow(
     if not tracker.state().enabled:
         raise ValueError("請先啟用績效追蹤")
 
-    result_cash = [item.model_copy(deep=True) for item in cash_positions]
     broker = declaration["broker"]
     account = declaration.get("account")
     currency = declaration["currency"]
     amount = float(declaration["amount"])
-    target = next(
+    available = next(
         (
             item
-            for item in result_cash
+            for item in cash_positions
             if item.broker.casefold() == broker.casefold()
             and (item.account or "").casefold() == (account or "").casefold()
             and item.currency == currency
@@ -195,7 +194,7 @@ def _process_declared_cash_flow(
         None,
     )
     if declaration["direction"] == "withdrawal":
-        if target is None or target.amount < amount:
+        if available is None or available.amount < amount:
             raise ValueError("出金金額超過該券商帳戶的可用現金")
 
     amount_usd = amount if currency == "USD" else amount / rate
@@ -212,6 +211,9 @@ def _process_declared_cash_flow(
         notes=declaration.get("notes"),
     )
 
+    # declare_cash_flow waits on QQQ/VT. Saving the pre-fetch holdings would
+    # overwrite a position the user added, edited, or sold in that window.
+    positions, result_cash = load_manual_positions(user)
     if declaration["direction"] == "deposit":
         merge_cash_position(
             result_cash,
@@ -224,9 +226,21 @@ def _process_declared_cash_flow(
             ),
         )
     else:
-        target.amount -= amount
-        if target.amount == 0:
-            result_cash.remove(target)
+        target = next(
+            (
+                item
+                for item in result_cash
+                if item.broker.casefold() == broker.casefold()
+                and (item.account or "").casefold()
+                == (account or "").casefold()
+                and item.currency == currency
+            ),
+            None,
+        )
+        if target is not None and target.amount >= amount:
+            target.amount -= amount
+            if target.amount <= 0:
+                result_cash.remove(target)
 
     save_manual_positions(
         positions,
