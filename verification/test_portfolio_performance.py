@@ -235,6 +235,37 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
                     ),
                 )
 
+    def test_tracked_position_purchase_rejects_zero_cost_instead_of_minting_shares(self):
+        """Blank/zero cost must not debit $0 and later sell into invented cash."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            cash = [
+                CashPosition(
+                    broker="IBKR",
+                    account="MAIN",
+                    currency="USD",
+                    amount=1_000,
+                )
+            ]
+            with self.assertRaisesRegex(ValueError, "成交價格"):
+                tracker.apply_position_purchase(
+                    positions=[],
+                    cash_positions=cash,
+                    purchase=Position(
+                        broker="IBKR",
+                        account="MAIN",
+                        symbol="AAPL",
+                        quantity=10,
+                        avg_cost=0,
+                        currency="USD",
+                    ),
+                )
+            self.assertEqual(cash[0].amount, 1_000)
+
     def test_tracked_position_sale_converts_value_to_cash_instead_of_deleting_assets(self):
         with tempfile.TemporaryDirectory() as tmp:
             tracker = PortfolioPerformanceTracker(
