@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import json
+import math
 from pathlib import Path
 from typing import Literal, Protocol, Sequence
 from uuid import uuid4
@@ -528,7 +529,14 @@ class PortfolioPerformanceTracker:
     ) -> tuple[list[Position], list[CashPosition]]:
         if not self.state().enabled:
             raise ValueError("Performance Tracking is not enabled")
-        if purchase.quantity <= 0 or purchase.avg_cost is None:
+        cost = purchase.avg_cost
+        if (
+            not math.isfinite(purchase.quantity)
+            or purchase.quantity <= 0
+            or cost is None
+            or not math.isfinite(cost)
+            or cost <= 0
+        ):
             raise ValueError("追蹤期間買進必須提供正數數量與成交價格")
         multiplier = (
             purchase.multiplier or 100
