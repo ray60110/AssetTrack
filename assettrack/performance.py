@@ -13,6 +13,16 @@ from .auth import read_protected_text, write_protected_text
 from .models import CashPosition, Position, merge_cash_position
 
 
+def _same_tracked_holding(left: Position, right: Position) -> bool:
+    """Match the TUI holding identity: broker, account, symbol, and type."""
+    return (
+        left.broker.casefold() == right.broker.casefold()
+        and (left.account or "").casefold() == (right.account or "").casefold()
+        and left.symbol.upper() == right.symbol.upper()
+        and left.instrument_type == right.instrument_type
+    )
+
+
 DEFAULT_BENCHMARKS = ("QQQ", "VT")
 
 
@@ -561,10 +571,7 @@ class PortfolioPerformanceTracker:
             (
                 item
                 for item in result_positions
-                if item.broker.casefold() == purchase.broker.casefold()
-                and (item.account or "").casefold()
-                == (purchase.account or "").casefold()
-                and item.symbol.upper() == purchase.symbol.upper()
+                if _same_tracked_holding(item, purchase)
             ),
             None,
         )
@@ -611,10 +618,7 @@ class PortfolioPerformanceTracker:
             (
                 item
                 for item in result_positions
-                if item.broker.casefold() == position.broker.casefold()
-                and (item.account or "").casefold()
-                == (position.account or "").casefold()
-                and item.symbol.upper() == position.symbol.upper()
+                if _same_tracked_holding(item, position)
             ),
             None,
         )

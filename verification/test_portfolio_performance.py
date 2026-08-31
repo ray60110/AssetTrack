@@ -270,6 +270,109 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
             self.assertEqual(positions, [])
             self.assertEqual(resulting_cash[0].amount, 1_050)
 
+    def test_tracked_purchase_does_not_merge_same_symbol_stock_into_etf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            etf = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="QQQ",
+                instrument_type="etf",
+                quantity=100,
+                avg_cost=400,
+                currency="USD",
+            )
+            stock = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="QQQ",
+                instrument_type="stock",
+                quantity=10,
+                avg_cost=400,
+                currency="USD",
+            )
+            cash = [
+                CashPosition(
+                    broker="IBKR",
+                    account="MAIN",
+                    currency="USD",
+                    amount=10_000,
+                )
+            ]
+
+            positions, remaining_cash = tracker.apply_position_purchase(
+                positions=[etf, stock],
+                cash_positions=cash,
+                purchase=Position(
+                    broker="IBKR",
+                    account="MAIN",
+                    symbol="QQQ",
+                    instrument_type="stock",
+                    quantity=5,
+                    avg_cost=400,
+                    currency="USD",
+                ),
+            )
+
+            by_type = {item.instrument_type: item for item in positions}
+            self.assertEqual(by_type["etf"].quantity, 100)
+            self.assertEqual(by_type["etf"].avg_cost, 400)
+            self.assertEqual(by_type["stock"].quantity, 15)
+            self.assertEqual(by_type["stock"].avg_cost, 400)
+            self.assertEqual(remaining_cash[0].amount, 8_000)
+
+    def test_tracked_sale_of_stock_does_not_close_same_symbol_etf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            etf = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="QQQ",
+                instrument_type="etf",
+                quantity=100,
+                avg_cost=400,
+                market_price=500,
+                currency="USD",
+            )
+            stock = Position(
+                broker="IBKR",
+                account="MAIN",
+                symbol="QQQ",
+                instrument_type="stock",
+                quantity=10,
+                avg_cost=400,
+                market_price=420,
+                currency="USD",
+            )
+            cash = [
+                CashPosition(
+                    broker="IBKR",
+                    account="MAIN",
+                    currency="USD",
+                    amount=500,
+                )
+            ]
+
+            positions, resulting_cash = tracker.apply_position_sale(
+                positions=[etf, stock],
+                cash_positions=cash,
+                position=stock,
+                quantity=10,
+            )
+
+            self.assertEqual(len(positions), 1)
+            self.assertEqual(positions[0].instrument_type, "etf")
+            self.assertEqual(positions[0].quantity, 100)
+            self.assertEqual(resulting_cash[0].amount, 4_700)
+
     def test_yfinance_adapter_uses_latest_market_close_before_sunday(self):
         history = pd.DataFrame(
             {"Close": [498.0, 500.0]},
