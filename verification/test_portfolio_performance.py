@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -305,6 +306,91 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
             self.assertTrue(tracker.valuation_due(sunday))
             tracker.record_valuation(total_value_usd=10_500, recorded_at=sunday)
             self.assertFalse(tracker.valuation_due(sunday))
+
+    def test_concurrent_cash_flow_and_valuation_both_persist(self):
+        """Dashboard refresh records a baseline while a declared deposit
+        waits on QQQ/VT. Both writers used to read-modify-write the same
+        JSON, so the later write dropped the cash flow or the valuation.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            start = threading.Barrier(2, timeout=5)
+            original_store = PortfolioPerformanceTracker._store_unlocked
+
+            def slow_store(self, document):
+                # Widen the window so a lock-less RMW reliably loses a write.
+                time.sleep(0.05)
+                original_store(self, document)
+
+            class BarrierPrices:
+                def closing_prices(self, symbols, as_of):
+                    start.wait()
+                    return {
+                        "QQQ": BenchmarkClose(date(2026, 7, 24), 500),
+                        "VT": BenchmarkClose(date(2026, 7, 24), 125),
+                    }
+
+            data_dir = Path(tmp)
+            prices = BarrierPrices()
+            flow_tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=data_dir,
+                benchmark_prices=prices,
+            )
+            value_tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=data_dir,
+                benchmark_prices=prices,
+            )
+            flow_tracker.enable(
+                enabled_at=datetime(2026, 7, 27, tzinfo=timezone.utc),
+                new_account=True,
+            )
+
+            errors: list[BaseException] = []
+
+            def declare() -> None:
+                try:
+                    flow_tracker.declare_cash_flow(
+                        direction="deposit",
+                        amount=1_000,
+                        currency="USD",
+                        amount_usd=1_000,
+                        fx_rate_to_usd=1,
+                        category="salary",
+                        channel="bank_transfer",
+                        broker="IBKR",
+                        occurred_at=datetime(2026, 7, 27, 12, tzinfo=timezone.utc),
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            def value() -> None:
+                try:
+                    value_tracker.record_valuation(
+                        total_value_usd=10_000,
+                        recorded_at=datetime(2026, 7, 27, 12, tzinfo=timezone.utc),
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with patch.object(PortfolioPerformanceTracker, "_store_unlocked", slow_store):
+                threads = [
+                    threading.Thread(target=declare),
+                    threading.Thread(target=value),
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+                    self.assertFalse(thread.is_alive())
+
+            self.assertEqual(errors, [])
+            restored = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=data_dir,
+            )
+            self.assertEqual(len(restored.cash_flows()), 1)
+            self.assertEqual(len(restored.valuations()), 1)
 
 
 class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):

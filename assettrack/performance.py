@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
+import threading
 from typing import Literal, Protocol, Sequence
 from uuid import uuid4
 
@@ -14,6 +15,20 @@ from .models import CashPosition, Position, merge_cash_position
 
 
 DEFAULT_BENCHMARKS = ("QQQ", "VT")
+
+_TRACKER_LOCKS_GUARD = threading.Lock()
+_TRACKER_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _tracker_lock(path: Path) -> threading.RLock:
+    """One RLock per ledger file so Dashboard and comparison-page workers serialize."""
+    key = str(path)
+    with _TRACKER_LOCKS_GUARD:
+        lock = _TRACKER_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _TRACKER_LOCKS[key] = lock
+        return lock
 
 
 @dataclass(frozen=True)
@@ -132,6 +147,7 @@ class PortfolioPerformanceTracker:
         self.benchmark_prices = benchmark_prices
         safe_user = (user or "default").replace("/", "_")
         self.path = data_dir / f"{safe_user}_total_asset_tracking.json"
+        self._document_lock = _tracker_lock(self.path)
 
     def _empty_document(self) -> dict:
         return {
@@ -147,7 +163,7 @@ class PortfolioPerformanceTracker:
             "usertotalAsset_tracking": [],
         }
 
-    def _read(self) -> dict:
+    def _load_unlocked(self) -> dict:
         if not self.path.exists():
             return self._empty_document()
         try:
@@ -177,11 +193,19 @@ class PortfolioPerformanceTracker:
             }
         return document
 
-    def _write(self, document: dict) -> None:
+    def _store_unlocked(self, document: dict) -> None:
         write_protected_text(
             self.path,
             json.dumps(document, ensure_ascii=False, indent=2),
         )
+
+    def _read(self) -> dict:
+        with self._document_lock:
+            return self._load_unlocked()
+
+    def _write(self, document: dict) -> None:
+        with self._document_lock:
+            self._store_unlocked(document)
 
     def state(self) -> TrackingState:
         document = self._read()
@@ -205,28 +229,29 @@ class PortfolioPerformanceTracker:
         new_account: bool = False,
     ) -> TrackingState:
         at = enabled_at or datetime.now(timezone.utc)
-        document = self._read()
-        previous = document.get("userportfolioperf_tracksys", {})
-        has_history = bool(previous.get("valuations")) or bool(
-            previous.get("enabled_at")
-        )
-        state = TrackingState(
-            enabled=True,
-            enabled_at=at,
-            has_tracking_gap=bool(previous.get("has_tracking_gap")) or (
-                not new_account or has_history
-            ),
-            benchmarks=tuple(previous.get("benchmarks") or DEFAULT_BENCHMARKS),
-        )
-        document["userporfolioperf_trackingsys_toggle"] = True
-        document["userportfolioperf_tracksys"] = {
-            "enabled_at": at.isoformat(),
-            "disabled_at": None,
-            "has_tracking_gap": state.has_tracking_gap,
-            "benchmarks": list(state.benchmarks),
-            "valuations": previous.get("valuations", []),
-        }
-        self._write(document)
+        with self._document_lock:
+            document = self._load_unlocked()
+            previous = document.get("userportfolioperf_tracksys", {})
+            has_history = bool(previous.get("valuations")) or bool(
+                previous.get("enabled_at")
+            )
+            state = TrackingState(
+                enabled=True,
+                enabled_at=at,
+                has_tracking_gap=bool(previous.get("has_tracking_gap")) or (
+                    not new_account or has_history
+                ),
+                benchmarks=tuple(previous.get("benchmarks") or DEFAULT_BENCHMARKS),
+            )
+            document["userporfolioperf_trackingsys_toggle"] = True
+            document["userportfolioperf_tracksys"] = {
+                "enabled_at": at.isoformat(),
+                "disabled_at": None,
+                "has_tracking_gap": state.has_tracking_gap,
+                "benchmarks": list(state.benchmarks),
+                "valuations": previous.get("valuations", []),
+            }
+            self._store_unlocked(document)
         return state
 
     def disable(
@@ -234,14 +259,15 @@ class PortfolioPerformanceTracker:
         *,
         disabled_at: datetime | None = None,
     ) -> TrackingState:
-        document = self._read()
-        tracking = document.get("userportfolioperf_tracksys", {})
-        document["userporfolioperf_trackingsys_toggle"] = False
-        tracking["disabled_at"] = (
-            disabled_at or datetime.now(timezone.utc)
-        ).isoformat()
-        document["userportfolioperf_tracksys"] = tracking
-        self._write(document)
+        with self._document_lock:
+            document = self._load_unlocked()
+            tracking = document.get("userportfolioperf_tracksys", {})
+            document["userporfolioperf_trackingsys_toggle"] = False
+            tracking["disabled_at"] = (
+                disabled_at or datetime.now(timezone.utc)
+            ).isoformat()
+            document["userportfolioperf_tracksys"] = tracking
+            self._store_unlocked(document)
         return self.state()
 
     def declare_cash_flow(
@@ -300,29 +326,31 @@ class PortfolioPerformanceTracker:
                 for symbol in self.state().benchmarks
             },
         )
-        document = self._read()
-        document.setdefault("usertotalAsset_tracking", []).append(
-            {
-                "id": flow.id,
-                "occurred_at": flow.occurred_at.isoformat(),
-                "direction": flow.direction,
-                "amount": flow.amount,
-                "currency": flow.currency,
-                "amount_usd": flow.amount_usd,
-                "fx_rate_to_usd": flow.fx_rate_to_usd,
-                "category": flow.category,
-                "channel": flow.channel,
-                "broker": flow.broker,
-                "account": flow.account,
-                "notes": flow.notes,
-                "benchmark_prices": flow.benchmark_prices,
-                "benchmark_market_dates": {
-                    symbol: market_date.isoformat()
-                    for symbol, market_date in flow.benchmark_market_dates.items()
-                },
-            }
-        )
-        self._write(document)
+        payload = {
+            "id": flow.id,
+            "occurred_at": flow.occurred_at.isoformat(),
+            "direction": flow.direction,
+            "amount": flow.amount,
+            "currency": flow.currency,
+            "amount_usd": flow.amount_usd,
+            "fx_rate_to_usd": flow.fx_rate_to_usd,
+            "category": flow.category,
+            "channel": flow.channel,
+            "broker": flow.broker,
+            "account": flow.account,
+            "notes": flow.notes,
+            "benchmark_prices": flow.benchmark_prices,
+            "benchmark_market_dates": {
+                symbol: market_date.isoformat()
+                for symbol, market_date in flow.benchmark_market_dates.items()
+            },
+        }
+        with self._document_lock:
+            document = self._load_unlocked()
+            if not document.get("userporfolioperf_trackingsys_toggle"):
+                raise ValueError("Performance Tracking is not enabled")
+            document.setdefault("usertotalAsset_tracking", []).append(payload)
+            self._store_unlocked(document)
         return flow
 
     def cash_flows(self) -> list[CashFlow]:
@@ -394,21 +422,23 @@ class PortfolioPerformanceTracker:
                 for symbol in self.state().benchmarks
             },
         )
-        document = self._read()
-        tracking = document.setdefault("userportfolioperf_tracksys", {})
-        tracking.setdefault("valuations", []).append(
-            {
-                "recorded_at": snapshot.recorded_at.isoformat(),
-                "total_value_usd": snapshot.total_value_usd,
-                "benchmark_prices": snapshot.benchmark_prices,
-                "benchmark_market_dates": {
-                    symbol: market_date.isoformat()
-                    for symbol, market_date in snapshot.benchmark_market_dates.items()
-                },
-            }
-        )
-        document["userportfolioperf_tracksys"] = tracking
-        self._write(document)
+        payload = {
+            "recorded_at": snapshot.recorded_at.isoformat(),
+            "total_value_usd": snapshot.total_value_usd,
+            "benchmark_prices": snapshot.benchmark_prices,
+            "benchmark_market_dates": {
+                symbol: market_date.isoformat()
+                for symbol, market_date in snapshot.benchmark_market_dates.items()
+            },
+        }
+        with self._document_lock:
+            document = self._load_unlocked()
+            if not document.get("userporfolioperf_trackingsys_toggle"):
+                raise ValueError("Performance Tracking is not enabled")
+            tracking = document.setdefault("userportfolioperf_tracksys", {})
+            tracking.setdefault("valuations", []).append(payload)
+            document["userportfolioperf_tracksys"] = tracking
+            self._store_unlocked(document)
         return snapshot
 
     def valuations(self) -> list[ValuationSnapshot]:
