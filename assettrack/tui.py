@@ -4746,6 +4746,11 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                         "avg_cost",
                         "currency",
                         "market",
+                        "multiplier",
+                        "strike",
+                        "expiry",
+                        "option_type",
+                        "underlying",
                     )
                     if any(
                         getattr(old_pos, field) != getattr(updated_pos, field)
