@@ -709,9 +709,15 @@ class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
                 retargeted = tw_option.model_copy(deep=True)
                 retargeted.strike = 900.0
                 app.screen._handle_edit_position_result(tw_option, [retargeted])
+                self.assertEqual(save.call_count, 0)
+                annotated = option.model_copy(deep=True)
+                annotated.notes = "roll later"
+                app.screen._handle_edit_position_result(option, [annotated])
                 await pilot.pause()
 
-        save.assert_not_called()
+        self.assertEqual(save.call_count, 1)
+        self.assertEqual(save.call_args.args[0][0].notes, "roll later")
+        self.assertEqual(save.call_args.args[0][0].multiplier, 100.0)
         self.assertTrue(
             any("不能直接改寫部位" in note for note in app.notifications),
             app.notifications,
