@@ -620,6 +620,103 @@ class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved_positions[0].symbol, "AAPL")
         self.assertEqual(saved_cash[0].amount, 500)
 
+    async def test_tracked_edit_cannot_rewrite_option_contract_economics(self):
+        from textual.app import App
+
+        from assettrack import tui
+
+        option = Position(
+            broker="IBKR",
+            account="MAIN",
+            symbol="AAPL260619C00150000",
+            instrument_type="option",
+            quantity=1,
+            avg_cost=5.0,
+            market_price=5.0,
+            currency="USD",
+            underlying="AAPL",
+            expiry="2026-06-19",
+            strike=150.0,
+            option_type="call",
+            multiplier=100.0,
+        )
+        tw_option = Position(
+            broker="IBKR",
+            account="MAIN",
+            symbol="2330",
+            instrument_type="option",
+            quantity=1,
+            avg_cost=2.0,
+            currency="TWD",
+            market="TW",
+            underlying="2330",
+            expiry="2026-06-19",
+            strike=800.0,
+            option_type="call",
+            multiplier=50.0,
+        )
+
+        class HostApp(App):
+            def __init__(self):
+                super().__init__()
+                self._fetch_activity = {}
+                self.notifications: list[str] = []
+
+            def notify(self, message, **kwargs):
+                self.notifications.append(str(message))
+                return super().notify(message, **kwargs)
+
+            def _set_fetch_active(self, key, label):
+                self._fetch_activity[key] = label
+
+            def _clear_fetch_active(self, key):
+                self._fetch_activity.pop(key, None)
+
+            def on_mount(self):
+                self.push_screen(
+                    tui.DashboardScreen(
+                        "alice",
+                        positions=[option, tw_option],
+                        cash_positions=[],
+                        rate=32,
+                    )
+                )
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            tui, "get_data_dir", return_value=Path(tmp)
+        ), patch.object(
+            tui.DashboardScreen,
+            "_maybe_record_performance_valuation",
+        ), patch.object(
+            tui, "_get_cached_usdtwd_rate", return_value=32
+        ), patch.object(
+            tui, "fetch_usdtwd_rate", return_value=32
+        ), patch(
+            "assettrack.quotes.fetch_risk_free_rate", return_value=0.04
+        ), patch.object(
+            tui, "load_manual_positions", return_value=([option, tw_option], [])
+        ), patch.object(tui, "save_manual_positions") as save:
+            PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            ).enable(new_account=True)
+            app = HostApp()
+            async with app.run_test(size=(160, 45)) as pilot:
+                await pilot.pause()
+                cheaper = option.model_copy(deep=True)
+                cheaper.multiplier = 1.0
+                app.screen._handle_edit_position_result(option, [cheaper])
+                retargeted = tw_option.model_copy(deep=True)
+                retargeted.strike = 900.0
+                app.screen._handle_edit_position_result(tw_option, [retargeted])
+                await pilot.pause()
+
+        save.assert_not_called()
+        self.assertTrue(
+            any("不能直接改寫部位" in note for note in app.notifications),
+            app.notifications,
+        )
+
     async def test_refresh_worker_can_update_encrypted_performance_ledger(self):
         from textual.app import App
 
