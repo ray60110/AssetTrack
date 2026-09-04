@@ -6,6 +6,7 @@ from assettrack.models import (
     Position,
     calculate_cash_ratio,
     merge_cash_position,
+    normalize_holding_account,
     portfolio_unrealized_performance,
 )
 
@@ -47,6 +48,35 @@ class CashPositionTests(unittest.TestCase):
         self.assertEqual(len(cash_positions), 1)
         self.assertEqual(cash_positions[0].amount, 1250)
         self.assertEqual(cash_positions[0].notes, "第二次新增")
+
+    def test_blank_and_placeholder_accounts_are_the_same_cash_holding(self):
+        self.assertIsNone(normalize_holding_account(None))
+        self.assertIsNone(normalize_holding_account(""))
+        self.assertIsNone(normalize_holding_account("default"))
+        self.assertEqual(normalize_holding_account("MAIN"), "MAIN")
+
+        cash_positions = [
+            CashPosition(
+                broker="manual",
+                account=None,
+                currency="USD",
+                amount=10_000,
+            ),
+        ]
+        merge_cash_position(
+            cash_positions,
+            CashPosition(
+                broker="manual",
+                account="default",
+                currency="USD",
+                amount=1_600,
+                notes="出售 AAPL",
+            ),
+        )
+
+        self.assertEqual(len(cash_positions), 1)
+        self.assertEqual(cash_positions[0].amount, 11_600)
+        self.assertIsNone(cash_positions[0].account)
 
     def test_cash_ratio_uses_converted_cash_and_positive_long_short_values(self):
         positions = [
@@ -159,6 +189,36 @@ class AddCashPositionModalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cash.currency, "USD")
         self.assertEqual(cash.amount, 1250.50)
         self.assertEqual(cash.notes, "待部署資金")
+
+    async def test_blank_account_is_not_rewritten_as_default(self):
+        from textual.app import App
+        from textual.widgets import Button, Input
+
+        from assettrack import tui
+
+        result_holder = []
+
+        class HostApp(App):
+            def on_mount(self):
+                self.push_screen(tui.AddPositionModal(), result_holder.append)
+
+        app = HostApp()
+        async with app.run_test(size=(100, 55)) as pilot:
+            await pilot.pause()
+            modal = app.screen
+            modal.query_one("#add-symbol", Input).value = "AAPL"
+            modal.query_one("#add-qty", Input).value = "10"
+            modal.query_one("#add-cost", Input).value = "150"
+            modal.query_one("#confirm", Button).press()
+            await pilot.pause()
+
+        self.assertEqual(len(result_holder), 1)
+        result = result_holder[0]
+        self.assertEqual(len(result), 1)
+        position = result[0]
+        self.assertIsInstance(position, Position)
+        self.assertEqual(position.symbol, "AAPL")
+        self.assertIsNone(position.account)
 
     async def test_add_etf_can_store_manual_exposure_factor(self):
         from textual.app import App
