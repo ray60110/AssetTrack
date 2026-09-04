@@ -11,6 +11,18 @@ InstrumentType = Literal["stock", "option", "etf", "other"]
 # Supported cash currencies — at least USD, TWD, JPY as required
 CashCurrency = Literal["USD", "TWD", "JPY"]
 
+# Add-position used to write "default" for a blank account, while declared
+# deposits stored None. Treat those placeholders as the same unspecified account.
+_UNSET_ACCOUNT_ALIASES = frozenset({"", "default", "none", "clear"})
+
+
+def normalize_holding_account(account: str | None) -> str | None:
+    """Return None when the account field was left blank or used a placeholder."""
+    value = (account or "").strip()
+    if value.casefold() in _UNSET_ACCOUNT_ALIASES:
+        return None
+    return value
+
 
 class CashPosition(BaseModel):
     """A cash holding stored at a broker/account in its native currency."""
@@ -47,13 +59,13 @@ def merge_cash_position(
     """Stack cash added to the same broker/account/currency holding."""
     incoming_key = (
         incoming.broker.casefold(),
-        (incoming.account or "").casefold(),
+        (normalize_holding_account(incoming.account) or "").casefold(),
         incoming.currency,
     )
     for existing in cash_positions:
         existing_key = (
             existing.broker.casefold(),
-            (existing.account or "").casefold(),
+            (normalize_holding_account(existing.account) or "").casefold(),
             existing.currency,
         )
         if existing_key == incoming_key:

@@ -10,7 +10,7 @@ from uuid import uuid4
 import yfinance as yf
 
 from .auth import read_protected_text, write_protected_text
-from .models import CashPosition, Position, merge_cash_position
+from .models import CashPosition, Position, merge_cash_position, normalize_holding_account
 
 
 DEFAULT_BENCHMARKS = ("QQQ", "VT")
@@ -543,8 +543,8 @@ class PortfolioPerformanceTracker:
                 item
                 for item in result_cash
                 if item.broker.casefold() == purchase.broker.casefold()
-                and (item.account or "").casefold()
-                == (purchase.account or "").casefold()
+                and (normalize_holding_account(item.account) or "").casefold()
+                == (normalize_holding_account(purchase.account) or "").casefold()
                 and item.currency == purchase.currency
             ),
             None,
@@ -562,8 +562,8 @@ class PortfolioPerformanceTracker:
                 item
                 for item in result_positions
                 if item.broker.casefold() == purchase.broker.casefold()
-                and (item.account or "").casefold()
-                == (purchase.account or "").casefold()
+                and (normalize_holding_account(item.account) or "").casefold()
+                == (normalize_holding_account(purchase.account) or "").casefold()
                 and item.symbol.upper() == purchase.symbol.upper()
             ),
             None,
@@ -612,8 +612,8 @@ class PortfolioPerformanceTracker:
                 item
                 for item in result_positions
                 if item.broker.casefold() == position.broker.casefold()
-                and (item.account or "").casefold()
-                == (position.account or "").casefold()
+                and (normalize_holding_account(item.account) or "").casefold()
+                == (normalize_holding_account(position.account) or "").casefold()
                 and item.symbol.upper() == position.symbol.upper()
             ),
             None,
@@ -631,7 +631,7 @@ class PortfolioPerformanceTracker:
             result_cash,
             CashPosition(
                 broker=position.broker,
-                account=position.account,
+                account=normalize_holding_account(position.account),
                 currency=position.currency,
                 amount=proceeds,
                 notes=f"出售 {position.symbol}",

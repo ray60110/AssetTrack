@@ -49,6 +49,7 @@ from .models import (
     Position,
     cash_value_usd,
     merge_cash_position,
+    normalize_holding_account,
     portfolio_unrealized_performance,
     total_asset_value_usd,
 )
@@ -190,7 +191,8 @@ def _process_declared_cash_flow(
             item
             for item in result_cash
             if item.broker.casefold() == broker.casefold()
-            and (item.account or "").casefold() == (account or "").casefold()
+            and (normalize_holding_account(item.account) or "").casefold()
+            == (normalize_holding_account(account) or "").casefold()
             and item.currency == currency
         ),
         None,
@@ -218,7 +220,7 @@ def _process_declared_cash_flow(
             result_cash,
             CashPosition(
                 broker=broker,
-                account=account,
+                account=normalize_holding_account(account),
                 currency=currency,
                 amount=amount,
                 notes=declaration.get("notes"),
@@ -2164,7 +2166,7 @@ class AddPositionModal(ModalScreen[Optional[list[Holding]]]):
             try:
                 return CashPosition(
                     broker=str(broker),
-                    account=cash_account or "default",
+                    account=normalize_holding_account(cash_account),
                     currency=str(cash_currency),
                     amount=cash_amount,
                     notes=cash_notes or None,
@@ -2311,7 +2313,7 @@ class AddPositionModal(ModalScreen[Optional[list[Holding]]]):
             if self.position:
                 pos = self.position.model_copy(deep=True)
                 pos.broker = broker
-                pos.account = account or "default"
+                pos.account = normalize_holding_account(account)
                 pos.symbol = symbol
                 pos.instrument_type = inst_type
                 pos.quantity = qty
@@ -2338,7 +2340,7 @@ class AddPositionModal(ModalScreen[Optional[list[Holding]]]):
             else:
                 pos = Position(
                     broker=broker,
-                    account=account or "default",
+                    account=normalize_holding_account(account),
                     symbol=symbol,
                     instrument_type=inst_type,
                     quantity=qty,
@@ -3407,13 +3409,18 @@ class UpcomingEventsScreen(_FormulaDrillMixin, Screen):
 
 def _pos_key(p: Position) -> tuple[str, str, str, str]:
     """部位識別 key（與既有新增/刪除比對邏輯一致：券商+帳戶+代碼+類型）。"""
-    return (p.broker.lower(), (p.account or "").lower(), p.symbol.upper(), p.instrument_type)
+    return (
+        p.broker.lower(),
+        (normalize_holding_account(p.account) or "").lower(),
+        p.symbol.upper(),
+        p.instrument_type,
+    )
 
 
 def _cash_key(cash: CashPosition) -> tuple[str, str, str, str]:
     return (
         cash.broker.lower(),
-        (cash.account or "").lower(),
+        (normalize_holding_account(cash.account) or "").lower(),
         f"CASH {cash.currency}",
         "cash",
     )

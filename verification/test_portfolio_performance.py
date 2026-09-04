@@ -189,6 +189,77 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
                 8,
             )
 
+    def test_tracked_purchase_uses_cash_when_deposit_account_was_left_blank(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            cash = [
+                CashPosition(
+                    broker="manual",
+                    account=None,
+                    currency="USD",
+                    amount=10_000,
+                )
+            ]
+            purchase = Position(
+                broker="manual",
+                account="default",
+                symbol="AAPL",
+                quantity=10,
+                avg_cost=150,
+                currency="USD",
+            )
+
+            positions, remaining_cash = tracker.apply_position_purchase(
+                positions=[],
+                cash_positions=cash,
+                purchase=purchase,
+            )
+
+            self.assertEqual(len(positions), 1)
+            self.assertEqual(positions[0].symbol, "AAPL")
+            self.assertEqual(remaining_cash[0].amount, 8_500)
+
+    def test_tracked_sale_returns_proceeds_to_the_blank_deposit_account(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            position = Position(
+                broker="manual",
+                account="default",
+                symbol="AAPL",
+                quantity=10,
+                avg_cost=150,
+                market_price=160,
+                currency="USD",
+            )
+            cash = [
+                CashPosition(
+                    broker="manual",
+                    account=None,
+                    currency="USD",
+                    amount=8_500,
+                )
+            ]
+
+            positions, resulting_cash = tracker.apply_position_sale(
+                positions=[position],
+                cash_positions=cash,
+                position=position,
+                quantity=10,
+            )
+
+            self.assertEqual(positions, [])
+            self.assertEqual(len(resulting_cash), 1)
+            self.assertEqual(resulting_cash[0].amount, 10_100)
+            self.assertIsNone(resulting_cash[0].account)
+
     def test_tracked_position_purchase_cannot_exceed_matching_cash(self):
         with tempfile.TemporaryDirectory() as tmp:
             tracker = PortfolioPerformanceTracker(
