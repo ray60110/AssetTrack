@@ -388,7 +388,8 @@ class LoginDecryptFailureTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsInstance(app.screen, tui.LoginScreen)
                 error = str(app.screen.query_one("#login-error-msg", Label).render())
-                self.assertIn("無法解密", error)
+                self.assertIn("無法讀取持倉檔", error)
+                self.assertIn("以免覆蓋原資料", error)
 
             self.assertEqual(
                 Path(tmp, "alice_positions.json").read_text(),
