@@ -214,6 +214,35 @@ class AuthSecurityTests(unittest.TestCase):
         self.assertTrue(auth.vault_is_unlocked())
         self.assertEqual(auth.decrypt_text(auth.encrypt_text("ok")), "ok")
 
+    def test_corrupt_plaintext_positions_are_not_sealed_as_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "alice_positions.json"
+            path.write_text("{this is not valid positions json", encoding="utf-8")
+            original = path.read_text(encoding="utf-8")
+            with patch.object(storage, "get_data_dir", return_value=Path(tmp)):
+                auth.register_account("alice", "correct-horse")
+                auth.unlock_vault("alice", "correct-horse")
+                with self.assertRaises(auth.AuthError):
+                    storage.load_manual_positions("alice")
+                with self.assertRaises(auth.AuthError):
+                    storage.seal_user_files("alice")
+                self.assertEqual(path.read_text(encoding="utf-8"), original)
+                self.assertFalse(auth.is_encrypted_text(path.read_text(encoding="utf-8")))
+
+    def test_valid_empty_positions_file_still_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "alice_positions.json"
+            path.write_text(
+                json.dumps({"positions": [], "cash_positions": []}),
+                encoding="utf-8",
+            )
+            with patch.object(storage, "get_data_dir", return_value=Path(tmp)):
+                auth.register_account("alice", "correct-horse")
+                auth.unlock_vault("alice", "correct-horse")
+                positions, cash = storage.load_manual_positions("alice")
+                self.assertEqual(positions, [])
+                self.assertEqual(cash, [])
+
     def test_lost_data_key_does_not_look_like_an_empty_portfolio(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(storage, "get_data_dir", return_value=Path(tmp)):
@@ -359,7 +388,8 @@ class LoginDecryptFailureTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsInstance(app.screen, tui.LoginScreen)
                 error = str(app.screen.query_one("#login-error-msg", Label).render())
-                self.assertIn("無法解密", error)
+                self.assertIn("無法讀取持倉檔", error)
+                self.assertIn("以免覆蓋原資料", error)
 
             self.assertEqual(
                 Path(tmp, "alice_positions.json").read_text(),

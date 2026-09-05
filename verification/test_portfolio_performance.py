@@ -700,6 +700,126 @@ class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
                 auth.lock_vault()
 
 
+class CorruptTrackingLedgerWriteGuardTests(unittest.TestCase):
+    def _write_history(self, tracker: PortfolioPerformanceTracker) -> str:
+        tracker.enable(
+            enabled_at=datetime(2026, 7, 27, tzinfo=timezone.utc),
+            new_account=True,
+        )
+        tracker.record_valuation(
+            total_value_usd=10_000,
+            recorded_at=datetime(2026, 7, 27, tzinfo=timezone.utc),
+        )
+        tracker.declare_cash_flow(
+            direction="deposit",
+            amount=1_000,
+            currency="USD",
+            amount_usd=1_000,
+            fx_rate_to_usd=1,
+            category="salary",
+            channel="bank_transfer",
+            broker="IBKR",
+            occurred_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+        )
+        return tracker.path.read_text(encoding="utf-8")
+
+    def test_enable_does_not_replace_an_unreadable_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+                benchmark_prices=FixedBenchmarkPrices(),
+            )
+            self._write_history(tracker)
+            tracker.path.write_text("{broken-tracking-ledger", encoding="utf-8")
+            broken = tracker.path.read_text(encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                tracker.enable(new_account=False)
+            self.assertEqual(tracker.path.read_text(encoding="utf-8"), broken)
+
+    def test_disable_does_not_replace_an_unreadable_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+                benchmark_prices=FixedBenchmarkPrices(),
+            )
+            self._write_history(tracker)
+            tracker.path.write_text("{broken-tracking-ledger", encoding="utf-8")
+            broken = tracker.path.read_text(encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                tracker.disable()
+            self.assertEqual(tracker.path.read_text(encoding="utf-8"), broken)
+
+    def test_declare_cash_flow_does_not_replace_an_unreadable_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+                benchmark_prices=FixedBenchmarkPrices(),
+            )
+            self._write_history(tracker)
+            tracker.path.write_text("{broken-tracking-ledger", encoding="utf-8")
+            broken = tracker.path.read_text(encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                tracker.declare_cash_flow(
+                    direction="deposit",
+                    amount=500,
+                    currency="USD",
+                    amount_usd=500,
+                    fx_rate_to_usd=1,
+                    category="salary",
+                    channel="bank_transfer",
+                    broker="IBKR",
+                )
+            self.assertEqual(tracker.path.read_text(encoding="utf-8"), broken)
+
+    def test_seal_leaves_an_unreadable_plaintext_ledger_untouched(self):
+        from assettrack import auth, storage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=data_dir,
+                benchmark_prices=FixedBenchmarkPrices(),
+            )
+            self._write_history(tracker)
+            tracker.path.write_text("{broken-tracking-ledger", encoding="utf-8")
+            broken = tracker.path.read_text(encoding="utf-8")
+
+            class _MemoryKeyring:
+                def __init__(self) -> None:
+                    self.secrets: dict[tuple[str, str], str] = {}
+
+                def get_password(self, service, account):
+                    return self.secrets.get((service, account))
+
+                def set_password(self, service, account, value):
+                    self.secrets[(service, account)] = value
+
+                def delete_password(self, service, account):
+                    self.secrets.pop((service, account), None)
+
+            keyring = _MemoryKeyring()
+            with patch.object(storage, "get_data_dir", return_value=data_dir), patch.object(
+                auth.keyring, "get_password", keyring.get_password
+            ), patch.object(
+                auth.keyring, "set_password", keyring.set_password
+            ), patch.object(
+                auth.keyring, "delete_password", keyring.delete_password
+            ), patch.object(auth, "PBKDF2_ITERATIONS", 1000):
+                auth.lock_vault()
+                auth.register_account("alice", "correct-horse")
+                auth.unlock_vault("alice", "correct-horse")
+                storage.seal_user_files("alice")
+                self.assertEqual(tracker.path.read_text(encoding="utf-8"), broken)
+                auth.lock_vault()
+
+
 class DeclaredCashFlowPersistenceTests(unittest.TestCase):
     def test_follow_up_valuation_failure_does_not_fail_or_duplicate_a_deposit(self):
         from assettrack import storage, tui

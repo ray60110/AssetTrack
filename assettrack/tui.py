@@ -1157,7 +1157,7 @@ class LoginScreen(Screen):
         except AuthError:
             lock_vault()
             self.query_one("#login-error-msg", Label).update(
-                "無法解密持倉檔。請用本機原先登入過的帳號，勿覆蓋現有資料。"
+                "無法讀取持倉檔，已停止寫入以免覆蓋原資料。"
             )
             return
         result = (user, positions, cash_positions)
@@ -5418,7 +5418,11 @@ class PerformanceTrackingScreen(Screen):
         if tracker.state().enabled:
             self.app.notify("績效追蹤已啟用。")
             return
-        tracker.enable(new_account=False)
+        try:
+            tracker.enable(new_account=False)
+        except ValueError as exc:
+            self.app.notify(str(exc), severity="error")
+            return
         self.app.notify("已從現在開始追蹤；先前期間會標示為追蹤斷層。")
         self._render_report()
         self._record_current_valuation()

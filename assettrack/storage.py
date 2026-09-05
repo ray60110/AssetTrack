@@ -342,12 +342,8 @@ def load_manual_positions(user: str = "default") -> tuple[list[Position], list[C
     except AuthError:
         raise
     except Exception:
-        if protected:
-            raise AuthError("無法解析受保護的持倉檔")
-        return [], []
-    if protected:
-        raise AuthError("無法解析受保護的持倉檔")
-    return [], []
+        raise AuthError("無法解析持倉檔，已停止寫入以免覆蓋原資料")
+    raise AuthError("無法解析持倉檔，已停止寫入以免覆蓋原資料")
 
 
 def save_manual_positions(
@@ -395,7 +391,11 @@ def seal_user_files(user: str) -> None:
 
     tracker = PortfolioPerformanceTracker(user=user, data_dir=get_data_dir())
     if tracker.path.exists() and not is_encrypted_text(tracker.path.read_text(encoding="utf-8")):
-        tracker._write(tracker._read())
+        try:
+            tracker._write(tracker._read())
+        except ValueError:
+            # Unreadable ledger: leave the original bytes for recovery.
+            pass
 
 
 def _quote_overlay_path(user: str) -> Path:

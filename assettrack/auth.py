@@ -244,7 +244,27 @@ def write_protected_text(path: Path, text: str) -> None:
             # and never downgrade an encrypted file to plaintext after logout.
             decrypt_text(existing)
     payload = encrypt_text(text) if vault_is_unlocked() else text
-    path.write_text(payload, encoding="utf-8")
+    # Replace atomically so a concurrent reader never sees a truncated file.
+    # Opening with write-truncate first would let load_manual_positions /
+    # PortfolioPerformanceTracker._read treat the ledger as empty and persist
+    # that stand-in over real holdings or QQQ/VT history.
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     _chmod_private(path)
 
 
