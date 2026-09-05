@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import yfinance as yf
 
-from .auth import read_protected_text, write_protected_text
+from .auth import AuthError, read_protected_text, write_protected_text
 from .models import CashPosition, Position, merge_cash_position
 
 
@@ -178,6 +178,17 @@ class PortfolioPerformanceTracker:
         return document
 
     def _write(self, document: dict) -> None:
+        if self.path.exists():
+            try:
+                parsed = json.loads(read_protected_text(self.path))
+            except AuthError:
+                raise
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    "無法解析績效追蹤檔，已拒絕覆寫以免遺失紀錄"
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("無法解析績效追蹤檔，已拒絕覆寫以免遺失紀錄")
         write_protected_text(
             self.path,
             json.dumps(document, ensure_ascii=False, indent=2),
