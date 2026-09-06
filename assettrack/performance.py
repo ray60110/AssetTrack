@@ -497,7 +497,14 @@ class PortfolioPerformanceTracker:
                 current_price / baseline_price - 1
             ) * 100
             value_gap = current.total_value_usd - benchmark_value
-            performance_gap_pct = value_gap / benchmark_value * 100
+            # Withdrawing the original capital at the same close zeros
+            # shadow units. The leftover NAV is still a valid TWR; the
+            # percentage gap versus a $0 benchmark is undefined.
+            performance_gap_pct = (
+                0.0
+                if abs(benchmark_value) < 1e-9
+                else value_gap / benchmark_value * 100
+            )
             comparisons.append(
                 BenchmarkComparison(
                     symbol=symbol,

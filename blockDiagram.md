@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-29。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-09-06。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -855,8 +855,11 @@ Tracking Baseline：啟用當下的完整資產總值 + 基準收盤價
 影子單位數 = 資產總值 / 基準價
 入金：units += 入金 USD / 當日基準價
 出金：units -= 出金 USD / 當日基準價
+基準等值 = units × 最新基準價
 Performance Gap % = (使用者總值 − 基準等值) / 基準等值 × 100
 ```
+
+出金讓影子單位歸零時，基準等值為 $0，百分比無定義：報告仍回傳 TWR 與美元差額，對標頁顯示「基準單位已歸零」，不除以零。
 
 內部調倉（股票 ↔ 現金）不是 External Cash Flow。中途啟用或停用後再啟用必須標 Tracking Gap，不回填不存在的歷史。週日最多寫一次估值；基準價用該日前最近一個真實美股收盤。
 

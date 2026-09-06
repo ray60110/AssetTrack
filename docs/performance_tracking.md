@@ -53,7 +53,7 @@ Performance Gap % =
   (使用者完整資產總值 - benchmark 等值) / benchmark 等值 × 100
 ```
 
-正值代表使用者領先，負值代表落後。使用者累積報酬另以每期外部資金流排除後的 time-weighted return 串接；Position Reallocation 不是外部資金流。
+正值代表使用者領先，負值代表落後。影子單位歸零（例如同一收盤價取出本金）時基準等值為 $0，百分比無定義，畫面改顯示「基準單位已歸零」。使用者累積報酬另以每期外部資金流排除後的 time-weighted return 串接；Position Reallocation 不是外部資金流。
 
 ## 寫入規則
 

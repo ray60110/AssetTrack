@@ -306,6 +306,49 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
             tracker.record_valuation(total_value_usd=10_500, recorded_at=sunday)
             self.assertFalse(tracker.valuation_due(sunday))
 
+    def test_report_survives_withdrawing_principal_after_gains(self):
+        """Same-day benchmark close + withdraw original capital after a gain zeros shadow units."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+                benchmark_prices=FixedBenchmarkPrices(),
+            )
+            tracker.enable(
+                enabled_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
+                new_account=True,
+            )
+            tracker.record_valuation(
+                total_value_usd=10_000,
+                recorded_at=datetime(2026, 7, 24, 12, tzinfo=timezone.utc),
+            )
+            tracker.declare_cash_flow(
+                direction="withdrawal",
+                amount=10_000,
+                currency="USD",
+                amount_usd=10_000,
+                fx_rate_to_usd=1,
+                category="transfer_out",
+                channel="bank_transfer",
+                broker="IBKR",
+                occurred_at=datetime(2026, 7, 24, 15, tzinfo=timezone.utc),
+            )
+            tracker.record_valuation(
+                total_value_usd=2_000,
+                recorded_at=datetime(2026, 7, 24, 16, tzinfo=timezone.utc),
+            )
+
+            report = tracker.report()
+            comparisons = {item.symbol: item for item in report.comparisons}
+
+            self.assertAlmostEqual(report.portfolio_return_pct, 20)
+            self.assertAlmostEqual(comparisons["QQQ"].benchmark_value_usd, 0.0)
+            self.assertAlmostEqual(comparisons["VT"].benchmark_value_usd, 0.0)
+            self.assertAlmostEqual(comparisons["QQQ"].value_gap_usd, 2_000)
+            self.assertAlmostEqual(comparisons["VT"].value_gap_usd, 2_000)
+            self.assertEqual(comparisons["QQQ"].performance_gap_pct, 0.0)
+            self.assertEqual(comparisons["VT"].performance_gap_pct, 0.0)
+
 
 class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
     async def test_registration_can_opt_in_to_performance_tracking(self):
@@ -698,6 +741,69 @@ class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(tracker.valuations()), 1)
             finally:
                 auth.lock_vault()
+
+    async def test_comparison_screen_renders_when_shadow_units_are_zero(self):
+        from textual.app import App
+        from textual.widgets import DataTable
+
+        from assettrack import tui
+
+        class HostApp(App):
+            def on_mount(self):
+                self.push_screen(
+                    tui.PerformanceTrackingScreen(
+                        "alice",
+                        positions=[],
+                        cash_positions=[],
+                        rate=32,
+                    )
+                )
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            tui, "get_data_dir", return_value=Path(tmp)
+        ):
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+                benchmark_prices=FixedBenchmarkPrices(),
+            )
+            tracker.enable(
+                enabled_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
+                new_account=True,
+            )
+            tracker.record_valuation(
+                total_value_usd=10_000,
+                recorded_at=datetime(2026, 7, 24, 12, tzinfo=timezone.utc),
+            )
+            tracker.declare_cash_flow(
+                direction="withdrawal",
+                amount=10_000,
+                currency="USD",
+                amount_usd=10_000,
+                fx_rate_to_usd=1,
+                category="transfer_out",
+                channel="bank_transfer",
+                broker="IBKR",
+                occurred_at=datetime(2026, 7, 24, 15, tzinfo=timezone.utc),
+            )
+            tracker.record_valuation(
+                total_value_usd=2_000,
+                recorded_at=datetime(2026, 7, 24, 16, tzinfo=timezone.utc),
+            )
+
+            app = HostApp()
+            async with app.run_test(size=(160, 40)) as pilot:
+                await pilot.pause()
+                table = app.screen.query_one("#performance-table", DataTable)
+                rendered = " ".join(
+                    str(cell)
+                    for row in table.rows
+                    for cell in table.get_row(row)
+                )
+
+        self.assertIn("基準單位已歸零", rendered)
+        self.assertIn("QQQ", rendered)
+        self.assertIn("VT", rendered)
 
 
 class DeclaredCashFlowPersistenceTests(unittest.TestCase):
