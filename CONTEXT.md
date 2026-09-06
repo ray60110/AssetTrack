@@ -33,7 +33,7 @@ A hypothetical benchmark holding initialized from the Tracking Baseline and adju
 _Avoid_: Benchmark return
 
 **Performance Gap**:
-The percentage by which the current portfolio value is above or below a Shadow Benchmark Portfolio.
+The percentage by which the current portfolio value is above or below a Shadow Benchmark Portfolio. Undefined when shadow units are zero (same-close withdrawal of the original capital); the comparison screen then shows the dollar gap only.
 _Avoid_: Alpha
 
 ## Recommendation Experiments

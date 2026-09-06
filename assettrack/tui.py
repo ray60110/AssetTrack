@@ -5399,17 +5399,23 @@ class PerformanceTrackingScreen(Screen):
             report.current_at.date().isoformat(),
         )
         for comparison in report.comparisons:
-            color = "green" if comparison.performance_gap_pct >= 0 else "red"
-            verdict = (
-                "擊敗" if comparison.performance_gap_pct >= 0 else "落後"
-            )
+            if abs(comparison.benchmark_value_usd) < 1e-9:
+                gap_cell = "[dim]基準單位已歸零[/dim]"
+            else:
+                color = "green" if comparison.performance_gap_pct >= 0 else "red"
+                verdict = (
+                    "擊敗" if comparison.performance_gap_pct >= 0 else "落後"
+                )
+                gap_cell = (
+                    f"[{color}]{verdict} {abs(comparison.performance_gap_pct):.2f}%"
+                    f"[/{color}]"
+                )
             table.add_row(
                 comparison.symbol,
                 f"${comparison.benchmark_value_usd:,.2f}",
                 f"{comparison.benchmark_return_pct:+.2f}%",
                 f"${comparison.value_gap_usd:+,.2f}",
-                f"[{color}]{verdict} {abs(comparison.performance_gap_pct):.2f}%"
-                f"[/{color}]",
+                gap_cell,
                 comparison.market_date.isoformat(),
             )
 

@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
+最後依據：2026-09-06（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：對標頁在影子單位歸零時顯示「基準單位已歸零」，不除以零；登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -235,7 +235,7 @@
 | `TrackingState` | 追蹤開關狀態 | 是否啟用、啟用時間、是否有 Tracking Gap、基準清單。 |
 | `CashFlow` | 外部資金流 | 入金／出金＋當時 QQQ／VT 收盤。 |
 | `ValuationSnapshot` | 估值快照 | 完整資產美元值與基準價。 |
-| `PerformanceReport` | 績效報告 | 現金流調整報酬與各基準 Performance Gap。 |
+| `PerformanceReport` | 績效報告 | 現金流調整報酬與各基準 Performance Gap。影子單位歸零時百分比不計算，畫面顯示「基準單位已歸零」。 |
 | `YFinanceBenchmarkPrices` | 基準報價提供者 | 14 日回看收盤，供影子單位數。 |
 | `calculate_portfolio_exposure` | 計算投資組合曝險 | 股票 1x、槓桿 ETF 倍數、期權 Δ 等值；缺報價不輸出假比例。 |
 | `PortfolioExposure` | 曝險結果 | 總／淨曝險、槓桿、標準／槓桿 ETF／期權分桶。 |
