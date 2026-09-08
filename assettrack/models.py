@@ -12,6 +12,27 @@ InstrumentType = Literal["stock", "option", "etf", "other"]
 CashCurrency = Literal["USD", "TWD", "JPY"]
 
 
+def canonical_option_symbol(
+    underlying: str,
+    expiry: str,
+    option_type: str,
+    strike: float,
+) -> str:
+    """OCC-style contract code, including strike, for US and Taiwan options.
+
+    Taiwan symbols previously omitted strike, so two calls on the same expiry
+    collapsed into one holding.
+    """
+    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d")
+    yy, mm, dd = (
+        expiry_dt.strftime("%y"),
+        expiry_dt.strftime("%m"),
+        expiry_dt.strftime("%d"),
+    )
+    cp = "C" if option_type == "call" else "P"
+    return f"{underlying}{yy}{mm}{dd}{cp}{int(round(strike * 1000)):08d}"
+
+
 class CashPosition(BaseModel):
     """A cash holding stored at a broker/account in its native currency."""
 
@@ -178,30 +199,27 @@ class Position(BaseModel):
         if self.instrument_type == "etf" and self.leverage_factor == 0:
             raise ValueError("ETF leverage_factor cannot be zero")
 
-        # bug#00050: an option's `symbol` must be the OCC/TW contract code, never the
-        # bare underlying ticker — quote lookups (quotes.py) use `symbol` as-is for
-        # options, so a bad symbol (e.g. "INTC" instead of "INTC260918C00150000")
+        # bug#00050: an option's `symbol` must be the OCC-style contract code, never
+        # the bare underlying ticker — quote lookups (quotes.py) use `symbol` as-is
+        # for options, so a bad symbol (e.g. "INTC" instead of "INTC260918C00150000")
         # silently fetches the underlying STOCK price instead of the option premium.
         # Whenever we have full option details, always (re)derive the canonical symbol
-        # rather than trusting a possibly-wrong stored value. This previously excluded
-        # TW options because cli.py and tui.py disagreed on the TW format (bug#00051);
-        # now that cli.py has been removed entirely (bug#00056), tui.py's convention
-        # (no strike suffix) is the sole remaining format, so TW is included too.
-        is_tw_opt = self.currency == "TWD" or self.symbol.endswith(".TW") or self.symbol.endswith(".TWO") or (self.market == "TW")
+        # rather than trusting a possibly-wrong stored value. Taiwan contracts use the
+        # same strike suffix as US OCC codes so two 2330 calls on the same expiry
+        # cannot collapse into one holding.
         if (
             self.instrument_type == "option"
             and self.underlying and self.expiry and self.strike and self.option_type
         ):
             try:
-                expiry_dt = datetime.strptime(self.expiry, "%Y-%m-%d")
-                yy, mm, dd = expiry_dt.strftime("%y"), expiry_dt.strftime("%m"), expiry_dt.strftime("%d")
-                cp = "C" if self.option_type == "call" else "P"
-                if is_tw_opt:
-                    canonical_symbol = f"{self.underlying}{yy}{mm}{dd}{cp}"
-                else:
-                    canonical_symbol = f"{self.underlying}{yy}{mm}{dd}{cp}{int(round(self.strike * 1000)):08d}"
-                if self.symbol.upper() != canonical_symbol:
-                    self.symbol = canonical_symbol
+                symbol = canonical_option_symbol(
+                    self.underlying,
+                    self.expiry,
+                    self.option_type,
+                    self.strike,
+                )
+                if self.symbol.upper() != symbol:
+                    self.symbol = symbol
                     # The old symbol's cached quote (if any) belongs to the wrong
                     # instrument — clear it so the next refresh re-fetches correctly.
                     self.market_price = None

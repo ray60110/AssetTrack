@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
+最後依據：2026-09-08（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：台股選擇權代碼改與美股 OCC 一樣含履約價，避免同到期不同履約價被合成一筆）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -111,7 +111,8 @@
 
 | 英文名稱 | 中文對應 | 實際功能 |
 |---|---|---|
-| `AddPositionModal` | 新增／編輯持倉視窗 | 輸入或修改股票、ETF、期權與 USD／TWD 現金部位；支援「儲存並繼續」、Symbol 自動推斷市場／幣別。 |
+| `AddPositionModal` | 新增／編輯持倉視窗 | 輸入或修改股票、ETF、期權與 USD／TWD 現金部位；支援「儲存並繼續」、Symbol 自動推斷市場／幣別。期權代碼由 `canonical_option_symbol` 組出（美股與台股皆含履約價）。 |
+| `canonical_option_symbol` | 選擇權契約代碼 | `{標的}{YYMMDD}{C\|P}{履約價×1000 八位}`。台股不再省略履約價，否則同到期不同履約價會被 `_merge_position`／`apply_position_purchase` 合成一筆。 |
 | `PositionActionsModal` | 持倉操作選單 | 提供備註、類別、幣別、券商帳戶與刪除等操作。 |
 | `FieldEditModal` | 單一欄位編輯視窗 | 編輯一個文字或選項欄位。 |
 | `DeleteConfirmModal` | 刪除持倉確認視窗 | 要求使用者確認刪除動作。 |
