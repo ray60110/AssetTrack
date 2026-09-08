@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-29。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-09-08。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -455,7 +455,7 @@ AssetTrack 只讀不寫 Champion。QuantTrade 在自己的 feedback cycle 結束
 
 | 路徑 | 內容 |
 |---|---|
-| `{user}_positions.json` | 證券 + 現金 |
+| `{user}_positions.json` | 證券 + 現金。選擇權 `symbol` 為 OCC 風格契約代碼（含履約價），台股與美股同一格式，避免同標的、同到期、不同履約價共用一個身份。 |
 | `{user}_assettrack.db` | 市值快照、部位歷史、交易列 |
 | `{user}_preferences.json` | 例如事件時區 |
 | `{user}_event_history.json` | 已保留財報事件 |
@@ -898,7 +898,7 @@ Performance Gap % = (使用者總值 − 基準等值) / 基準等值 × 100
 
 | 想改的行為 | 先看 |
 |---|---|
-| 畫面、快捷鍵、worker | `assettrack/tui.py` |
+| 持倉身份／選擇權代碼 | `assettrack/models.py`（`canonical_option_symbol`、`Position`） |
 | 登入品牌色與字標 | `assettrack/login_logo.py`（`AssetTrack_logo/` 僅設計原檔，TUI 不讀） |
 | 建議文句格式 | `assettrack/shared.py` 的 `Recommendation` |
 | ETF 買賣判定 | `assettrack/analysis.py` |

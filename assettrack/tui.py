@@ -47,6 +47,7 @@ from textual.widgets.option_list import Option
 from .models import (
     CashPosition,
     Position,
+    canonical_option_symbol,
     cash_value_usd,
     merge_cash_position,
     portfolio_unrealized_performance,
@@ -2251,20 +2252,11 @@ class AddPositionModal(ModalScreen[Optional[list[Holding]]]):
             # bug#00047: the top Symbol field is hidden for option type (it's fully
             # derived from underlying/strike/expiry/type), so always (re)generate it
             # here rather than trusting a possibly-stale value left over from editing.
+            # US and Taiwan both include strike so nearby contracts stay distinct.
             try:
-                from datetime import datetime as _dt
-                exp_dt = _dt.strptime(expiry, "%Y-%m-%d")
-                yy = exp_dt.strftime("%y")
-                mm = exp_dt.strftime("%m")
-                dd = exp_dt.strftime("%d")
-                cp = "C" if opt_type == "call" else "P"
-                if market == "TW":
-                    # Taiwan option symbol format: {UNDERLYING}{YYMMD}{C|P}
-                    symbol = f"{underlying}{yy}{mm}{dd}{cp}"
-                else:
-                    # US OCC format: {UNDERLYING}{YYMMDD}{C|P}{STRIKE*1000 zero-padded to 8 digits}
-                    strike_int = int(round(strike * 1000))
-                    symbol = f"{underlying}{yy}{mm}{dd}{cp}{strike_int:08d}"
+                symbol = canonical_option_symbol(
+                    underlying, expiry, str(opt_type), strike
+                )
             except Exception as _e:
                 error_lbl.update(f"無法自動生成選擇權代碼: {_e}")
                 self.query_one("#add-expiry", Input).focus()
