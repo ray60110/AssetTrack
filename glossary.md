@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
+最後依據：2026-09-09（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：期權空白合約乘數改依市場預設，台股／TWD 為 50、其餘 100）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -111,11 +111,12 @@
 
 | 英文名稱 | 中文對應 | 實際功能 |
 |---|---|---|
-| `AddPositionModal` | 新增／編輯持倉視窗 | 輸入或修改股票、ETF、期權與 USD／TWD 現金部位；支援「儲存並繼續」、Symbol 自動推斷市場／幣別。 |
+| `AddPositionModal` | 新增／編輯持倉視窗 | 輸入或修改股票、ETF、期權與 USD／TWD 現金部位；支援「儲存並繼續」、Symbol 自動推斷市場／幣別。期權合約乘數空白時走 `default_option_multiplier`（台股／TWD 為 50，其餘 100）。 |
 | `PositionActionsModal` | 持倉操作選單 | 提供備註、類別、幣別、券商帳戶與刪除等操作。 |
 | `FieldEditModal` | 單一欄位編輯視窗 | 編輯一個文字或選項欄位。 |
 | `DeleteConfirmModal` | 刪除持倉確認視窗 | 要求使用者確認刪除動作。 |
 | `Holding` | 持倉聯合型別 | `Position \| CashPosition`。 |
+| `default_option_multiplier` | 選擇權預設合約乘數 | 使用者沒填乘數時：台股／TWD／`.TW`／`.TWO` 為 50，其餘市場為 100。`Position` 驗證與追蹤買賣現金計算共用。 |
 | `action_add_position` | 新增（`1`） | 開啟 `AddPositionModal` 批次新增。績效追蹤開啟時走 `apply_position_purchase`。 |
 | Holdings 表格直接操作 | 就地編輯／刪除／多選 | `Enter` 就地編輯、`e` 編輯整筆、`x` 刪除、`space` 多選。 |
 | `_handle_field_edit` | 處理持倉欄位修改 | 驗證並更新代號、類型、數量、成本或市場。 |

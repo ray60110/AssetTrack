@@ -10,7 +10,12 @@ from uuid import uuid4
 import yfinance as yf
 
 from .auth import read_protected_text, write_protected_text
-from .models import CashPosition, Position, merge_cash_position
+from .models import (
+    CashPosition,
+    Position,
+    default_option_multiplier,
+    merge_cash_position,
+)
 
 
 DEFAULT_BENCHMARKS = ("QQQ", "VT")
@@ -531,7 +536,12 @@ class PortfolioPerformanceTracker:
         if purchase.quantity <= 0 or purchase.avg_cost is None:
             raise ValueError("追蹤期間買進必須提供正數數量與成交價格")
         multiplier = (
-            purchase.multiplier or 100
+            purchase.multiplier
+            or default_option_multiplier(
+                currency=purchase.currency,
+                symbol=purchase.symbol,
+                market=purchase.market,
+            )
             if purchase.instrument_type == "option"
             else 1
         )
@@ -600,7 +610,12 @@ class PortfolioPerformanceTracker:
         if price is None or price <= 0:
             raise ValueError("賣出前需要有效的成交價格")
         multiplier = (
-            position.multiplier or 100
+            position.multiplier
+            or default_option_multiplier(
+                currency=position.currency,
+                symbol=position.symbol,
+                market=position.market,
+            )
             if position.instrument_type == "option"
             else 1
         )

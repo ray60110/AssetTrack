@@ -235,6 +235,46 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
                     ),
                 )
 
+    def test_tracked_taiwan_option_purchase_debits_fifty_multiplier_cash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+            )
+            tracker.enable(new_account=True)
+            cash = [
+                CashPosition(
+                    broker="manual",
+                    account="default",
+                    currency="TWD",
+                    amount=20_000,
+                )
+            ]
+            purchase = Position(
+                broker="manual",
+                account="default",
+                symbol="TXO",
+                instrument_type="option",
+                quantity=2,
+                avg_cost=100,
+                currency="TWD",
+                market="TW",
+                underlying="TXO",
+                expiry="2026-12-16",
+                strike=18000,
+                option_type="call",
+            )
+            purchase.multiplier = None
+
+            positions, remaining_cash = tracker.apply_position_purchase(
+                positions=[],
+                cash_positions=cash,
+                purchase=purchase,
+            )
+
+            self.assertEqual(remaining_cash[0].amount, 10_000)
+            self.assertEqual(positions[0].quantity, 2)
+
     def test_tracked_position_sale_converts_value_to_cash_instead_of_deleting_assets(self):
         with tempfile.TemporaryDirectory() as tmp:
             tracker = PortfolioPerformanceTracker(

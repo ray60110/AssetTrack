@@ -12,6 +12,25 @@ InstrumentType = Literal["stock", "option", "etf", "other"]
 CashCurrency = Literal["USD", "TWD", "JPY"]
 
 
+def default_option_multiplier(
+    *,
+    currency: str = "USD",
+    symbol: str = "",
+    market: Optional[str] = None,
+) -> float:
+    """Contract size used when the user leaves multiplier blank.
+
+    US listed options are 100 shares. Taiwan index options are NT$50 per point.
+    """
+    is_tw = (
+        currency == "TWD"
+        or symbol.endswith(".TW")
+        or symbol.endswith(".TWO")
+        or market == "TW"
+    )
+    return 50.0 if is_tw else 100.0
+
+
 class CashPosition(BaseModel):
     """A cash holding stored at a broker/account in its native currency."""
 
@@ -171,9 +190,11 @@ class Position(BaseModel):
                 self.option_type = "call" if m.group(3) == "C" else "put"
                 
         if self.instrument_type == "option" and not self.multiplier:
-            # Default multiplier: 50.0 for TWD/Taiwan markets, otherwise 100.0
-            is_tw = self.currency == "TWD" or self.symbol.endswith(".TW") or self.symbol.endswith(".TWO") or (self.market == "TW")
-            self.multiplier = 50.0 if is_tw else 100.0
+            self.multiplier = default_option_multiplier(
+                currency=self.currency,
+                symbol=self.symbol,
+                market=self.market,
+            )
 
         if self.instrument_type == "etf" and self.leverage_factor == 0:
             raise ValueError("ETF leverage_factor cannot be zero")
