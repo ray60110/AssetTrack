@@ -192,6 +192,104 @@ class AddCashPositionModalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(position.instrument_type, "etf")
         self.assertEqual(position.leverage_factor, 3)
 
+    async def test_blank_taiwan_option_multiplier_defaults_to_fifty(self):
+        from textual.app import App
+        from textual.widgets import Button, Input, Select
+
+        from assettrack import tui
+
+        result_holder = []
+
+        class HostApp(App):
+            def on_mount(self):
+                self.push_screen(tui.AddPositionModal(), result_holder.append)
+
+        app = HostApp()
+        async with app.run_test(size=(100, 60)) as pilot:
+            await pilot.pause()
+            modal = app.screen
+            modal.query_one("#add-type", Select).value = "option"
+            modal.query_one("#add-market", Select).value = "TW"
+            modal.query_one("#add-underlying", Input).value = "TXO"
+            modal.query_one("#add-strike", Input).value = "18000"
+            modal.query_one("#add-expiry", Input).value = "2026-12-16"
+            modal.query_one("#add-qty", Input).value = "2"
+            modal.query_one("#add-cost", Input).value = "100"
+            modal.query_one("#confirm", Button).press()
+            await pilot.pause()
+
+        self.assertEqual(len(result_holder), 1)
+        result = result_holder[0]
+        self.assertEqual(len(result), 1)
+        position = result[0]
+        self.assertIsInstance(position, Position)
+        self.assertEqual(position.instrument_type, "option")
+        self.assertEqual(position.market, "TW")
+        self.assertEqual(position.multiplier, 50.0)
+        self.assertEqual(position.total_cost, 10_000)
+
+    async def test_blank_us_option_multiplier_defaults_to_one_hundred(self):
+        from textual.app import App
+        from textual.widgets import Button, Input, Select
+
+        from assettrack import tui
+
+        result_holder = []
+
+        class HostApp(App):
+            def on_mount(self):
+                self.push_screen(tui.AddPositionModal(), result_holder.append)
+
+        app = HostApp()
+        async with app.run_test(size=(100, 60)) as pilot:
+            await pilot.pause()
+            modal = app.screen
+            modal.query_one("#add-type", Select).value = "option"
+            modal.query_one("#add-underlying", Input).value = "AAPL"
+            modal.query_one("#add-strike", Input).value = "150"
+            modal.query_one("#add-expiry", Input).value = "2026-12-18"
+            modal.query_one("#add-qty", Input).value = "1"
+            modal.query_one("#add-cost", Input).value = "5"
+            modal.query_one("#confirm", Button).press()
+            await pilot.pause()
+
+        self.assertEqual(len(result_holder), 1)
+        position = result_holder[0][0]
+        self.assertEqual(position.market, "US")
+        self.assertEqual(position.multiplier, 100.0)
+        self.assertEqual(position.total_cost, 500)
+
+    async def test_explicit_taiwan_option_multiplier_is_kept(self):
+        from textual.app import App
+        from textual.widgets import Button, Input, Select
+
+        from assettrack import tui
+
+        result_holder = []
+
+        class HostApp(App):
+            def on_mount(self):
+                self.push_screen(tui.AddPositionModal(), result_holder.append)
+
+        app = HostApp()
+        async with app.run_test(size=(100, 60)) as pilot:
+            await pilot.pause()
+            modal = app.screen
+            modal.query_one("#add-type", Select).value = "option"
+            modal.query_one("#add-market", Select).value = "TW"
+            modal.query_one("#add-underlying", Input).value = "2330"
+            modal.query_one("#add-strike", Input).value = "600"
+            modal.query_one("#add-expiry", Input).value = "2026-12-16"
+            modal.query_one("#add-multiplier", Input).value = "2000"
+            modal.query_one("#add-qty", Input).value = "1"
+            modal.query_one("#add-cost", Input).value = "10"
+            modal.query_one("#confirm", Button).press()
+            await pilot.pause()
+
+        position = result_holder[0][0]
+        self.assertEqual(position.multiplier, 2000.0)
+        self.assertEqual(position.total_cost, 20_000)
+
 
 class DashboardCashPositionTests(unittest.IsolatedAsyncioTestCase):
     async def test_dashboard_action_add_position_persists_cash(self):

@@ -48,6 +48,7 @@ from .models import (
     CashPosition,
     Position,
     cash_value_usd,
+    default_option_multiplier,
     merge_cash_position,
     portfolio_unrealized_performance,
     total_asset_value_usd,
@@ -1789,7 +1790,11 @@ class AddPositionModal(ModalScreen[Optional[list[Holding]]]):
         strike_val = f"{p.strike}" if (isinstance(p, Position) and p.strike is not None) else ""
         exp_val = p.expiry if (isinstance(p, Position) and p.expiry) else ""
         opt_type_val = p.option_type if (isinstance(p, Position) and p.option_type) else "call"
-        mult_val = f"{p.multiplier}" if (isinstance(p, Position) and p.multiplier is not None) else "100"
+        mult_val = (
+            f"{p.multiplier}"
+            if (isinstance(p, Position) and p.multiplier is not None)
+            else ""
+        )
         leverage_val = (
             f"{p.leverage_factor:g}"
             if isinstance(p, Position) and p.leverage_factor is not None
@@ -1910,8 +1915,12 @@ class AddPositionModal(ModalScreen[Optional[list[Holding]]]):
 
                 with Horizontal(classes="form-row"):
                     yield Label("合約乘數 [dim](Multiplier)[/dim]:", classes="form-label")
-                    yield Input(value=mult_val, placeholder="預設為 100", id="add-multiplier",
-                                classes="form-input")
+                    yield Input(
+                        value=mult_val,
+                        placeholder="空白則美股 100／台股 50",
+                        id="add-multiplier",
+                        classes="form-input",
+                    )
 
             with Horizontal(classes="form-row", id="side-field-row"):
                 yield Label("持倉方向 [dim](Side)[/dim]:", classes="form-label")
@@ -2246,7 +2255,11 @@ class AddPositionModal(ModalScreen[Optional[list[Holding]]]):
                     self.query_one("#add-multiplier", Input).focus()
                     return
             else:
-                multiplier = 100.0
+                multiplier = default_option_multiplier(
+                    currency=curr or "USD",
+                    symbol=symbol or "",
+                    market=market,
+                )
 
             # bug#00047: the top Symbol field is hidden for option type (it's fully
             # derived from underlying/strike/expiry/type), so always (re)generate it

@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-29。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-09-09。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -547,6 +547,7 @@ flowchart LR
 - 買證券：必須從同券商／帳戶／幣別現金扣款（`apply_position_purchase`）
 - 刪證券：視為賣出，現值轉回現金（`apply_position_sale`）
 - 現金只能走 `i`／`o` 出入金，並同步調整 QQQ／VT 影子單位數
+- 期權買賣現金 = 張數 × 成交價 × 合約乘數；乘數空白時 `default_option_multiplier`（台股／TWD 50，美股 100），與 `AddPositionModal`／`Position` 驗證同一規則
 
 這是領域 API 約束，不是資料庫 trigger。
 
@@ -874,7 +875,7 @@ Performance Gap % = (使用者總值 − 基準等值) / 基準等值 × 100
 | `cash_ratio` | 現金列在組成裡；不再標進攻／防守 |
 | 股票／普通 ETF | 曝險 = 市值（1x） |
 | 槓桿／反向 ETF | `infer_etf_leverage_factor` 或使用者覆寫 |
-| 期權 | Δ × 張數 × 乘數 × 標的現價 |
+| 期權 | Δ × 張數 × 乘數 × 標的現價；乘數空白時台股／TWD 50、其餘 100 |
 | 總／淨曝險、槓桿 | 總與淨各列倍數與美元；任一必要報價缺失則不輸出假比例 |
 
 ---
