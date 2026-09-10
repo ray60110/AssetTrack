@@ -163,6 +163,56 @@ def _tracking_state(user: str):
     ).state()
 
 
+_ONBOARDING_TRACKING_BOOTSTRAP = (
+    "績效追蹤已啟用，不能在新手導覽直接新增現金或範例持股；"
+    "請保持空白進入看板，按 i 宣告入金後再按 1 買進。"
+)
+
+
+def _persist_onboarding_portfolio(
+    user: str,
+    positions: list[Position],
+    cash_positions: list[CashPosition],
+) -> tuple[list[Position], list[CashPosition]]:
+    """Save the first holdings. Tracking-on writes must not invent cash or NAV.
+
+    Registration can enable Performance Tracking before onboarding. The sample
+    and first-position paths used to call ``save_manual_positions`` directly,
+    so a tracked account could receive unpaid stocks (later ``x`` credited
+    sale proceeds from nothing) or undeclared cash (QQQ/VT units never moved).
+    """
+    if not _tracking_state(user).enabled:
+        save_manual_positions(positions, cash_positions, user=user)
+        return positions, cash_positions
+    if cash_positions:
+        raise ValueError(_ONBOARDING_TRACKING_BOOTSTRAP)
+    if not positions:
+        return [], []
+    tracker = PortfolioPerformanceTracker(
+        user=user,
+        data_dir=get_data_dir(),
+    )
+    result_positions: list[Position] = []
+    result_cash: list[CashPosition] = []
+    try:
+        for purchase in positions:
+            result_positions, result_cash = tracker.apply_position_purchase(
+                positions=result_positions,
+                cash_positions=result_cash,
+                purchase=purchase,
+            )
+    except ValueError as exc:
+        if "可用現金不足" in str(exc):
+            raise ValueError(_ONBOARDING_TRACKING_BOOTSTRAP) from exc
+        raise
+    save_manual_positions(
+        result_positions,
+        cash_positions=result_cash,
+        user=user,
+    )
+    return result_positions, result_cash
+
+
 def _process_declared_cash_flow(
     *,
     user: str,
@@ -9169,9 +9219,16 @@ class AssetTrackApp(App):
                     last_updated=datetime.utcnow()
                 )
             ]
-            save_manual_positions(sample_positions, [], user=user)
+            try:
+                positions, cash_positions = _persist_onboarding_portfolio(
+                    user, sample_positions, []
+                )
+            except ValueError as exc:
+                self.notify(str(exc), severity="warning")
+                self._start_dashboard(user, [], [])
+                return
             self.notify("已為您成功建立 AAPL (50股) 與 TSLA (10股) 預設範例部位！")
-            self._start_dashboard(user, sample_positions, [])
+            self._start_dashboard(user, positions, cash_positions)
         elif choice == "manual":
             self.push_screen(AddPositionModal(), lambda pos: self._handle_first_position(pos, user))
         else:
@@ -9183,7 +9240,14 @@ class AssetTrackApp(App):
             cash_positions = [
                 item for item in result if isinstance(item, CashPosition)
             ]
-            save_manual_positions(positions, cash_positions, user=user)
+            try:
+                positions, cash_positions = _persist_onboarding_portfolio(
+                    user, positions, cash_positions
+                )
+            except ValueError as exc:
+                self.notify(str(exc), severity="error")
+                self._start_dashboard(user, [], [])
+                return
             n = len(result)
             self.notify(f"已新增 {n} 筆持倉！" if n > 1 else "新增持倉成功！")
             self._start_dashboard(user, positions, cash_positions)

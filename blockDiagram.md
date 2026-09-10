@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-29。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-09-10。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -122,6 +122,7 @@ sequenceDiagram
     Login-->>App: dismiss((user, positions, cash))
     alt 空白投資組合
         App->>App: OnboardingModal sample/manual/empty
+        Note over App: 追蹤已啟用時 sample/第一筆走 _persist_onboarding_portfolio，不得憑空寫入持股或現金
     end
     App->>Dash: push_screen(DashboardScreen)
     App->>App: set_interval(1800s, _background_data_refresh)
@@ -296,7 +297,7 @@ Modal 一定有回傳契約。例如：
 | `PasswordModal` | `bool` | 成功才 `_login_success` |
 | `AddPositionModal` | `Optional[list[Holding]]` | 寫入持倉並刷新 |
 | `CashFlowModal` | `Optional[dict]` | `declare_cash_flow` + 調整現金 |
-| `OnboardingModal` | `"sample" \| "manual" \| "empty"` | 決定第一筆資料 |
+| `OnboardingModal` | `"sample" \| "manual" \| "empty"` | 決定第一筆資料；追蹤已啟用時 sample／第一筆由 `_persist_onboarding_portfolio` 拒絕憑空寫入 |
 | `SECIdentityModal` | `bool` | 是否寫入 Keychain |
 
 ### 5.4 背景執行緒協定
@@ -547,6 +548,7 @@ flowchart LR
 - 買證券：必須從同券商／帳戶／幣別現金扣款（`apply_position_purchase`）
 - 刪證券：視為賣出，現值轉回現金（`apply_position_sale`）
 - 現金只能走 `i`／`o` 出入金，並同步調整 QQQ／VT 影子單位數
+- 新手導覽同樣受約束：`_persist_onboarding_portfolio` 在追蹤已啟用時不直接 `save_manual_positions` 寫入範例持股或未宣告現金（否則稍後按 `x` 會把從未入金的市值轉成現金）
 
 這是領域 API 約束，不是資料庫 trigger。
 
