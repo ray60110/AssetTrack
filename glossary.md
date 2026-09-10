@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
+最後依據：2026-09-10（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：績效追蹤已啟用時，新手導覽不得直接寫入範例持股或未宣告現金）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -48,7 +48,9 @@
 | `run_tui_dashboard` | 啟動 TUI 儀表板 | 建立並執行 `AssetTrackApp`。 |
 | `AssetTrackApp` | AssetTrack 主應用程式 | 管理登入、初始導覽、Dashboard 進入／離開與跨畫面背景維護。 |
 | `_handle_login_complete` | 處理登入完成 | 登入後依持倉是否存在，導向 Dashboard 或新手導覽。 |
-| `_handle_onboarding_choice` | 處理新手導覽選擇 | 建立範例持倉、手動新增第一筆持倉，或直接進入空白看板。 |
+| `_handle_onboarding_choice` | 處理新手導覽選擇 | 建立範例持倉、手動新增第一筆持倉，或直接進入空白看板。績效追蹤已啟用時拒絕範例持股與未宣告現金，改請使用者入金後再買。 |
+| `_handle_first_position` | 處理新手導覽第一筆 | 接收 `AddPositionModal` 批次結果並寫入；追蹤中改呼叫 `_persist_onboarding_portfolio`。 |
+| `_persist_onboarding_portfolio` | 寫入新手導覽持倉 | 未追蹤時直接 `save_manual_positions`；追蹤中改走 `apply_position_purchase`，現金則拒絕（必須 `i` 宣告）。 |
 | `_start_dashboard` | 啟動主儀表板 | 讀取匯率、保存目前使用者與持倉狀態，推入 Dashboard；啟動 30 分鐘全域補抓。 |
 | `_background_data_refresh` | 全域背景資料更新 | 每 30 分鐘依新鮮度冪等補抓當日 ETF、期權與板塊快取。 |
 | `_kickoff_research_ingest_once` | 首次研究資料補抓 | 第一次報價刷新成功後觸發一次全域補抓。 |
@@ -65,7 +67,7 @@
 | `_login_success` | 登入成功處理 | `seal_user_files`、載入持倉；必要時開 SEC 身分視窗。 |
 | `PasswordModal` | 密碼驗證視窗 | 輸入並驗證既有帳號密碼（最多 3 次）。 |
 | `RegisterModal` | 註冊帳號視窗 | 建立帳號、解鎖保險庫；可同時 opt-in 績效追蹤。 |
-| `OnboardingModal` | 新手導覽視窗 | 讓新使用者選擇範例資料、手動新增或空白開始。 |
+| `OnboardingModal` | 新手導覽視窗 | 讓新使用者選擇範例資料、手動新增或空白開始。追蹤已啟用時範例／第一筆不能繞過入金與買進契約。 |
 | `LogoutConfirmModal` | 登出確認視窗 | 避免誤觸造成登入狀態結束。 |
 | `SECIdentityModal` | SEC 身分視窗 | 依 Fair Access 收集名稱＋信箱並取得明示同意。 |
 | `SECIdentityDeleteConfirmModal` | 刪除 SEC 身分確認 | 二次確認後從 Keychain 刪除；該帳號停止自動更新 13F。 |

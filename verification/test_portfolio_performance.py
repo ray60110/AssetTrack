@@ -764,5 +764,175 @@ class DeclaredCashFlowPersistenceTests(unittest.TestCase):
         self.assertEqual(restored_flows[0].amount, 500)
 
 
+class TrackedOnboardingPersistenceTests(unittest.TestCase):
+    def test_untracked_onboarding_sample_still_writes_positions(self):
+        from assettrack import storage, tui
+
+        sample = [
+            Position(
+                broker="manual",
+                symbol="AAPL",
+                instrument_type="stock",
+                quantity=50.0,
+                avg_cost=185.0,
+                currency="USD",
+            )
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            with patch.object(tui, "get_data_dir", return_value=data_dir), patch.object(
+                storage, "get_data_dir", return_value=data_dir
+            ):
+                positions, cash = tui._persist_onboarding_portfolio(
+                    "alice", sample, []
+                )
+                loaded_positions, loaded_cash = storage.load_manual_positions("alice")
+
+        self.assertEqual(positions[0].symbol, "AAPL")
+        self.assertEqual(positions[0].quantity, 50.0)
+        self.assertEqual(cash, [])
+        self.assertEqual(loaded_positions[0].symbol, "AAPL")
+        self.assertEqual(loaded_cash, [])
+
+    def test_tracked_onboarding_sample_does_not_invent_unpaid_stock(self):
+        from assettrack import storage, tui
+
+        sample = [
+            Position(
+                broker="manual",
+                symbol="AAPL",
+                instrument_type="stock",
+                quantity=50.0,
+                avg_cost=185.0,
+                currency="USD",
+            ),
+            Position(
+                broker="manual",
+                symbol="TSLA",
+                instrument_type="stock",
+                quantity=10.0,
+                avg_cost=240.0,
+                currency="USD",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            with patch.object(tui, "get_data_dir", return_value=data_dir), patch.object(
+                storage, "get_data_dir", return_value=data_dir
+            ):
+                PortfolioPerformanceTracker(
+                    user="alice",
+                    data_dir=data_dir,
+                ).enable(new_account=True)
+                with self.assertRaisesRegex(ValueError, "不能在新手導覽直接新增"):
+                    tui._persist_onboarding_portfolio("alice", sample, [])
+                loaded_positions, loaded_cash = storage.load_manual_positions("alice")
+
+        self.assertEqual(loaded_positions, [])
+        self.assertEqual(loaded_cash, [])
+
+    def test_tracked_onboarding_cash_cannot_bypass_declared_deposit(self):
+        from assettrack import storage, tui
+
+        cash = [
+            CashPosition(
+                broker="manual",
+                account="default",
+                currency="USD",
+                amount=10_000,
+            )
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            with patch.object(tui, "get_data_dir", return_value=data_dir), patch.object(
+                storage, "get_data_dir", return_value=data_dir
+            ):
+                PortfolioPerformanceTracker(
+                    user="alice",
+                    data_dir=data_dir,
+                ).enable(new_account=True)
+                with self.assertRaisesRegex(ValueError, "不能在新手導覽直接新增"):
+                    tui._persist_onboarding_portfolio("alice", [], cash)
+                loaded_positions, loaded_cash = storage.load_manual_positions("alice")
+                flows = PortfolioPerformanceTracker(
+                    user="alice",
+                    data_dir=data_dir,
+                ).cash_flows()
+
+        self.assertEqual(loaded_positions, [])
+        self.assertEqual(loaded_cash, [])
+        self.assertEqual(flows, [])
+
+    def test_tracked_onboarding_sample_choice_starts_empty_dashboard(self):
+        from assettrack import storage, tui
+
+        class Host:
+            def __init__(self) -> None:
+                self.notes: list[str] = []
+                self.started: tuple | None = None
+
+            def notify(self, message, **kwargs) -> None:
+                self.notes.append(str(message))
+
+            def _start_dashboard(self, user, positions, cash_positions=None) -> None:
+                self.started = (user, positions, cash_positions or [])
+
+        host = Host()
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            with patch.object(tui, "get_data_dir", return_value=data_dir), patch.object(
+                storage, "get_data_dir", return_value=data_dir
+            ):
+                PortfolioPerformanceTracker(
+                    user="alice",
+                    data_dir=data_dir,
+                ).enable(new_account=True)
+                tui.AssetTrackApp._handle_onboarding_choice(host, "sample", "alice")
+                loaded_positions, loaded_cash = storage.load_manual_positions("alice")
+
+        self.assertEqual(host.started, ("alice", [], []))
+        self.assertTrue(any("不能在新手導覽" in note for note in host.notes))
+        self.assertEqual(loaded_positions, [])
+        self.assertEqual(loaded_cash, [])
+
+    def test_tracked_first_position_cash_does_not_write_undeclared_deposit(self):
+        from assettrack import storage, tui
+
+        class Host:
+            def __init__(self) -> None:
+                self.notes: list[str] = []
+                self.started: tuple | None = None
+
+            def notify(self, message, **kwargs) -> None:
+                self.notes.append(str(message))
+
+            def _start_dashboard(self, user, positions, cash_positions=None) -> None:
+                self.started = (user, positions, cash_positions or [])
+
+        cash = CashPosition(
+            broker="manual",
+            account="default",
+            currency="USD",
+            amount=10_000,
+        )
+        host = Host()
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            with patch.object(tui, "get_data_dir", return_value=data_dir), patch.object(
+                storage, "get_data_dir", return_value=data_dir
+            ):
+                PortfolioPerformanceTracker(
+                    user="alice",
+                    data_dir=data_dir,
+                ).enable(new_account=True)
+                tui.AssetTrackApp._handle_first_position(host, [cash], "alice")
+                loaded_positions, loaded_cash = storage.load_manual_positions("alice")
+
+        self.assertEqual(host.started, ("alice", [], []))
+        self.assertTrue(any("不能在新手導覽" in note for note in host.notes))
+        self.assertEqual(loaded_positions, [])
+        self.assertEqual(loaded_cash, [])
+
+
 if __name__ == "__main__":
     unittest.main()
