@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-29。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-09-13。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -515,8 +515,9 @@ flowchart TD
     BG --> OPT["過期期權 → _fetch_and_cache_options_underlyings"]
     BG --> SEC["sector_cache_needs_refresh → _fetch_and_cache_sector_groups"]
     Q60 --> FX["fetch_usdtwd_rate / enrich quotes / betas"]
-    Q60 --> OV["save_quote_overlay"]
-    Q60 --> PV["_maybe_record_performance_valuation"]
+    Q60 --> Disk["load_manual_positions 再讀一次（抓取期間的入金／買賣勝出）"]
+    Disk --> OV["save_quote_overlay"]
+    Disk --> PV["_maybe_record_performance_valuation"]
     Q60 --> Cal["_events_refresh_due → _fetch_upcoming_events_worker"]
 ```
 
@@ -858,7 +859,7 @@ Tracking Baseline：啟用當下的完整資產總值 + 基準收盤價
 Performance Gap % = (使用者總值 − 基準等值) / 基準等值 × 100
 ```
 
-內部調倉（股票 ↔ 現金）不是 External Cash Flow。中途啟用或停用後再啟用必須標 Tracking Gap，不回填不存在的歷史。週日最多寫一次估值；基準價用該日前最近一個真實美股收盤。
+內部調倉（股票 ↔ 現金）不是 External Cash Flow。中途啟用或停用後再啟用必須標 Tracking Gap，不回填不存在的歷史。週日最多寫一次估值；「週日」與「今日是否已寫」以 Asia/Taipei 日曆判定（入金後續估值用 UTC 時鐘入帳，不可用 naive `.date()` 對台北週日 00:00–08:00）。基準價用該日前最近一個真實美股收盤。
 
 這是文件認定「使用者相對大盤的貢獻」應該走的路，而不是期權或未驗證方向卡。
 

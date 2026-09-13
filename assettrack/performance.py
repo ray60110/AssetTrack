@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import json
 from pathlib import Path
 from typing import Literal, Protocol, Sequence
@@ -11,6 +12,15 @@ import yfinance as yf
 
 from .auth import read_protected_text, write_protected_text
 from .models import CashPosition, Position, merge_cash_position
+
+_TAIPEI = ZoneInfo("Asia/Taipei")
+
+
+def _as_taipei(moment: datetime) -> datetime:
+    """Interpret naive timestamps as UTC, then convert to Asia/Taipei."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(_TAIPEI)
 
 
 DEFAULT_BENCHMARKS = ("QQQ", "VT")
@@ -437,15 +447,22 @@ class PortfolioPerformanceTracker:
         return sorted(snapshots, key=lambda item: item.recorded_at)
 
     def valuation_due(self, at: datetime) -> bool:
-        """Capture the first baseline immediately, then at most once per Sunday."""
+        """Capture the first baseline immediately, then at most once per Sunday.
+
+        Sunday is the Asia/Taipei calendar day. Cash-flow follow-up snapshots
+        are stored with UTC clocks; comparing naive .date() values would treat
+        Taipei Sunday 00:00–08:00 as a new day and write a second NAV.
+        """
         if not self.state().enabled:
             return False
         valuations = self.valuations()
         if not valuations:
             return True
-        if at.weekday() != 6:
+        at_taipei = _as_taipei(at)
+        if at_taipei.weekday() != 6:
             return False
-        return valuations[-1].recorded_at.date() != at.date()
+        last_taipei = _as_taipei(valuations[-1].recorded_at)
+        return last_taipei.date() != at_taipei.date()
 
     def report(self) -> PerformanceReport:
         state = self.state()

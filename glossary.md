@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
+最後依據：2026-09-13（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：週日估值以台北日曆為準；報價背景執行緒在估值與重繪前重讀磁碟持倉）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -95,14 +95,14 @@
 | `_marked` | 表格多選標記集合 | Holdings 表格 `space` 多選、`e` 編輯、`x` 刪除。 |
 | `_render_all` | 重繪整個儀表板 | 依目前記憶體資料更新 Dashboard 所有表格與卡片。 |
 | `_tick_header` | 更新頁首時鐘與常駐狀態列 | 每秒更新時間、刷新狀態並重繪 `#status-bar`。 |
-| `_do_refresh_worker` | 背景更新投資組合 | 讀取持倉、匯率、無風險利率與即時報價，完成後重繪；可觸發日曆與首次研究補抓。 |
+| `_do_refresh_worker` | 背景更新投資組合 | 讀取持倉、匯率、無風險利率與即時報價；Yahoo 回來後再讀一次磁碟持倉（把抓取期間的入金／買賣疊上報價），然後才寫週日估值並重繪。可觸發日曆與首次研究補抓。 |
 | `action_refresh_now` | 重整 | 使用者主動觸發報價與看板更新。 |
 | `action_save_snapshot` / `run_save_snapshot` | 儲存投資組合快照 | 在背景將目前投資組合保存為每日歷史快照。 |
 | `action_calibration` | （已移除）投資建議校準 | 2026-08-06 隨策略實驗室搬到 QuantTrade；Dashboard 不再有 `k`。 |
 | `PerformanceTrackingScreen` | 使用者績效比較頁 | 完整資產的現金流調整報酬，以及 QQQ／VT 影子基準等值、美元差額與領先／落後百分比。 |
 | `PerformanceTrackingCancelConfirmModal` | 取消績效追蹤確認視窗 | 停止目前追蹤區間但保留歷史；重新啟用時標示追蹤斷層。 |
 | `CashFlowModal` | 出入金宣告視窗 | 記錄入金來源或出金用途、管道、券商帳戶、幣別、金額與備註。 |
-| `PortfolioPerformanceTracker` | 投資組合績效追蹤 module | 管理 opt-in、追蹤斷層、JSON 帳本、週日估值、影子 benchmark 與追蹤期間的持倉資金守恆。 |
+| `PortfolioPerformanceTracker` | 投資組合績效追蹤 module | 管理 opt-in、追蹤斷層、JSON 帳本、週日估值（`valuation_due` 以 Asia/Taipei 日曆判定「週日」與「今日已寫過」）、影子 benchmark 與追蹤期間的持倉資金守恆。 |
 | `action_performance_tracking` | 開啟對標（`9`） | 從 Dashboard 進入完整資產與 QQQ／VT 的比較頁。 |
 | `action_deposit` / `action_withdrawal` | 宣告入金／出金（`i`／`o`） | 調整現金並以相同資金流同步 benchmark。 |
 | `action_logout` | 登出 | 開啟確認視窗並結束目前登入。 |
@@ -234,7 +234,7 @@
 |---|---|---|
 | `TrackingState` | 追蹤開關狀態 | 是否啟用、啟用時間、是否有 Tracking Gap、基準清單。 |
 | `CashFlow` | 外部資金流 | 入金／出金＋當時 QQQ／VT 收盤。 |
-| `ValuationSnapshot` | 估值快照 | 完整資產美元值與基準價。 |
+| `ValuationSnapshot` | 估值快照 | 完整資產美元值與基準價。基線後每台北週日最多一筆。 |
 | `PerformanceReport` | 績效報告 | 現金流調整報酬與各基準 Performance Gap。 |
 | `YFinanceBenchmarkPrices` | 基準報價提供者 | 14 日回看收盤，供影子單位數。 |
 | `calculate_portfolio_exposure` | 計算投資組合曝險 | 股票 1x、槓桿 ETF 倍數、期權 Δ 等值；缺報價不輸出假比例。 |
