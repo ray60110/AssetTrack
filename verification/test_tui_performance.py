@@ -32,6 +32,9 @@ def test_quote_refresh_schedules_only_one_full_dashboard_render() -> None:
         _positions=[],
         _cash_positions=[],
         _underlying_prices={},
+        _user="alice",
+        _live_quotes_ready=False,
+        _overlay_quotes_active=False,
         app=app,
         _render_all=render,
         _maybe_record_performance_valuation=MagicMock(),
@@ -41,7 +44,7 @@ def test_quote_refresh_schedules_only_one_full_dashboard_render() -> None:
 
     with patch.object(tui, "fetch_usdtwd_rate", return_value=32.0), patch(
         "assettrack.quotes.fetch_risk_free_rate", return_value=0.04
-    ):
+    ), patch.object(tui, "load_manual_positions", return_value=([], [])):
         tui.DashboardScreen._do_refresh_worker.__wrapped__(
             screen, load_from_disk=False
         )
@@ -104,6 +107,9 @@ def test_quote_refresh_skips_event_collection_while_cache_is_fresh() -> None:
         _fetch_upcoming_events_worker=fetch_events,
         _events_refresh_due=MagicMock(return_value=False),
         _events_fetched=True,
+        _user="alice",
+        _live_quotes_ready=False,
+        _overlay_quotes_active=False,
     )
 
     with patch.object(tui, "fetch_usdtwd_rate", return_value=32.0), patch.object(
@@ -114,6 +120,52 @@ def test_quote_refresh_skips_event_collection_while_cache_is_fresh() -> None:
         )
 
     fetch_events.assert_not_called()
+
+
+def test_quote_refresh_keeps_cash_saved_during_fetch() -> None:
+    """A deposit that lands on disk while Yahoo is in flight must become the
+    holdings used for Sunday valuation and the post-refresh render."""
+    from assettrack.models import CashPosition
+
+    stale = CashPosition(
+        broker="IBKR", account="MAIN", currency="USD", amount=10_000
+    )
+    latest = CashPosition(
+        broker="IBKR", account="MAIN", currency="USD", amount=60_000
+    )
+    snapshots = [([], [stale]), ([], [latest])]
+
+    def fake_load(user="default"):
+        return snapshots.pop(0)
+
+    app = _RecordingApp()
+    screen = SimpleNamespace(
+        _loading=False,
+        _rate=32.0,
+        _rf_rate=0.04,
+        _positions=[],
+        _cash_positions=[stale],
+        _underlying_prices={},
+        _user="alice",
+        _live_quotes_ready=False,
+        _overlay_quotes_active=False,
+        app=app,
+        _render_all=MagicMock(),
+        _maybe_record_performance_valuation=MagicMock(),
+        _fetch_upcoming_events_worker=MagicMock(),
+        _events_refresh_due=MagicMock(return_value=False),
+        _events_fetched=True,
+    )
+
+    with patch.object(tui, "fetch_usdtwd_rate", return_value=32.0), patch.object(
+        tui, "load_manual_positions", side_effect=fake_load
+    ), patch("assettrack.quotes.fetch_risk_free_rate", return_value=0.04):
+        tui.DashboardScreen._do_refresh_worker.__wrapped__(
+            screen, load_from_disk=True
+        )
+
+    assert screen._cash_positions[0].amount == 60_000
+    screen._maybe_record_performance_valuation.assert_called_once_with()
 
 
 def test_event_refresh_uses_six_hour_ttl() -> None:
@@ -320,7 +372,7 @@ def test_quote_worker_kicks_research_ingest_once() -> None:
     )
     with patch.object(tui, "fetch_usdtwd_rate", return_value=32.0), patch(
         "assettrack.quotes.fetch_risk_free_rate", return_value=0.04
-    ):
+    ), patch.object(tui, "load_manual_positions", return_value=([], [])):
         tui.DashboardScreen._do_refresh_worker.__wrapped__(
             screen, load_from_disk=False
         )

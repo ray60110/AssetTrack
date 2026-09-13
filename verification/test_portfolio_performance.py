@@ -306,6 +306,43 @@ class PortfolioPerformanceTrackingTests(unittest.TestCase):
             tracker.record_valuation(total_value_usd=10_500, recorded_at=sunday)
             self.assertFalse(tracker.valuation_due(sunday))
 
+    def test_sunday_valuation_due_uses_taipei_calendar_not_utc_date(self):
+        """UTC Saturday 16:30 is already Sunday in Taipei.
+
+        A deposit's follow-up snapshot is stored with datetime.now(UTC). The
+        dashboard then asks valuation_due() with Asia/Taipei 'now'. Comparing
+        naive .date() values treats that snapshot as 'yesterday' and writes a
+        second Sunday NAV — often from a stale quote refresh.
+        """
+        from zoneinfo import ZoneInfo
+
+        taipei = ZoneInfo("Asia/Taipei")
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = PortfolioPerformanceTracker(
+                user="alice",
+                data_dir=Path(tmp),
+                benchmark_prices=FixedBenchmarkPrices(),
+            )
+            tracker.enable(
+                enabled_at=datetime(2026, 9, 12, tzinfo=timezone.utc),
+                new_account=True,
+            )
+            # Sunday 2026-09-13 00:30 Taipei == 2026-09-12 16:30 UTC
+            utc_saturday = datetime(2026, 9, 12, 16, 30, tzinfo=timezone.utc)
+            taipei_sunday_morning = datetime(2026, 9, 13, 1, 0, tzinfo=taipei)
+            tracker.record_valuation(
+                total_value_usd=10_000,
+                recorded_at=utc_saturday,
+            )
+
+            self.assertFalse(tracker.valuation_due(taipei_sunday_morning))
+            self.assertFalse(
+                tracker.valuation_due(datetime(2026, 9, 13, 23, 0, tzinfo=taipei))
+            )
+            self.assertTrue(
+                tracker.valuation_due(datetime(2026, 9, 20, 1, 0, tzinfo=taipei))
+            )
+
 
 class PerformanceTrackingTUITests(unittest.IsolatedAsyncioTestCase):
     async def test_registration_can_opt_in_to_performance_tracking(self):

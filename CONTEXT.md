@@ -25,7 +25,7 @@ A buy, sale, or transfer between cash and securities inside the tracked portfoli
 _Avoid_: Deposit, withdrawal
 
 **Valuation Snapshot**:
-The complete portfolio value at a point in time, including every security position and cash balance.
+The complete portfolio value at a point in time, including every security position and cash balance. After the Tracking Baseline, at most one snapshot is written per Asia/Taipei Sunday.
 _Avoid_: Position snapshot
 
 **Shadow Benchmark Portfolio**:

@@ -4217,14 +4217,15 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
             self._rf_rate = fetch_risk_free_rate(default=self._rf_rate)
             if load_from_disk:
                 self._positions, self._cash_positions = load_manual_positions(user=self._user)
-            if self._positions:
-                self._positions = enrich_positions_with_quotes(self._positions)
+            quoted = self._positions
+            if quoted:
+                quoted = enrich_positions_with_quotes(quoted)
                 from .quotes import _normalize_symbol_for_yf
                 normalized = {
                     p.underlying.upper(): _normalize_symbol_for_yf(
                         p.underlying, "stock", p.currency
                     )
-                    for p in self._positions
+                    for p in quoted
                     if p.instrument_type == "option" and p.underlying
                 }
                 prices = fetch_prices_batch(sorted(set(normalized.values())))
@@ -4234,16 +4235,46 @@ class DashboardScreen(_FormulaDrillMixin, Screen):
                     if prices.get(quote_symbol) is not None
                 }
                 seen_beta: set[str] = set()
-                for p in self._positions:
+                for p in quoted:
                     beta_key = (p.underlying or p.symbol).upper()
                     if beta_key in seen_beta:
                         continue
                     seen_beta.add(beta_key)
                     fetch_beta(p.symbol, p.instrument_type, p.underlying, p.currency)
-                if any(p.market_price is not None for p in self._positions):
-                    save_quote_overlay(self._user, self._positions)
             else:
                 self._underlying_prices = {}
+            # Yahoo can take many seconds. A buy / deposit / edit that landed
+            # on disk during the fetch must win; otherwise the Sunday snapshot
+            # and the on-screen book show the pre-trade portfolio.
+            latest_positions, latest_cash = load_manual_positions(user=self._user)
+            if (
+                not load_from_disk
+                and not latest_positions
+                and not latest_cash
+                and (quoted or self._cash_positions)
+            ):
+                # First paint starts from the login snapshot. Tests (and a
+                # dashboard constructed before the first save) may have no
+                # file yet — do not blank the book. Periodic refreshes still
+                # take an empty disk as authoritative.
+                latest_positions = [item.model_copy(deep=True) for item in quoted]
+                latest_cash = [
+                    item.model_copy(deep=True) for item in self._cash_positions
+                ]
+            quote_by_key = {_pos_key(item): item for item in quoted}
+            for position in latest_positions:
+                sourced = quote_by_key.get(_pos_key(position))
+                if sourced is None:
+                    continue
+                position.market_price = sourced.market_price
+                position.market_value = sourced.market_value
+                position.prev_close = sourced.prev_close
+                if sourced.leverage_factor is not None:
+                    position.leverage_factor = sourced.leverage_factor
+            self._positions = latest_positions
+            self._cash_positions = latest_cash
+            if any(p.market_price is not None for p in self._positions):
+                save_quote_overlay(self._user, self._positions)
             if not self._positions or any(
                 p.market_price is not None for p in self._positions
             ):
