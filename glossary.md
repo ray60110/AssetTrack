@@ -1,7 +1,7 @@
 # AssetTrack 功能名稱對照表
 
 本文件對照 `assettrack/tui.py` 與相關模組中的 feature、英文程式名稱、中文名稱與**目前實際功能**。
-最後依據：2026-08-29（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF）。
+最後依據：2026-09-14（已同步架構文件 [`blockDiagram.md`](./blockDiagram.md)：登入畫面改為幾何 ▸ 與字標，不再渲染 PNG；全站 TUI 暗線 chrome；主頁總資產顯示種類組成、曝險獨立成塊；觀察條左到右對 6 類股／7 期權／8 ETF；總資產「今日 %」分母含現金）。
 
 `compose`、`on_mount`、`on_key` 與 `on_*` 為 Textual 框架生命週期／事件處理名稱，維持原名；本表不逐一重複列出。已刪除或不再由 TUI 呼叫的名稱標「（已移除）」或「（函式庫，畫面不呼叫）」，避免舊文件把研究引擎當成現行建議。
 
@@ -82,7 +82,8 @@
 | `_get_cached_usdtwd_rate` | 取得快取美元／台幣匯率 | 以一小時快取減少重複查詢匯率；渲染路徑不打網路。 |
 | `_calc_weights` | 計算持倉權重 | 依美元等值計算每個持倉在投資組合的比例。 |
 | `_chrome_line` / `_chrome_header` | 共用表頭 | 無裝飾符號、暗線框；綠紅不拿來刷整塊。 |
-| `_build_metrics_panel` | 建立總資產塊 | NAV、股票／ETF／期權／現金市值與％、筆數、USD／TWD 比、今日、未實現、Beta vs SPY。 |
+| `_build_metrics_panel` | 建立總資產塊 | NAV、股票／ETF／期權／現金市值與％、筆數、USD／TWD 比、今日、未實現、Beta vs SPY。今日漲跌金額只來自證券；**今日 % 分母是含現金的完整 NAV**，與未實現％同一口徑。 |
+| `_portfolio_day_pnl` | 計算組合今日漲跌 | 證券 `daily_change` 加總為金額；百分比用 `total_asset_value_usd(positions, cash_positions, rate)` 的前一日完整資產。 |
 | `_asset_composition` | 計算資產組成 | 四類市值、筆數、美元／台幣等值。 |
 | `_build_holdings_table` | 建立持倉表格 | 八欄：代碼／種類／數量／成本／現價／市值／今日／未實現；券商頂格、部位縮 2 格。 |
 | `_build_broker_panel` | 建立曝險塊 | 總／淨曝險倍數與金額、股票／普通 ETF、倍數 ETF、期權 Δ、券商％與金額。不再寫進攻／防守。 |

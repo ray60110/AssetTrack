@@ -1,6 +1,6 @@
 # AssetTrack 系統運作技術文件
 
-最後依據：2026-08-29。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
+最後依據：2026-09-14。本文件描述**目前工作樹**的正統架構，不是 QuantTrade 分家前的實驗室產品，也不是已刪除的 `INVESTMENT_LOGIC.md`。
 
 AssetTrack 是單行程、離線優先的全螢幕 Textual TUI。沒有內部 HTTP API、沒有訊息佇列、沒有微服務。畫面、分析、儲存、認證全部在同一個 Python process 裡用函式呼叫與磁碟檔案交換資料；唯一的跨行程通訊是登入時的 Touch ID helper。對外網路只發生在抓取層（Yahoo Finance、FRED、SEC EDGAR、ARK CSV）。
 
@@ -871,6 +871,7 @@ Performance Gap % = (使用者總值 − 基準等值) / 基準等值 × 100
 | 指標 | 規則 |
 |---|---|
 | 總資產組成 | 股票／ETF／期權／現金各列市值與佔比；另列筆數與 USD／TWD 比 |
+| 今日 | 金額為證券當日市值變動；**百分比分母為含現金的完整 NAV**（與未實現％同一口徑）。現金本身不計入當日金額（無 mark-to-market），但必須留在分母。 |
 | `cash_ratio` | 現金列在組成裡；不再標進攻／防守 |
 | 股票／普通 ETF | 曝險 = 市值（1x） |
 | 槓桿／反向 ETF | `infer_etf_leverage_factor` 或使用者覆寫 |
