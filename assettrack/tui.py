@@ -357,6 +357,7 @@ def _session_pills() -> str:
 def _portfolio_day_pnl(
     positions: list[Position],
     rate: float,
+    cash_positions: Optional[list[CashPosition]] = None,
 ) -> tuple[Optional[float], Optional[float]]:
     day_usd = 0.0
     has = False
@@ -367,7 +368,7 @@ def _portfolio_day_pnl(
         day_usd += p.daily_change if p.currency == "USD" else p.daily_change / rate
     if not has:
         return None, None
-    total = total_asset_value_usd(positions, [], rate)
+    total = total_asset_value_usd(positions, cash_positions or [], rate)
     if total is None or total == day_usd:
         return day_usd, None
     prev = total - day_usd
@@ -442,7 +443,7 @@ def _build_metrics_panel(
         rate,
     )
     pnl_usd, pnl_pct = performance if performance is not None else (None, None)
-    day_usd, day_pct = _portfolio_day_pnl(positions, rate)
+    day_usd, day_pct = _portfolio_day_pnl(positions, rate, cash_positions)
     mix, counts, usd_leg, twd_leg = _asset_composition(
         positions, cash_positions, rate,
     )

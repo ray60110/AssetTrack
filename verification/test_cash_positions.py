@@ -381,6 +381,34 @@ class DashboardCashPositionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1 股票", rendered)
         self.assertIn("1 現金", rendered)
 
+    def test_metrics_panel_day_percent_uses_complete_nav_including_cash(self):
+        """Cash-heavy books must not inflate the dashboard 今日 % by ignoring cash."""
+        from rich.console import Console
+
+        from assettrack import tui
+
+        positions = [
+            Position(
+                broker="IBKR",
+                symbol="AAPL",
+                quantity=10,
+                market_price=100,
+                prev_close=99,
+                avg_cost=90,
+            ),
+        ]
+        cash = [
+            CashPosition(broker="IBKR", currency="USD", amount=9000),
+        ]
+        console = Console(record=True, width=120)
+        console.print(tui._build_metrics_panel(positions, 32, cash))
+        rendered = console.export_text()
+
+        # $10 stock move on $10,000 complete NAV (prev $9,990) → +0.10%, not +1.01%.
+        self.assertIn("+0.10%", rendered)
+        self.assertNotIn("+1.01%", rendered)
+        self.assertIn("$10,000.00", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
